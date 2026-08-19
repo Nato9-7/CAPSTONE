@@ -35,12 +35,23 @@ class PantallaBienvenidaVista extends StatelessWidget {
                   color: colorAzulSuave,
                   borderRadius: BorderRadius.circular(iconSize * 0.25),
                 ),
-                child: Icon(
-                  Icons.shield,
-                  size: iconInner,
-                  color: colorAzul,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    Icon(
+                      Icons.shield,
+                      size: iconInner,
+                      color: colorAzul,
+                    ),
+                    Icon(
+                      Icons.lock,
+                      size: iconInner * 0.45,
+                      color: Colors.white,
+                    ),
+                  ],
                 ),
               ),
+
 
               SizedBox(height: size.height * 0.04),
 
