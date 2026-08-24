@@ -21,9 +21,14 @@ class PantallaBienvenidaVista extends StatelessWidget {
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
-        child: Padding(
-          padding: EdgeInsets.symmetric(horizontal: paddingH, vertical: 16.0),
-          child: Column(
+        child: SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: size.height),
+            child: IntrinsicHeight(
+              child: Padding(
+                padding:
+                    EdgeInsets.symmetric(horizontal: paddingH, vertical: 16.0),
+                child: Column(
             children: [
               const Spacer(),
 
@@ -134,6 +139,9 @@ class PantallaBienvenidaVista extends StatelessWidget {
                 ),
               ),
             ],
+                ),
+              ),
+            ),
           ),
         ),
       ),
