@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:rb_alertas/vistas/inicio_sesion_vista.dart';
 
 class PantallaBienvenidaVista extends StatelessWidget {
   const PantallaBienvenidaVista({super.key});
@@ -102,7 +103,14 @@ class PantallaBienvenidaVista extends StatelessWidget {
                 width: double.infinity,
                 height: altoBoton,
                 child: ElevatedButton(
-                  onPressed: () {},
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const InicioSesionVista(),
+                      ),
+                    );
+                  },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: colorAzul,
                     foregroundColor: Colors.white,
