@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:rb_alertas/vistas/registro_vista.dart';
 
 class InicioSesionVista extends StatefulWidget {
   const InicioSesionVista({super.key});
@@ -261,7 +262,12 @@ class _InicioSesionVistaState extends State<InicioSesionVista> {
                           ),
                           InkWell(
                             onTap: () {
-                              // Acción para registrarse
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => const RegistroVista(),
+                                ),
+                              );
                             },
                             child: const Text(
                               'Regístrate aquí',
