@@ -1,20 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:rb_alertas/vistas/inicio_sesion_vista.dart';
+import 'package:rb_alertas/widgets/app_logo.dart';
 
 class PantallaBienvenidaVista extends StatelessWidget {
   const PantallaBienvenidaVista({super.key});
 
   @override
   Widget build(BuildContext context) {
+    const colorRojo = Color(0xFFDC2626);
     const colorAzul = Color(0xFF1D61E7);
-    const colorAzulSuave = Color(0xFFE5EDFF);
 
     final size = MediaQuery.of(context).size;
-    final double iconSize = size.width * 0.27;
-    final double iconInner = size.width * 0.13;
+    final double logoSize = size.width * 0.35;
     final double paddingH = size.width * 0.06;
     final double fontTitulo = size.width * 0.075;
-    final double fontSubtitulo = size.width * 0.055;
     final double fontDesc = size.width * 0.035;
     final double fontBoton = size.width * 0.042;
     final double altoBoton = size.height * 0.065;
@@ -33,54 +32,35 @@ class PantallaBienvenidaVista extends StatelessWidget {
             children: [
               const Spacer(),
 
-              // Ícono con fondo azul claro
-              Container(
-                width: iconSize,
-                height: iconSize,
-                decoration: BoxDecoration(
-                  color: colorAzulSuave,
-                  borderRadius: BorderRadius.circular(iconSize * 0.25),
-                ),
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    Icon(
-                      Icons.shield,
-                      size: iconInner,
-                      color: colorAzul,
-                    ),
-                    Icon(
-                      Icons.lock,
-                      size: iconInner * 0.45,
-                      color: Colors.white,
-                    ),
-                  ],
-                ),
+              // Logo de la aplicación
+              AppLogo(
+                size: logoSize,
               ),
 
 
               SizedBox(height: size.height * 0.04),
 
-              // Título
-              Text(
-                'Alerta',
-                style: TextStyle(
-                  fontSize: fontTitulo,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.black,
-                ),
-              ),
-
-              SizedBox(height: size.height * 0.005),
-
-              // Subtítulo
-              Text(
-                'Puerto Montt',
-                style: TextStyle(
-                  fontSize: fontSubtitulo,
-                  fontWeight: FontWeight.bold,
-                  color: colorAzul,
-                ),
+              // Título principal en Rojo y Negro
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    'RB ',
+                    style: TextStyle(
+                      fontSize: fontTitulo,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black,
+                    ),
+                  ),
+                  Text(
+                    'Alertas',
+                    style: TextStyle(
+                      fontSize: fontTitulo,
+                      fontWeight: FontWeight.bold,
+                      color: colorRojo,
+                    ),
+                  ),
+                ],
               ),
 
               SizedBox(height: size.height * 0.02),
