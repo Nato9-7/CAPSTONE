@@ -123,12 +123,16 @@ class _MapaVistaState extends State<MapaVista> {
                     ),
                 ],
               ),
-              const RichAttributionWidget(
-                attributions: [
-                  TextSourceAttribution('© OpenStreetMap contributors'),
-                ],
-              ),
             ],
+          ),
+
+          const Positioned(
+            bottom: 4,
+            right: 8,
+            child: Text(
+              '© OpenStreetMap contributors',
+              style: TextStyle(fontSize: 9, color: Color(0xFF9CA3AF)),
+            ),
           ),
 
           // Buscador + chips de filtro superpuestos al mapa.
