@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../servicios/auth_servicio.dart';
+import '../widgets/app_logo.dart';
 
 class RegistroVista extends StatefulWidget {
   const RegistroVista({super.key});
@@ -119,7 +120,6 @@ class _RegistroVistaState extends State<RegistroVista> {
   @override
   Widget build(BuildContext context) {
     const colorAzul = Color(0xFF0056D2);
-    const colorAzulSuave = Color(0xFFE5EDFF);
     const colorBordeCampo = Color(0xFFE2E8F0);
     const colorTextoGris = Color(0xFF6B7280);
 
@@ -184,29 +184,7 @@ class _RegistroVistaState extends State<RegistroVista> {
                       const SizedBox(height: 28),
 
                       // Logo consistente con las otras pantallas
-                      Container(
-                        width: 72,
-                        height: 72,
-                        decoration: const BoxDecoration(
-                          color: colorAzulSuave,
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Stack(
-                          alignment: Alignment.center,
-                          children: [
-                            Icon(
-                              Icons.shield,
-                              size: 38,
-                              color: colorAzul,
-                            ),
-                            Icon(
-                              Icons.lock,
-                              size: 17,
-                              color: Colors.white,
-                            ),
-                          ],
-                        ),
-                      ),
+                      const AppLogo(size: 88),
                       const SizedBox(height: 22),
 
                       // Título Crear Cuenta
