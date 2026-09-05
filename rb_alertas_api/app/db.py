@@ -14,14 +14,26 @@ pool = pooling.MySQLConnectionPool(
     database = os.getenv("DB_NAME"),
 )
 
-def consultar(sql: str, parametros : tuple = ()):
-
+def consultar(sql: str, parametros: tuple = ()):
     conexion = pool.get_connection()
 
     try:
         cursor = conexion.cursor(dictionary=True)
-        cursor.excute(sql, parametros)
+        cursor.execute(sql, parametros)
 
         return cursor.fetchall()
+    finally:
+        conexion.close()
+
+def ejecutar(sql: str, parametros: tuple = ()):
+    """Para INSERT/UPDATE/DELETE. Hace commit y devuelve el lastrowid."""
+    conexion = pool.get_connection()
+
+    try:
+        cursor = conexion.cursor()
+        cursor.execute(sql, parametros)
+        conexion.commit()
+
+        return cursor.lastrowid
     finally:
         conexion.close()
