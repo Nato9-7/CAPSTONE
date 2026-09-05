@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../servicios/auth_servicio.dart';
 
 class RegistroVista extends StatefulWidget {
   const RegistroVista({super.key});
@@ -15,7 +16,9 @@ class _RegistroVistaState extends State<RegistroVista> {
   final _emailController = TextEditingController();
   final _telefonoController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _authServicio = AuthServicio();
   bool _obscurePassword = true;
+  bool _cargando = false;
 
   @override
   void dispose() {
@@ -76,6 +79,41 @@ class _RegistroVistaState extends State<RegistroVista> {
       return 'Debe tener al menos 8 caracteres';
     }
     return null;
+  }
+
+  Future<void> _registrar() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    setState(() => _cargando = true);
+
+    try {
+      await _authServicio.registrar(
+        nombres: _nombresController.text.trim(),
+        apellidos: _apellidosController.text.trim(),
+        rut: _rutController.text.trim(),
+        email: _emailController.text.trim(),
+        telefono: _telefonoController.text.trim(),
+        password: _passwordController.text,
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Cuenta creada correctamente')),
+      );
+      Navigator.maybePop(context);
+    } on AuthServicioException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.mensaje)),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se pudo conectar con el servidor')),
+      );
+    } finally {
+      if (mounted) setState(() => _cargando = false);
+    }
   }
 
   @override
@@ -302,11 +340,7 @@ class _RegistroVistaState extends State<RegistroVista> {
                         width: double.infinity,
                         height: 48,
                         child: ElevatedButton(
-                          onPressed: () {
-                            if (_formKey.currentState!.validate()) {
-                              // TODO: conectar con el backend de registro
-                            }
-                          },
+                          onPressed: _cargando ? null : _registrar,
                           style: ElevatedButton.styleFrom(
                             backgroundColor: colorAzul,
                             foregroundColor: Colors.white,
@@ -315,13 +349,22 @@ class _RegistroVistaState extends State<RegistroVista> {
                               borderRadius: BorderRadius.circular(12),
                             ),
                           ),
-                          child: const Text(
-                            'Registrarse',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
+                          child: _cargando
+                              ? const SizedBox(
+                                  width: 22,
+                                  height: 22,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2.5,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Text(
+                                  'Registrarse',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
                         ),
                       ),
                       const SizedBox(height: 24),
