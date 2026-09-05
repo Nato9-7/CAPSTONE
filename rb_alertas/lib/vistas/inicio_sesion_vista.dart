@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:rb_alertas/vistas/registro_vista.dart';
+import 'package:rb_alertas/widgets/app_logo.dart';
 
 class InicioSesionVista extends StatefulWidget {
   const InicioSesionVista({super.key});
@@ -64,6 +65,10 @@ class _InicioSesionVistaState extends State<InicioSesionVista> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
+                      // Logo de la aplicación
+                      const AppLogo(size: 88),
+                      const SizedBox(height: 22),
+
                       // Título
                       const Text(
                         'RB Alertas',
