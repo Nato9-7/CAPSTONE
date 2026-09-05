@@ -6,8 +6,49 @@ class AuthServicioException implements Exception {
   AuthServicioException(this.mensaje);
 }
 
+class LoginResultado {
+  final String token;
+  final Map<String, dynamic> usuario;
+
+  LoginResultado({required this.token, required this.usuario});
+}
+
 class AuthServicio {
   static const String baseUrl = 'http://localhost:8000';
+
+  // NOTA: ajusta esta ruta si tu backend expone el login en otro path
+  // (revísalo en http://localhost:8000/docs).
+  Future<LoginResultado> login({
+    required String email,
+    required String password,
+  }) async {
+    final uri = Uri.parse('$baseUrl/api/usuarios/login');
+
+    final respuesta = await http.post(
+      uri,
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'email': email, 'password': password}),
+    );
+
+    if (respuesta.statusCode == 200) {
+      final cuerpo = jsonDecode(respuesta.body) as Map<String, dynamic>;
+      return LoginResultado(
+        token: (cuerpo['token'] ?? cuerpo['access_token'] ?? '').toString(),
+        usuario: (cuerpo['usuario'] ?? cuerpo['user'] ?? {}) as Map<String, dynamic>,
+      );
+    }
+
+    String mensaje = 'Correo o contraseña incorrectos';
+    try {
+      final cuerpo = jsonDecode(respuesta.body);
+      if (cuerpo is Map && cuerpo['detail'] != null) {
+        mensaje = cuerpo['detail'].toString();
+      }
+    } catch (_) {
+      // se usa el mensaje por defecto si el cuerpo no es JSON válido
+    }
+    throw AuthServicioException(mensaje);
+  }
 
   Future<void> registrar({
     required String nombres,

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:rb_alertas/servicios/auth_servicio.dart';
 import 'package:rb_alertas/vistas/registro_vista.dart';
 import 'package:rb_alertas/widgets/app_logo.dart';
 
@@ -13,13 +14,46 @@ class _InicioSesionVistaState extends State<InicioSesionVista> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _authServicio = AuthServicio();
   bool _obscurePassword = true;
+  bool _cargando = false;
 
   @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
+  }
+
+  Future<void> _iniciarSesion() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    setState(() => _cargando = true);
+
+    try {
+      await _authServicio.login(
+        email: _emailController.text.trim(),
+        password: _passwordController.text,
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Inicio de sesión exitoso')),
+      );
+      // TODO: navegar a la pantalla principal una vez esté integrada.
+    } on AuthServicioException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.mensaje)),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se pudo conectar con el servidor')),
+      );
+    } finally {
+      if (mounted) setState(() => _cargando = false);
+    }
   }
 
   @override
@@ -107,6 +141,12 @@ class _InicioSesionVistaState extends State<InicioSesionVista> {
                       TextFormField(
                         controller: _emailController,
                         keyboardType: TextInputType.emailAddress,
+                        validator: (valor) {
+                          if (valor == null || valor.trim().isEmpty) {
+                            return 'Ingresa tu correo electrónico';
+                          }
+                          return null;
+                        },
                         decoration: InputDecoration(
                           hintText: 'tu@correo.com',
                           hintStyle: const TextStyle(
@@ -158,6 +198,12 @@ class _InicioSesionVistaState extends State<InicioSesionVista> {
                       TextFormField(
                         controller: _passwordController,
                         obscureText: _obscurePassword,
+                        validator: (valor) {
+                          if (valor == null || valor.isEmpty) {
+                            return 'Ingresa tu contraseña';
+                          }
+                          return null;
+                        },
                         decoration: InputDecoration(
                           hintText: '••••••••',
                           hintStyle: const TextStyle(
@@ -232,9 +278,7 @@ class _InicioSesionVistaState extends State<InicioSesionVista> {
                         width: double.infinity,
                         height: 48,
                         child: ElevatedButton(
-                          onPressed: () {
-                            // Acción iniciar sesión
-                          },
+                          onPressed: _cargando ? null : _iniciarSesion,
                           style: ElevatedButton.styleFrom(
                             backgroundColor: colorAzul,
                             foregroundColor: Colors.white,
@@ -243,13 +287,22 @@ class _InicioSesionVistaState extends State<InicioSesionVista> {
                               borderRadius: BorderRadius.circular(12),
                             ),
                           ),
-                          child: const Text(
-                            'Iniciar Sesión',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
+                          child: _cargando
+                              ? const SizedBox(
+                                  width: 22,
+                                  height: 22,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2.5,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Text(
+                                  'Iniciar Sesión',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
                         ),
                       ),
                       const SizedBox(height: 28),
