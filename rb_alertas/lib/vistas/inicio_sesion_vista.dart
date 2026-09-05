@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:rb_alertas/vistas/mapa_vista.dart';
 import 'package:rb_alertas/vistas/registro_vista.dart';
 import 'package:rb_alertas/widgets/app_logo.dart';
 
@@ -233,7 +234,12 @@ class _InicioSesionVistaState extends State<InicioSesionVista> {
                         height: 48,
                         child: ElevatedButton(
                           onPressed: () {
-                            // Acción iniciar sesión
+                            Navigator.pushReplacement(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => const MapaVista(),
+                              ),
+                            );
                           },
                           style: ElevatedButton.styleFrom(
                             backgroundColor: colorAzul,
