@@ -18,6 +18,11 @@ class RegistroUsuario(BaseModel):
     password: str = Field(min_length=8, max_length=72)
 
 
+class LoginUsuario(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=1, max_length=72)
+
+
 @router.get("/")
 def listar_usuarios():
     return consultar("SELECT uuid_publico, nombres, email FROM usuario")
@@ -32,6 +37,33 @@ def obtener_usuario(uuid_publico: UUID):
     if not filas:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     return filas[0]
+
+
+@router.post("/login")
+def iniciar_sesion(datos: LoginUsuario):
+    filas = consultar(
+        "SELECT uuid_publico, nombres, apellidos, email, password_hash FROM usuario WHERE email = %s",
+        (datos.email,),
+    )
+    credenciales_invalidas = HTTPException(status_code=401, detail="Correo o contraseña incorrectos")
+
+    if not filas:
+        raise credenciales_invalidas
+
+    usuario = filas[0]
+    if not bcrypt.checkpw(datos.password.encode("utf-8"), usuario["password_hash"].encode("utf-8")):
+        raise credenciales_invalidas
+
+    # Token de sesión simple; reemplazar por JWT si se requiere expiración o roles.
+    return {
+        "token": str(uuid4()),
+        "usuario": {
+            "uuid_publico": usuario["uuid_publico"],
+            "nombres": usuario["nombres"],
+            "apellidos": usuario["apellidos"],
+            "email": usuario["email"],
+        },
+    }
 
 
 @router.post("/registro", status_code=201)
