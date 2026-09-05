@@ -9,7 +9,9 @@ class RegistroVista extends StatefulWidget {
 
 class _RegistroVistaState extends State<RegistroVista> {
   final _formKey = GlobalKey<FormState>();
-  final _nombreController = TextEditingController();
+  final _nombresController = TextEditingController();
+  final _apellidosController = TextEditingController();
+  final _rutController = TextEditingController();
   final _emailController = TextEditingController();
   final _telefonoController = TextEditingController();
   final _passwordController = TextEditingController();
@@ -17,11 +19,63 @@ class _RegistroVistaState extends State<RegistroVista> {
 
   @override
   void dispose() {
-    _nombreController.dispose();
+    _nombresController.dispose();
+    _apellidosController.dispose();
+    _rutController.dispose();
     _emailController.dispose();
     _telefonoController.dispose();
     _passwordController.dispose();
     super.dispose();
+  }
+
+  String? _validarRequerido(String? valor, String campo) {
+    if (valor == null || valor.trim().isEmpty) {
+      return 'Ingresa tu $campo';
+    }
+    return null;
+  }
+
+  String? _validarEmail(String? valor) {
+    if (valor == null || valor.trim().isEmpty) {
+      return 'Ingresa tu correo electrónico';
+    }
+    final regexEmail = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
+    if (!regexEmail.hasMatch(valor.trim())) {
+      return 'Ingresa un correo válido';
+    }
+    return null;
+  }
+
+  String? _validarRut(String? valor) {
+    if (valor == null || valor.trim().isEmpty) {
+      return 'Ingresa tu RUT';
+    }
+    final regexRut = RegExp(r'^\d{7,8}-[\dkK]$');
+    if (!regexRut.hasMatch(valor.trim())) {
+      return 'Formato inválido (ej: 12345678-9)';
+    }
+    return null;
+  }
+
+  String? _validarTelefono(String? valor) {
+    if (valor == null || valor.trim().isEmpty) {
+      return 'Ingresa tu teléfono móvil';
+    }
+    final regexTelefono = RegExp(r'^\+?\d{8,15}$');
+    if (!regexTelefono.hasMatch(valor.trim())) {
+      return 'Ingresa un teléfono válido';
+    }
+    return null;
+  }
+
+  String? _validarPassword(String? valor) {
+    if (valor == null || valor.isEmpty) {
+      return 'Ingresa una contraseña';
+    }
+    if (valor.length < 8) {
+      return 'Debe tener al menos 8 caracteres';
+    }
+    return null;
   }
 
   @override
@@ -129,14 +183,39 @@ class _RegistroVistaState extends State<RegistroVista> {
                       ),
                       const SizedBox(height: 26),
 
-                      // Campo: Nombre completo
+                      // Campo: Nombres
                       _buildTextField(
-                        controller: _nombreController,
-                        hintText: 'Nombre completo',
+                        controller: _nombresController,
+                        hintText: 'Nombres',
                         icon: Icons.person_outline_rounded,
                         keyboardType: TextInputType.name,
                         bordeColor: colorBordeCampo,
                         azulColor: colorAzul,
+                        validator: (valor) => _validarRequerido(valor, 'nombres'),
+                      ),
+                      const SizedBox(height: 14),
+
+                      // Campo: Apellidos
+                      _buildTextField(
+                        controller: _apellidosController,
+                        hintText: 'Apellidos',
+                        icon: Icons.person_outline_rounded,
+                        keyboardType: TextInputType.name,
+                        bordeColor: colorBordeCampo,
+                        azulColor: colorAzul,
+                        validator: (valor) => _validarRequerido(valor, 'apellidos'),
+                      ),
+                      const SizedBox(height: 14),
+
+                      // Campo: RUT
+                      _buildTextField(
+                        controller: _rutController,
+                        hintText: 'RUT (ej: 12345678-9)',
+                        icon: Icons.badge_outlined,
+                        keyboardType: TextInputType.text,
+                        bordeColor: colorBordeCampo,
+                        azulColor: colorAzul,
+                        validator: _validarRut,
                       ),
                       const SizedBox(height: 14),
 
@@ -148,6 +227,7 @@ class _RegistroVistaState extends State<RegistroVista> {
                         keyboardType: TextInputType.emailAddress,
                         bordeColor: colorBordeCampo,
                         azulColor: colorAzul,
+                        validator: _validarEmail,
                       ),
                       const SizedBox(height: 14),
 
@@ -159,6 +239,7 @@ class _RegistroVistaState extends State<RegistroVista> {
                         keyboardType: TextInputType.phone,
                         bordeColor: colorBordeCampo,
                         azulColor: colorAzul,
+                        validator: _validarTelefono,
                       ),
                       const SizedBox(height: 14),
 
@@ -166,6 +247,7 @@ class _RegistroVistaState extends State<RegistroVista> {
                       TextFormField(
                         controller: _passwordController,
                         obscureText: _obscurePassword,
+                        validator: _validarPassword,
                         decoration: InputDecoration(
                           hintText: 'Contraseña',
                           hintStyle: const TextStyle(
@@ -221,7 +303,9 @@ class _RegistroVistaState extends State<RegistroVista> {
                         height: 48,
                         child: ElevatedButton(
                           onPressed: () {
-                            // Acción de registro
+                            if (_formKey.currentState!.validate()) {
+                              // TODO: conectar con el backend de registro
+                            }
                           },
                           style: ElevatedButton.styleFrom(
                             backgroundColor: colorAzul,
@@ -286,10 +370,12 @@ class _RegistroVistaState extends State<RegistroVista> {
     required TextInputType keyboardType,
     required Color bordeColor,
     required Color azulColor,
+    String? Function(String?)? validator,
   }) {
     return TextFormField(
       controller: controller,
       keyboardType: keyboardType,
+      validator: validator,
       decoration: InputDecoration(
         hintText: hintText,
         hintStyle: const TextStyle(
