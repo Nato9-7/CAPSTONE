@@ -13,8 +13,6 @@ class MapaVista extends StatefulWidget {
 
 class _MapaVistaState extends State<MapaVista> {
   static const _colorAzul = Color(0xFF0056D2);
-  static const _colorRojo = Color(0xFFE53935);
-  static const _colorNaranja = Color(0xFFFB8C00);
   static const _colorTextoGris = Color(0xFF6B7280);
 
   // Puerto Montt, Chile (referencia del mockup).
@@ -22,55 +20,8 @@ class _MapaVistaState extends State<MapaVista> {
 
   _TipoAlerta? _filtroSeleccionado;
 
-  final List<_Alerta> _alertas = const [
-    _Alerta(
-      id: 'a1',
-      tipo: _TipoAlerta.accidente,
-      titulo: 'Accidente de tránsito',
-      posicion: LatLng(-41.4675, -72.9455),
-    ),
-    _Alerta(
-      id: 'a2',
-      tipo: _TipoAlerta.robo,
-      titulo: 'Robo reportado',
-      posicion: LatLng(-41.4705, -72.9400),
-    ),
-    _Alerta(
-      id: 'a3',
-      tipo: _TipoAlerta.mascota,
-      titulo: 'Mascota perdida',
-      posicion: LatLng(-41.4730, -72.9430),
-    ),
-  ];
-
-  IconData _iconoPara(_TipoAlerta tipo) {
-    switch (tipo) {
-      case _TipoAlerta.accidente:
-        return Icons.personal_injury_rounded;
-      case _TipoAlerta.robo:
-        return Icons.warning_rounded;
-      case _TipoAlerta.mascota:
-        return Icons.pets_rounded;
-    }
-  }
-
-  Color _colorPara(_TipoAlerta tipo) {
-    switch (tipo) {
-      case _TipoAlerta.accidente:
-        return _colorRojo;
-      case _TipoAlerta.robo:
-        return _colorNaranja;
-      case _TipoAlerta.mascota:
-        return _colorAzul;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    final alertasVisibles = _filtroSeleccionado == null
-        ? _alertas
-        : _alertas.where((a) => a.tipo == _filtroSeleccionado).toList();
-
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
@@ -108,21 +59,6 @@ class _MapaVistaState extends State<MapaVista> {
                 urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 userAgentPackageName: 'com.rbalertas.rb_alertas',
               ),
-              MarkerLayer(
-                markers: [
-                  for (final alerta in alertasVisibles)
-                    Marker(
-                      point: alerta.posicion,
-                      width: 44,
-                      height: 44,
-                      child: _PinAlerta(
-                        icono: _iconoPara(alerta.tipo),
-                        color: _colorPara(alerta.tipo),
-                        titulo: alerta.titulo,
-                      ),
-                    ),
-                ],
-              ),
             ],
           ),
 
@@ -159,54 +95,6 @@ class _MapaVistaState extends State<MapaVista> {
       bottomNavigationBar: _BarraNavegacionInferior(colorAzul: _colorAzul),
     );
   }
-}
-
-class _PinAlerta extends StatelessWidget {
-  final IconData icono;
-  final Color color;
-  final String titulo;
-
-  const _PinAlerta({
-    required this.icono,
-    required this.color,
-    required this.titulo,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: titulo,
-      child: Container(
-        decoration: BoxDecoration(
-          color: color,
-          shape: BoxShape.circle,
-          border: Border.all(color: Colors.white, width: 2.5),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.25),
-              blurRadius: 4,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Icon(icono, color: Colors.white, size: 22),
-      ),
-    );
-  }
-}
-
-class _Alerta {
-  final String id;
-  final _TipoAlerta tipo;
-  final String titulo;
-  final LatLng posicion;
-
-  const _Alerta({
-    required this.id,
-    required this.tipo,
-    required this.titulo,
-    required this.posicion,
-  });
 }
 
 class _BarraBusqueda extends StatelessWidget {
