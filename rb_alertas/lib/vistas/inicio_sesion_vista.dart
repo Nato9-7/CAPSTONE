@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:rb_alertas/servicios/auth_servicio.dart';
+import 'package:rb_alertas/vistas/mapa_vista.dart';
 import 'package:rb_alertas/vistas/registro_vista.dart';
 import 'package:rb_alertas/widgets/app_logo.dart';
 
@@ -37,10 +38,10 @@ class _InicioSesionVistaState extends State<InicioSesionVista> {
       );
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Inicio de sesión exitoso')),
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const MapaVista()),
       );
-      // TODO: navegar a la pantalla principal una vez esté integrada.
     } on AuthServicioException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
