@@ -1,8 +1,6 @@
-import 'dart:typed_data';
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 
 enum _TipoAlerta { accidente, robo, mascota }
 
@@ -23,8 +21,6 @@ class _MapaVistaState extends State<MapaVista> {
   static const _centroInicial = LatLng(-41.4693, -72.9424);
 
   _TipoAlerta? _filtroSeleccionado;
-  GoogleMapController? _controladorMapa;
-  final Set<Marker> _marcadores = {};
 
   final List<_Alerta> _alertas = const [
     _Alerta(
@@ -46,32 +42,6 @@ class _MapaVistaState extends State<MapaVista> {
       posicion: LatLng(-41.4730, -72.9430),
     ),
   ];
-
-  @override
-  void initState() {
-    super.initState();
-    _cargarMarcadores();
-  }
-
-  Future<void> _cargarMarcadores() async {
-    final marcadores = <Marker>{};
-    for (final alerta in _alertas) {
-      final icono = await _crearIconoMarcador(
-        icono: _iconoPara(alerta.tipo),
-        color: _colorPara(alerta.tipo),
-      );
-      marcadores.add(
-        Marker(
-          markerId: MarkerId(alerta.id),
-          position: alerta.posicion,
-          icon: icono,
-          infoWindow: InfoWindow(title: alerta.titulo),
-        ),
-      );
-    }
-    if (!mounted) return;
-    setState(() => _marcadores.addAll(marcadores));
-  }
 
   IconData _iconoPara(_TipoAlerta tipo) {
     switch (tipo) {
@@ -95,60 +65,12 @@ class _MapaVistaState extends State<MapaVista> {
     }
   }
 
-  // Dibuja un pin circular con un ícono dentro para que los marcadores del
-  // mapa coincidan con el estilo del mockup (Google Maps no permite widgets
-  // de Flutter directamente como marcador).
-  Future<BitmapDescriptor> _crearIconoMarcador({
-    required IconData icono,
-    required Color color,
-  }) async {
-    const double tamano = 96;
-    final recorder = ui.PictureRecorder();
-    final canvas = Canvas(recorder);
-    final centro = const Offset(tamano / 2, tamano / 2 - 6);
-    const radio = 30.0;
-
-    final pinturaSombra = Paint()
-      ..color = Colors.black.withValues(alpha: 0.25)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
-    canvas.drawCircle(centro.translate(0, 4), radio, pinturaSombra);
-
-    final pinturaCirculo = Paint()..color = color;
-    canvas.drawCircle(centro, radio, pinturaCirculo);
-
-    final pinturaBorde = Paint()
-      ..color = Colors.white
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 4;
-    canvas.drawCircle(centro, radio, pinturaBorde);
-
-    final painterIcono = TextPainter(textDirection: TextDirection.ltr);
-    painterIcono.text = TextSpan(
-      text: String.fromCharCode(icono.codePoint),
-      style: TextStyle(
-        fontSize: 32,
-        fontFamily: icono.fontFamily,
-        package: icono.fontPackage,
-        color: Colors.white,
-      ),
-    );
-    painterIcono.layout();
-    painterIcono.paint(
-      canvas,
-      centro - Offset(painterIcono.width / 2, painterIcono.height / 2),
-    );
-
-    final imagen = await recorder
-        .endRecording()
-        .toImage(tamano.toInt(), tamano.toInt());
-    final bytes = await imagen.toByteData(format: ui.ImageByteFormat.png);
-    return BitmapDescriptor.bytes(
-      (bytes as ByteData).buffer.asUint8List(),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
+    final alertasVisibles = _filtroSeleccionado == null
+        ? _alertas
+        : _alertas.where((a) => a.tipo == _filtroSeleccionado).toList();
+
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
@@ -176,15 +98,37 @@ class _MapaVistaState extends State<MapaVista> {
       ),
       body: Stack(
         children: [
-          GoogleMap(
-            initialCameraPosition: const CameraPosition(
-              target: _centroInicial,
-              zoom: 14.5,
+          FlutterMap(
+            options: const MapOptions(
+              initialCenter: _centroInicial,
+              initialZoom: 14.5,
             ),
-            markers: _marcadores,
-            myLocationButtonEnabled: false,
-            zoomControlsEnabled: false,
-            onMapCreated: (controlador) => _controladorMapa = controlador,
+            children: [
+              TileLayer(
+                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                userAgentPackageName: 'com.rbalertas.rb_alertas',
+              ),
+              MarkerLayer(
+                markers: [
+                  for (final alerta in alertasVisibles)
+                    Marker(
+                      point: alerta.posicion,
+                      width: 44,
+                      height: 44,
+                      child: _PinAlerta(
+                        icono: _iconoPara(alerta.tipo),
+                        color: _colorPara(alerta.tipo),
+                        titulo: alerta.titulo,
+                      ),
+                    ),
+                ],
+              ),
+              const RichAttributionWidget(
+                attributions: [
+                  TextSourceAttribution('© OpenStreetMap contributors'),
+                ],
+              ),
+            ],
           ),
 
           // Buscador + chips de filtro superpuestos al mapa.
@@ -209,14 +153,41 @@ class _MapaVistaState extends State<MapaVista> {
         ],
       ),
       bottomNavigationBar: _BarraNavegacionInferior(colorAzul: _colorAzul),
-      floatingActionButton: null,
     );
   }
+}
+
+class _PinAlerta extends StatelessWidget {
+  final IconData icono;
+  final Color color;
+  final String titulo;
+
+  const _PinAlerta({
+    required this.icono,
+    required this.color,
+    required this.titulo,
+  });
 
   @override
-  void dispose() {
-    _controladorMapa?.dispose();
-    super.dispose();
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: titulo,
+      child: Container(
+        decoration: BoxDecoration(
+          color: color,
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 2.5),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.25),
+              blurRadius: 4,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Icon(icono, color: Colors.white, size: 22),
+      ),
+    );
   }
 }
 
