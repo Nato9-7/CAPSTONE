@@ -1,4 +1,5 @@
 import 'dart:convert';
+
 import 'package:http/http.dart' as http;
 
 class AuthServicioException implements Exception {
@@ -14,10 +15,9 @@ class LoginResultado {
 }
 
 class AuthServicio {
-  static const String baseUrl = 'http://localhost:8000';
+  static const String baseUrl = 'http://localhost:3000';
 
   // NOTA: ajusta esta ruta si tu backend expone el login en otro path
-  // (revísalo en http://localhost:8000/docs).
   Future<LoginResultado> login({
     required String email,
     required String password,
@@ -34,7 +34,8 @@ class AuthServicio {
       final cuerpo = jsonDecode(respuesta.body) as Map<String, dynamic>;
       return LoginResultado(
         token: (cuerpo['token'] ?? cuerpo['access_token'] ?? '').toString(),
-        usuario: (cuerpo['usuario'] ?? cuerpo['user'] ?? {}) as Map<String, dynamic>,
+        usuario:
+            (cuerpo['usuario'] ?? cuerpo['user'] ?? {}) as Map<String, dynamic>,
       );
     }
 
