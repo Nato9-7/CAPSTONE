@@ -1,8 +1,6 @@
-import 'dart:typed_data';
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 
 enum _TipoAlerta { accidente, robo, mascota }
 
@@ -15,137 +13,12 @@ class MapaVista extends StatefulWidget {
 
 class _MapaVistaState extends State<MapaVista> {
   static const _colorAzul = Color(0xFF0056D2);
-  static const _colorRojo = Color(0xFFE53935);
-  static const _colorNaranja = Color(0xFFFB8C00);
   static const _colorTextoGris = Color(0xFF6B7280);
 
   // Puerto Montt, Chile (referencia del mockup).
   static const _centroInicial = LatLng(-41.4693, -72.9424);
 
   _TipoAlerta? _filtroSeleccionado;
-  GoogleMapController? _controladorMapa;
-  final Set<Marker> _marcadores = {};
-
-  final List<_Alerta> _alertas = const [
-    _Alerta(
-      id: 'a1',
-      tipo: _TipoAlerta.accidente,
-      titulo: 'Accidente de tránsito',
-      posicion: LatLng(-41.4675, -72.9455),
-    ),
-    _Alerta(
-      id: 'a2',
-      tipo: _TipoAlerta.robo,
-      titulo: 'Robo reportado',
-      posicion: LatLng(-41.4705, -72.9400),
-    ),
-    _Alerta(
-      id: 'a3',
-      tipo: _TipoAlerta.mascota,
-      titulo: 'Mascota perdida',
-      posicion: LatLng(-41.4730, -72.9430),
-    ),
-  ];
-
-  @override
-  void initState() {
-    super.initState();
-    _cargarMarcadores();
-  }
-
-  Future<void> _cargarMarcadores() async {
-    final marcadores = <Marker>{};
-    for (final alerta in _alertas) {
-      final icono = await _crearIconoMarcador(
-        icono: _iconoPara(alerta.tipo),
-        color: _colorPara(alerta.tipo),
-      );
-      marcadores.add(
-        Marker(
-          markerId: MarkerId(alerta.id),
-          position: alerta.posicion,
-          icon: icono,
-          infoWindow: InfoWindow(title: alerta.titulo),
-        ),
-      );
-    }
-    if (!mounted) return;
-    setState(() => _marcadores.addAll(marcadores));
-  }
-
-  IconData _iconoPara(_TipoAlerta tipo) {
-    switch (tipo) {
-      case _TipoAlerta.accidente:
-        return Icons.personal_injury_rounded;
-      case _TipoAlerta.robo:
-        return Icons.warning_rounded;
-      case _TipoAlerta.mascota:
-        return Icons.pets_rounded;
-    }
-  }
-
-  Color _colorPara(_TipoAlerta tipo) {
-    switch (tipo) {
-      case _TipoAlerta.accidente:
-        return _colorRojo;
-      case _TipoAlerta.robo:
-        return _colorNaranja;
-      case _TipoAlerta.mascota:
-        return _colorAzul;
-    }
-  }
-
-  // Dibuja un pin circular con un ícono dentro para que los marcadores del
-  // mapa coincidan con el estilo del mockup (Google Maps no permite widgets
-  // de Flutter directamente como marcador).
-  Future<BitmapDescriptor> _crearIconoMarcador({
-    required IconData icono,
-    required Color color,
-  }) async {
-    const double tamano = 96;
-    final recorder = ui.PictureRecorder();
-    final canvas = Canvas(recorder);
-    final centro = const Offset(tamano / 2, tamano / 2 - 6);
-    const radio = 30.0;
-
-    final pinturaSombra = Paint()
-      ..color = Colors.black.withValues(alpha: 0.25)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
-    canvas.drawCircle(centro.translate(0, 4), radio, pinturaSombra);
-
-    final pinturaCirculo = Paint()..color = color;
-    canvas.drawCircle(centro, radio, pinturaCirculo);
-
-    final pinturaBorde = Paint()
-      ..color = Colors.white
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 4;
-    canvas.drawCircle(centro, radio, pinturaBorde);
-
-    final painterIcono = TextPainter(textDirection: TextDirection.ltr);
-    painterIcono.text = TextSpan(
-      text: String.fromCharCode(icono.codePoint),
-      style: TextStyle(
-        fontSize: 32,
-        fontFamily: icono.fontFamily,
-        package: icono.fontPackage,
-        color: Colors.white,
-      ),
-    );
-    painterIcono.layout();
-    painterIcono.paint(
-      canvas,
-      centro - Offset(painterIcono.width / 2, painterIcono.height / 2),
-    );
-
-    final imagen = await recorder
-        .endRecording()
-        .toImage(tamano.toInt(), tamano.toInt());
-    final bytes = await imagen.toByteData(format: ui.ImageByteFormat.png);
-    return BitmapDescriptor.bytes(
-      (bytes as ByteData).buffer.asUint8List(),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -176,15 +49,26 @@ class _MapaVistaState extends State<MapaVista> {
       ),
       body: Stack(
         children: [
-          GoogleMap(
-            initialCameraPosition: const CameraPosition(
-              target: _centroInicial,
-              zoom: 14.5,
+          FlutterMap(
+            options: const MapOptions(
+              initialCenter: _centroInicial,
+              initialZoom: 14.5,
             ),
-            markers: _marcadores,
-            myLocationButtonEnabled: false,
-            zoomControlsEnabled: false,
-            onMapCreated: (controlador) => _controladorMapa = controlador,
+            children: [
+              TileLayer(
+                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                userAgentPackageName: 'com.rbalertas.rb_alertas',
+              ),
+            ],
+          ),
+
+          const Positioned(
+            bottom: 4,
+            right: 8,
+            child: Text(
+              '© OpenStreetMap contributors',
+              style: TextStyle(fontSize: 9, color: Color(0xFF9CA3AF)),
+            ),
           ),
 
           // Buscador + chips de filtro superpuestos al mapa.
@@ -209,29 +93,8 @@ class _MapaVistaState extends State<MapaVista> {
         ],
       ),
       bottomNavigationBar: _BarraNavegacionInferior(colorAzul: _colorAzul),
-      floatingActionButton: null,
     );
   }
-
-  @override
-  void dispose() {
-    _controladorMapa?.dispose();
-    super.dispose();
-  }
-}
-
-class _Alerta {
-  final String id;
-  final _TipoAlerta tipo;
-  final String titulo;
-  final LatLng posicion;
-
-  const _Alerta({
-    required this.id,
-    required this.tipo,
-    required this.titulo,
-    required this.posicion,
-  });
 }
 
 class _BarraBusqueda extends StatelessWidget {
