@@ -15,9 +15,8 @@ class LoginResultado {
 }
 
 class AuthServicio {
-  static const String baseUrl = 'http://localhost:3000';
+  static const String baseUrl = 'http://129.213.86.163:8000';
 
-  // NOTA: ajusta esta ruta si tu backend expone el login en otro path
   Future<LoginResultado> login({
     required String email,
     required String password,
