@@ -8,6 +8,7 @@ import 'package:rb_alertas/servicios/sesion.dart';
 import 'package:rb_alertas/servicios/ubicacion_servicio.dart';
 import 'package:rb_alertas/vistas/mapa_vista.dart';
 import 'package:rb_alertas/widgets/barra_navegacion_inferior.dart';
+import 'package:rb_alertas/widgets/categoria_visual.dart';
 
 class ReportarIncidenteVista extends StatefulWidget {
   const ReportarIncidenteVista({super.key});
@@ -229,7 +230,9 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
       _mostrarMensaje('Reporte enviado. ¡Gracias por alertar a tu comunidad!');
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (context) => const MapaVista()),
+        MaterialPageRoute(
+          builder: (context) => MapaVista(centrarEn: _ubicacion),
+        ),
       );
     } on ReporteServicioException catch (e) {
       if (!mounted) return;
@@ -464,7 +467,7 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(_iconoCategoria(categoria.codigo), size: 18, color: colorContenido),
+              Icon(iconoCategoria(categoria.codigo), size: 18, color: colorContenido),
               const SizedBox(width: 6),
               Text(
                 categoria.nombre,
@@ -479,17 +482,6 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
         ),
       ),
     );
-  }
-
-  IconData _iconoCategoria(String codigo) {
-    final c = codigo.toLowerCase();
-    if (c.contains('accidente')) return Icons.car_crash_rounded;
-    if (c.contains('robo') || c.contains('asalto')) return Icons.back_hand_outlined;
-    if (c.contains('mascota')) return Icons.pets_rounded;
-    if (c.contains('incendio')) return Icons.local_fire_department_rounded;
-    if (c.contains('sospech')) return Icons.visibility_outlined;
-    if (c.contains('medic') || c.contains('salud')) return Icons.medical_services_outlined;
-    return Icons.report_gmailerrorred_rounded;
   }
 
   Widget _campoDescripcion() {

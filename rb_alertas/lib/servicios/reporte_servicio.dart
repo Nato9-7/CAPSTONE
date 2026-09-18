@@ -29,6 +29,44 @@ class CategoriaIncidente {
   }
 }
 
+class ReporteMapa {
+  final int id;
+  final String categoriaCodigo;
+  final String categoria;
+  final String? colorHex;
+  final double latitud;
+  final double longitud;
+  final String? direccion;
+  final String descripcion;
+  final DateTime? fechaCreacion;
+
+  ReporteMapa({
+    required this.id,
+    required this.categoriaCodigo,
+    required this.categoria,
+    required this.colorHex,
+    required this.latitud,
+    required this.longitud,
+    required this.direccion,
+    required this.descripcion,
+    required this.fechaCreacion,
+  });
+
+  factory ReporteMapa.desdeJson(Map<String, dynamic> json) {
+    return ReporteMapa(
+      id: json['id_reporte'] as int,
+      categoriaCodigo: (json['categoria_codigo'] ?? '').toString(),
+      categoria: (json['categoria'] ?? '').toString(),
+      colorHex: json['color_hex']?.toString(),
+      latitud: (json['latitud'] as num).toDouble(),
+      longitud: (json['longitud'] as num).toDouble(),
+      direccion: json['direccion']?.toString(),
+      descripcion: (json['descripcion'] ?? '').toString(),
+      fechaCreacion: DateTime.tryParse((json['fecha_creacion'] ?? '').toString()),
+    );
+  }
+}
+
 class Evidencia {
   final String nombreArchivo;
   final Uint8List bytes;
@@ -52,6 +90,20 @@ class ReporteServicio {
     }
     throw ReporteServicioException(
       _mensajeDeError(respuesta, 'No se pudieron cargar las categorías'),
+    );
+  }
+
+  Future<List<ReporteMapa>> obtenerReportes() async {
+    final respuesta = await http.get(Uri.parse('$baseUrl/api/reportes/'));
+
+    if (respuesta.statusCode == 200) {
+      final cuerpo = jsonDecode(utf8.decode(respuesta.bodyBytes)) as List;
+      return cuerpo
+          .map((r) => ReporteMapa.desdeJson(r as Map<String, dynamic>))
+          .toList();
+    }
+    throw ReporteServicioException(
+      _mensajeDeError(respuesta, 'No se pudieron cargar los reportes'),
     );
   }
 

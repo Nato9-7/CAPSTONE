@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 import mysql.connector
 
 from app.db import consultar, transaccion
@@ -86,6 +86,27 @@ def listar_categorias():
         WHERE activa = 1
         ORDER BY id_categoria
         """
+    )
+
+
+@router.get("/")
+def listar_reportes(limite: int = Query(200, ge=1, le=500)):
+    """Reportes vigentes para dibujar en el mapa, del más reciente al más antiguo."""
+    return consultar(
+        """
+        SELECT r.id_reporte, c.codigo AS categoria_codigo, c.nombre AS categoria,
+               c.color_hex, ST_Latitude(r.ubicacion) AS latitud,
+               ST_Longitude(r.ubicacion) AS longitud,
+               r.direccion_referencia AS direccion, r.descripcion, r.estado,
+               r.fecha_creacion
+        FROM reporte r
+        JOIN categoria_incidente c ON c.id_categoria = r.id_categoria
+        WHERE r.estado <> 'descartado'
+          AND (r.fecha_expiracion IS NULL OR r.fecha_expiracion > NOW())
+        ORDER BY r.fecha_creacion DESC
+        LIMIT %s
+        """,
+        (limite,),
     )
 
 
