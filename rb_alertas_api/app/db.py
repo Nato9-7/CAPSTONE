@@ -1,4 +1,5 @@
 import os
+from contextlib import contextmanager
 from mysql.connector import pooling
 from dotenv import load_dotenv
 
@@ -35,5 +36,20 @@ def ejecutar(sql: str, parametros: tuple = ()):
         conexion.commit()
 
         return cursor.lastrowid
+    finally:
+        conexion.close()
+
+@contextmanager
+def transaccion():
+    """Varias sentencias en una sola transacción: commit al salir, rollback si algo falla."""
+    conexion = pool.get_connection()
+
+    try:
+        cursor = conexion.cursor(dictionary=True)
+        yield cursor
+        conexion.commit()
+    except Exception:
+        conexion.rollback()
+        raise
     finally:
         conexion.close()
