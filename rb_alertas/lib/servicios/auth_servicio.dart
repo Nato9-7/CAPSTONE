@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:rb_alertas/config/api_config.dart';
 
 class AuthServicioException implements Exception {
   final String mensaje;
@@ -15,7 +16,7 @@ class LoginResultado {
 }
 
 class AuthServicio {
-  static const String baseUrl = 'http://129.213.86.163:8000';
+  static const String baseUrl = ApiConfig.baseUrl;
 
   Future<LoginResultado> login({
     required String email,

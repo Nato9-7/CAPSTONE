@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:rb_alertas/servicios/auth_servicio.dart';
+import 'package:rb_alertas/servicios/sesion.dart';
 import 'package:rb_alertas/vistas/mapa_vista.dart';
 import 'package:rb_alertas/vistas/registro_vista.dart';
 import 'package:rb_alertas/widgets/app_logo.dart';
@@ -32,10 +33,11 @@ class _InicioSesionVistaState extends State<InicioSesionVista> {
     setState(() => _cargando = true);
 
     try {
-      await _authServicio.login(
+      final resultado = await _authServicio.login(
         email: _emailController.text.trim(),
         password: _passwordController.text,
       );
+      Sesion.iniciar(resultado);
 
       if (!mounted) return;
       Navigator.pushReplacement(

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:rb_alertas/widgets/barra_navegacion_inferior.dart';
 
 enum _TipoAlerta { accidente, robo, mascota }
 
@@ -92,7 +93,9 @@ class _MapaVistaState extends State<MapaVista> {
           ),
         ],
       ),
-      bottomNavigationBar: _BarraNavegacionInferior(colorAzul: _colorAzul),
+      bottomNavigationBar: const BarraNavegacionInferior(
+        seccionActiva: SeccionApp.mapa,
+      ),
     );
   }
 }
@@ -231,84 +234,6 @@ class _ChipsFiltro extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-class _BarraNavegacionInferior extends StatelessWidget {
-  final Color colorAzul;
-
-  const _BarraNavegacionInferior({required this.colorAzul});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(color: Color(0x14000000), blurRadius: 8, offset: Offset(0, -2)),
-        ],
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
-        children: [
-          _item(icono: Icons.map_rounded, etiqueta: 'Mapa', activo: true),
-          _item(icono: Icons.add_circle_outline_rounded, etiqueta: 'Reportar', activo: false),
-          _item(
-            icono: Icons.notifications_none_rounded,
-            etiqueta: 'Alertas',
-            activo: false,
-            conInsignia: true,
-          ),
-          _item(icono: Icons.person_outline_rounded, etiqueta: 'Perfil', activo: false),
-        ],
-      ),
-    );
-  }
-
-  Widget _item({
-    required IconData icono,
-    required String etiqueta,
-    required bool activo,
-    bool conInsignia = false,
-  }) {
-    final color = activo ? colorAzul : const Color(0xFF9CA3AF);
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-          decoration: BoxDecoration(
-            color: activo ? colorAzul.withValues(alpha: 0.12) : Colors.transparent,
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              Icon(icono, color: color, size: 24),
-              if (conInsignia)
-                Positioned(
-                  right: -2,
-                  top: -2,
-                  child: Container(
-                    width: 8,
-                    height: 8,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFFE53935),
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 2),
-        Text(
-          etiqueta,
-          style: TextStyle(fontSize: 11, color: color, fontWeight: FontWeight.w600),
-        ),
-      ],
     );
   }
 }
