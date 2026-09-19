@@ -6,8 +6,6 @@ import 'package:rb_alertas/vistas/detalle_incidente_vista.dart';
 import 'package:rb_alertas/widgets/barra_navegacion_inferior.dart';
 import 'package:rb_alertas/widgets/categoria_visual.dart';
 
-enum _TipoAlerta { accidente, robo, mascota }
-
 class MapaVista extends StatefulWidget {
   /// Punto donde se abre el mapa (por ejemplo, el reporte recién enviado).
   final LatLng? centrarEn;
@@ -27,12 +25,25 @@ class _MapaVistaState extends State<MapaVista> {
 
   final _reporteServicio = ReporteServicio();
   List<ReporteMapa> _reportes = [];
-  _TipoAlerta? _filtroSeleccionado;
+  // Las categorías salen de la BD: el filtro muestra todas las que existan.
+  List<CategoriaIncidente> _categorias = [];
+  String? _codigoFiltro;
 
   @override
   void initState() {
     super.initState();
     _cargarReportes();
+    _cargarCategorias();
+  }
+
+  Future<void> _cargarCategorias() async {
+    try {
+      final categorias = await _reporteServicio.obtenerCategorias();
+      if (!mounted) return;
+      setState(() => _categorias = categorias);
+    } catch (_) {
+      // Sin categorías solo se pierde el filtro: el mapa sigue funcionando.
+    }
   }
 
   Future<void> _cargarReportes() async {
@@ -48,19 +59,9 @@ class _MapaVistaState extends State<MapaVista> {
     }
   }
 
-  static _TipoAlerta? _tipoDe(String codigoCategoria) {
-    final c = codigoCategoria.toLowerCase();
-    if (c.contains('accidente')) return _TipoAlerta.accidente;
-    if (c.contains('robo') || c.contains('asalto')) return _TipoAlerta.robo;
-    if (c.contains('mascota')) return _TipoAlerta.mascota;
-    return null;
-  }
-
   List<ReporteMapa> get _reportesVisibles {
-    if (_filtroSeleccionado == null) return _reportes;
-    return _reportes
-        .where((r) => _tipoDe(r.categoriaCodigo) == _filtroSeleccionado)
-        .toList();
+    if (_codigoFiltro == null) return _reportes;
+    return _reportes.where((r) => r.categoriaCodigo == _codigoFiltro).toList();
   }
 
   Future<void> _abrirDetalle(ReporteMapa reporte) async {
@@ -155,10 +156,11 @@ class _MapaVistaState extends State<MapaVista> {
                 _BarraBusqueda(colorTexto: _colorTextoGris),
                 const SizedBox(height: 12),
                 _ChipsFiltro(
-                  seleccionado: _filtroSeleccionado,
+                  categorias: _categorias,
+                  codigoSeleccionado: _codigoFiltro,
                   colorAzul: _colorAzul,
-                  onSeleccionar: (tipo) {
-                    setState(() => _filtroSeleccionado = tipo);
+                  onSeleccionar: (codigo) {
+                    setState(() => _codigoFiltro = codigo);
                   },
                 ),
               ],
@@ -216,12 +218,14 @@ class _BarraBusqueda extends StatelessWidget {
 }
 
 class _ChipsFiltro extends StatelessWidget {
-  final _TipoAlerta? seleccionado;
+  final List<CategoriaIncidente> categorias;
+  final String? codigoSeleccionado;
   final Color colorAzul;
-  final ValueChanged<_TipoAlerta?> onSeleccionar;
+  final ValueChanged<String?> onSeleccionar;
 
   const _ChipsFiltro({
-    required this.seleccionado,
+    required this.categorias,
+    required this.codigoSeleccionado,
     required this.colorAzul,
     required this.onSeleccionar,
   });
@@ -235,30 +239,20 @@ class _ChipsFiltro extends StatelessWidget {
           _chip(
             etiqueta: 'Todos',
             icono: null,
-            activo: seleccionado == null,
+            color: colorAzul,
+            activo: codigoSeleccionado == null,
             onTap: () => onSeleccionar(null),
           ),
-          const SizedBox(width: 8),
-          _chip(
-            etiqueta: 'Accidentes',
-            icono: Icons.personal_injury_rounded,
-            activo: seleccionado == _TipoAlerta.accidente,
-            onTap: () => onSeleccionar(_TipoAlerta.accidente),
-          ),
-          const SizedBox(width: 8),
-          _chip(
-            etiqueta: 'Robos',
-            icono: Icons.warning_rounded,
-            activo: seleccionado == _TipoAlerta.robo,
-            onTap: () => onSeleccionar(_TipoAlerta.robo),
-          ),
-          const SizedBox(width: 8),
-          _chip(
-            etiqueta: 'Mascotas',
-            icono: Icons.pets_rounded,
-            activo: seleccionado == _TipoAlerta.mascota,
-            onTap: () => onSeleccionar(_TipoAlerta.mascota),
-          ),
+          for (final categoria in categorias) ...[
+            const SizedBox(width: 8),
+            _chip(
+              etiqueta: categoria.nombre,
+              icono: iconoCategoria(categoria.codigo),
+              color: colorCategoria(categoria.codigo, colorHex: categoria.colorHex),
+              activo: codigoSeleccionado == categoria.codigo,
+              onTap: () => onSeleccionar(categoria.codigo),
+            ),
+          ],
         ],
       ),
     );
@@ -267,6 +261,7 @@ class _ChipsFiltro extends StatelessWidget {
   Widget _chip({
     required String etiqueta,
     required IconData? icono,
+    required Color color,
     required bool activo,
     required VoidCallback onTap,
   }) {
@@ -275,7 +270,7 @@ class _ChipsFiltro extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
         decoration: BoxDecoration(
-          color: activo ? colorAzul : Colors.white,
+          color: activo ? color : Colors.white,
           borderRadius: BorderRadius.circular(20),
           boxShadow: [
             BoxShadow(
@@ -289,11 +284,8 @@ class _ChipsFiltro extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             if (icono != null) ...[
-              Icon(
-                icono,
-                size: 16,
-                color: activo ? Colors.white : const Color(0xFF6B7280),
-              ),
+              // Inactivo: el ícono va del color de la categoría, para reconocerla.
+              Icon(icono, size: 16, color: activo ? Colors.white : color),
               const SizedBox(width: 6),
             ],
             Text(
