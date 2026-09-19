@@ -48,6 +48,9 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
   String? _direccion;
   bool _buscandoUbicacion = false;
   bool _mapaListo = false;
+  // Aumenta cada vez que cambia la ubicación elegida; sirve para descartar un
+  // GPS que responde tarde, después de que el usuario ya marcó otro punto.
+  int _versionUbicacion = 0;
 
   bool _enviando = false;
 
@@ -95,10 +98,11 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
 
   Future<void> _detectarUbicacion() async {
     setState(() => _buscandoUbicacion = true);
+    final version = _versionUbicacion;
 
     try {
       final punto = await _ubicacionServicio.obtenerUbicacionActual();
-      if (!mounted) return;
+      if (!mounted || _versionUbicacion != version) return;
       _moverUbicacion(punto);
     } on UbicacionServicioException catch (e) {
       if (!mounted) return;
@@ -115,6 +119,7 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
 
   Future<void> _moverUbicacion(LatLng punto) async {
     setState(() {
+      _versionUbicacion++;
       _ubicacion = punto;
       _ubicacionConfirmada = true;
       _direccion = null;
@@ -178,12 +183,14 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
     }
     if (archivo == null) return;
 
-    final bytes = await archivo.readAsBytes();
-    if (!mounted) return;
-    if (bytes.length > _tamanoMaximoEvidencia) {
-      _mostrarMensaje('La evidencia no puede superar los 20 MB');
+    // Se revisa el tamaño antes de leerlo: un video largo puede pesar cientos
+    // de MB y cargarlo completo en memoria solo para rechazarlo congela la app.
+    if (await archivo.length() > _tamanoMaximoEvidencia) {
+      if (mounted) _mostrarMensaje('La evidencia no puede superar los 20 MB');
       return;
     }
+    final bytes = await archivo.readAsBytes();
+    if (!mounted) return;
 
     final nombre = archivo.name.toLowerCase();
     final esVideo = (archivo.mimeType ?? '').startsWith('video/') ||
@@ -247,6 +254,14 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
 
   @override
   Widget build(BuildContext context) {
+    // Mientras se envía no se puede salir: el resultado se perdería.
+    return PopScope(
+      canPop: !_enviando,
+      child: _pantalla(),
+    );
+  }
+
+  Widget _pantalla() {
     return Scaffold(
       backgroundColor: _colorFondo,
       appBar: AppBar(
@@ -382,8 +397,9 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
           ),
         ),
       ),
-      bottomNavigationBar: const BarraNavegacionInferior(
+      bottomNavigationBar: BarraNavegacionInferior(
         seccionActiva: SeccionApp.reportar,
+        habilitada: !_enviando,
       ),
     );
   }
@@ -439,16 +455,14 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
       );
     }
 
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          for (final categoria in categorias) ...[
-            _chipCategoria(categoria),
-            const SizedBox(width: 8),
-          ],
-        ],
-      ),
+    // Las categorías vienen de la BD y pueden ser varias: se acomodan en
+    // varias líneas para que todas queden a la vista.
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        for (final categoria in categorias) _chipCategoria(categoria),
+      ],
     );
   }
 
@@ -494,6 +508,10 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
       validator: (valor) {
         if (valor == null || valor.trim().isEmpty) {
           return 'Describe brevemente lo que sucedió';
+        }
+        // La API cuenta puntos de código: un emoji puede valer 2 o más.
+        if (valor.trim().runes.length > 500) {
+          return 'La descripción no puede superar los 500 caracteres';
         }
         return null;
       },

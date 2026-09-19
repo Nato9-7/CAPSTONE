@@ -6,14 +6,20 @@ enum SeccionApp { mapa, reportar, alertas, perfil }
 
 class BarraNavegacionInferior extends StatelessWidget {
   final SeccionApp seccionActiva;
+  // En false los botones no responden (por ejemplo, mientras se envía un reporte).
+  final bool habilitada;
 
-  const BarraNavegacionInferior({super.key, required this.seccionActiva});
+  const BarraNavegacionInferior({
+    super.key,
+    required this.seccionActiva,
+    this.habilitada = true,
+  });
 
   static const _colorAzul = Color(0xFF0056D2);
   static const _colorInactivo = Color(0xFF6B7280);
 
   void _irA(BuildContext context, SeccionApp seccion) {
-    if (seccion == seccionActiva) return;
+    if (!habilitada || seccion == seccionActiva) return;
 
     final Widget? destino = switch (seccion) {
       SeccionApp.mapa => const MapaVista(),
