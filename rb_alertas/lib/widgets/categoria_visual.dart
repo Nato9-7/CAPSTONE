@@ -15,6 +15,20 @@ IconData iconoCategoria(String codigo) {
   return Icons.report_gmailerrorred_rounded;
 }
 
+/// Nombre corto para espacios angostos, como los filtros del mapa
+/// ("Robo o asalto" -> "Robos"). Si la categoría es nueva, usa su primera palabra.
+String etiquetaCortaCategoria(String codigo, String nombre) {
+  final c = codigo.toLowerCase();
+  if (c.contains('accidente')) return 'Accidentes';
+  if (c.contains('robo') || c.contains('asalto')) return 'Robos';
+  if (c.contains('mascota')) return 'Mascotas';
+  if (c.contains('incendio')) return 'Incendios';
+  if (c.contains('emergencia')) return 'Emergencias';
+  if (c.contains('vial')) return 'Vía';
+  final primera = nombre.split(' ').first;
+  return primera.isEmpty ? nombre : primera;
+}
+
 /// Color de la categoría: usa color_hex de la BD si viene, si no uno por código.
 Color colorCategoria(String codigo, {String? colorHex}) {
   final hex = colorHex?.replaceFirst('#', '');

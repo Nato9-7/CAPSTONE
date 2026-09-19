@@ -232,29 +232,26 @@ class _ChipsFiltro extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        _chip(
+          etiqueta: 'Todos',
+          icono: null,
+          color: colorAzul,
+          activo: codigoSeleccionado == null,
+          onTap: () => onSeleccionar(null),
+        ),
+        for (final categoria in categorias)
           _chip(
-            etiqueta: 'Todos',
-            icono: null,
-            color: colorAzul,
-            activo: codigoSeleccionado == null,
-            onTap: () => onSeleccionar(null),
+            etiqueta: etiquetaCortaCategoria(categoria.codigo, categoria.nombre),
+            icono: iconoCategoria(categoria.codigo),
+            color: colorCategoria(categoria.codigo, colorHex: categoria.colorHex),
+            activo: codigoSeleccionado == categoria.codigo,
+            onTap: () => onSeleccionar(categoria.codigo),
           ),
-          for (final categoria in categorias) ...[
-            const SizedBox(width: 8),
-            _chip(
-              etiqueta: categoria.nombre,
-              icono: iconoCategoria(categoria.codigo),
-              color: colorCategoria(categoria.codigo, colorHex: categoria.colorHex),
-              activo: codigoSeleccionado == categoria.codigo,
-              onTap: () => onSeleccionar(categoria.codigo),
-            ),
-          ],
-        ],
-      ),
+      ],
     );
   }
 
@@ -268,7 +265,7 @@ class _ChipsFiltro extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
           color: activo ? color : Colors.white,
           borderRadius: BorderRadius.circular(20),
