@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:rb_alertas/vistas/mapa_vista.dart';
+import 'package:rb_alertas/vistas/perfil_vista.dart';
 import 'package:rb_alertas/vistas/reportar_incidente_vista.dart';
 
 enum SeccionApp { mapa, reportar, alertas, perfil }
@@ -24,8 +25,9 @@ class BarraNavegacionInferior extends StatelessWidget {
     final Widget? destino = switch (seccion) {
       SeccionApp.mapa => const MapaVista(),
       SeccionApp.reportar => const ReportarIncidenteVista(),
-      // Alertas y Perfil todavía no tienen pantalla.
-      SeccionApp.alertas || SeccionApp.perfil => null,
+      SeccionApp.perfil => const PerfilVista(),
+      // Alertas todavía no tiene pantalla.
+      SeccionApp.alertas => null,
     };
     if (destino == null) return;
 
