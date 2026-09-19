@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -11,7 +12,19 @@ class UbicacionServicioException implements Exception {
 }
 
 class UbicacionServicio {
+  /// Ubicación del dispositivo. En web el aviso de permiso del navegador no
+  /// tiene límite de tiempo, así que se corta aquí para no quedar esperando.
   Future<LatLng> obtenerUbicacionActual() async {
+    try {
+      return await _ubicacionActual().timeout(const Duration(seconds: 20));
+    } on TimeoutException {
+      throw UbicacionServicioException(
+        'No pudimos obtener tu ubicación a tiempo: toca el mapa para marcar el lugar',
+      );
+    }
+  }
+
+  Future<LatLng> _ubicacionActual() async {
     if (!await Geolocator.isLocationServiceEnabled()) {
       throw UbicacionServicioException(
         'Activa la ubicación del dispositivo o toca el mapa para marcar el lugar',

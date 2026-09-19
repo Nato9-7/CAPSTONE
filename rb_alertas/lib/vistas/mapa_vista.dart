@@ -72,11 +72,14 @@ class _MapaVistaState extends State<MapaVista> {
     final color = colorCategoria(reporte.categoriaCodigo, colorHex: reporte.colorHex);
     final fecha = reporte.fechaCreacion;
 
+    // isScrollControlled + scroll: la descripción puede tener hasta 500
+    // caracteres y saltos de línea, y sin esto la hoja se desborda.
     showModalBottomSheet(
       context: context,
       showDragHandle: true,
+      isScrollControlled: true,
       builder: (context) => SafeArea(
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
           child: Column(
             mainAxisSize: MainAxisSize.min,
