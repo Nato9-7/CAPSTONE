@@ -1,4 +1,3 @@
-import mimetypes
 import os
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -18,15 +17,9 @@ CARPETA_EVIDENCIAS.mkdir(parents=True, exist_ok=True)
 
 TAMANO_MAXIMO_EVIDENCIA = 20 * 1024 * 1024  # 20 MB
 
-EXTENSIONES_PERMITIDAS = {
-    "image/jpeg": ".jpg",
-    "image/png": ".png",
-    "image/webp": ".webp",
-    "image/heic": ".heic",
-    "video/mp4": ".mp4",
-    "video/quicktime": ".mov",
-    "video/webm": ".webm",
-}
+# Radio máximo desde el centroide de una comuna operativa para asignarle un
+# reporte cuando no hay polígono cargado (Puerto Montt cabe holgado en 40 km).
+RADIO_MAXIMO_COMUNA_METROS = 40_000
 
 # Con SRID 4326 MySQL lee el WKT como latitud-longitud; se fija el orden
 # para escribir siempre POINT(longitud latitud).
@@ -43,8 +36,32 @@ def _primer_id(sql: str, parametros: tuple, columna: str):
     return filas[0][columna] if filas else None
 
 
-def _resolver_comuna(punto_wkt: str, id_comuna_usuario):
-    """Comuna cuyo límite contiene el punto; si no, la de centroide más cercano; si no, la del usuario."""
+def _detectar_formato(contenido: bytes):
+    """Extensión según la firma real del archivo; None si no es una foto o video aceptado.
+
+    Se mira el contenido y no el Content-Type ni el nombre, que los controla el cliente.
+    """
+    if contenido.startswith(b"\xff\xd8\xff"):
+        return ".jpg"
+    if contenido.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+    if contenido[:4] == b"RIFF" and contenido[8:12] == b"WEBP":
+        return ".webp"
+    if contenido.startswith(b"\x1a\x45\xdf\xa3"):
+        return ".webm"
+    if contenido[4:8] == b"ftyp":
+        marca = contenido[8:12]
+        if marca in (b"heic", b"heix", b"mif1", b"msf1", b"hevc"):
+            return ".heic"
+        if marca == b"qt  ":
+            return ".mov"
+        return ".mp4"
+    return None
+
+
+def _resolver_comuna(punto_wkt: str):
+    """Comuna cuyo límite contiene el punto; si no, la operativa cuyo centroide esté a menos de
+    RADIO_MAXIMO_COMUNA_METROS. None si el punto queda fuera de toda comuna con cobertura."""
     id_comuna = _primer_id(
         f"SELECT id_comuna FROM comuna WHERE limite IS NOT NULL AND ST_Contains(limite, {PUNTO_SQL}) LIMIT 1",
         (punto_wkt,),
@@ -55,13 +72,14 @@ def _resolver_comuna(punto_wkt: str, id_comuna_usuario):
             f"""
             SELECT id_comuna FROM comuna
             WHERE operativa = 1 AND centroide IS NOT NULL
+              AND ST_Distance(centroide, {PUNTO_SQL}) <= %s
             ORDER BY ST_Distance(centroide, {PUNTO_SQL})
             LIMIT 1
             """,
-            (punto_wkt,),
+            (punto_wkt, RADIO_MAXIMO_COMUNA_METROS, punto_wkt),
             "id_comuna",
         )
-    return id_comuna if id_comuna is not None else id_comuna_usuario
+    return id_comuna
 
 
 def _resolver_localidad(punto_wkt: str, id_comuna: int):
@@ -111,7 +129,7 @@ def listar_reportes(limite: int = Query(200, ge=1, le=500)):
 
 
 @router.post("/", status_code=201)
-async def crear_reporte(
+def crear_reporte(
     uuid_usuario: UUID = Form(),
     id_categoria: int = Form(ge=1),
     descripcion: str = Form(min_length=1, max_length=500),
@@ -125,7 +143,10 @@ async def crear_reporte(
         raise HTTPException(status_code=422, detail="La descripción no puede estar vacía")
 
     usuarios = consultar(
-        "SELECT id_usuario, id_comuna FROM usuario WHERE uuid_publico = %s",
+        """
+        SELECT id_usuario FROM usuario
+        WHERE uuid_publico = %s AND estado NOT IN ('SUSPENDIDO', 'ELIMINADO')
+        """,
         (str(uuid_usuario),),
     )
     if not usuarios:
@@ -141,28 +162,30 @@ async def crear_reporte(
     horas_vigencia = categorias[0]["horas_vigencia"]
 
     punto_wkt = f"POINT({longitud} {latitud})"
-    id_comuna = _resolver_comuna(punto_wkt, usuario["id_comuna"])
+    id_comuna = _resolver_comuna(punto_wkt)
     if id_comuna is None:
-        raise HTTPException(status_code=422, detail="No se pudo determinar la comuna de la ubicación")
+        raise HTTPException(
+            status_code=422,
+            detail="La ubicación está fuera de las comunas donde funciona RB Alertas",
+        )
     id_localidad = _resolver_localidad(punto_wkt, id_comuna)
 
     ruta_evidencia = None
     evidencia_url = None
 
     if evidencia is not None and evidencia.filename:
-        # Flutter web suele enviar application/octet-stream, así que si el
-        # tipo no sirve se deduce por la extensión del archivo.
-        tipo = evidencia.content_type
-        if tipo not in EXTENSIONES_PERMITIDAS:
-            tipo = mimetypes.guess_type(evidencia.filename)[0]
-        if tipo not in EXTENSIONES_PERMITIDAS:
-            raise HTTPException(status_code=415, detail="La evidencia debe ser una foto o un video")
-
-        contenido = await evidencia.read(TAMANO_MAXIMO_EVIDENCIA + 1)
+        contenido = evidencia.file.read(TAMANO_MAXIMO_EVIDENCIA + 1)
         if len(contenido) > TAMANO_MAXIMO_EVIDENCIA:
             raise HTTPException(status_code=413, detail="La evidencia no puede superar los 20 MB")
 
-        nombre_archivo = f"{uuid4().hex}{EXTENSIONES_PERMITIDAS[tipo]}"
+        extension = _detectar_formato(contenido)
+        if extension is None:
+            raise HTTPException(
+                status_code=415,
+                detail="La evidencia debe ser una foto (JPG, PNG, WEBP, HEIC) o un video (MP4, MOV, WEBM)",
+            )
+
+        nombre_archivo = f"{uuid4().hex}{extension}"
         ruta_evidencia = CARPETA_EVIDENCIAS / nombre_archivo
         ruta_evidencia.write_bytes(contenido)
         evidencia_url = f"/uploads/reportes/{nombre_archivo}"
