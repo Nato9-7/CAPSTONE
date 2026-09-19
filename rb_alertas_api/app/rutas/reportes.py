@@ -3,11 +3,11 @@ import os
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Path as PathParam, Query, UploadFile
 import mysql.connector
 
 from app.db import consultar, transaccion
-from app.seguridad import usuario_actual
+from app.seguridad import usuario_actual, usuario_opcional
 
 router = APIRouter()
 log = logging.getLogger("rb_alertas.reportes")
@@ -239,3 +239,106 @@ def crear_reporte(
         "estado": "PENDIENTE",
         "evidencia_url": evidencia_url,
     }
+
+
+def _entidad_emergencia(id_entidad, id_comuna: int):
+    """Organismo a llamar: el de la categoría; si no tiene, Seguridad Ciudadana (u otro) de la comuna."""
+    if id_entidad is not None:
+        filas = consultar(
+            "SELECT nombre, tipo, telefono FROM entidad_emergencia WHERE id_entidad = %s AND activa = 1",
+            (id_entidad,),
+        )
+        if filas:
+            return filas[0]
+    filas = consultar(
+        """
+        SELECT nombre, tipo, telefono FROM entidad_emergencia
+        WHERE id_comuna = %s AND activa = 1
+        ORDER BY tipo = 'SEGURIDAD_CIUDADANA' DESC, id_entidad
+        LIMIT 1
+        """,
+        (id_comuna,),
+    )
+    return filas[0] if filas else None
+
+
+@router.get("/{id_reporte}")
+def detalle_reporte(
+    id_reporte: int = PathParam(ge=1),
+    usuario: dict | None = Depends(usuario_opcional),
+):
+    filas = consultar(
+        """
+        SELECT r.id_reporte, r.id_usuario, r.id_comuna, r.estado, r.es_anonimo,
+               c.codigo AS categoria_codigo, c.nombre AS categoria, c.color_hex, c.id_entidad,
+               ST_Latitude(r.ubicacion) AS latitud, ST_Longitude(r.ubicacion) AS longitud,
+               r.direccion_referencia AS direccion, r.descripcion,
+               r.fecha_creacion, r.fecha_expiracion,
+               u.nombres, u.apellidos
+        FROM reporte r
+        JOIN categoria_incidente c ON c.id_categoria = r.id_categoria
+        JOIN usuario u ON u.id_usuario = r.id_usuario
+        WHERE r.id_reporte = %s
+        """,
+        (id_reporte,),
+    )
+    if not filas:
+        raise HTTPException(status_code=404, detail="Reporte no encontrado")
+    r = filas[0]
+
+    imagenes = consultar(
+        "SELECT url_archivo FROM reporte_imagen WHERE id_reporte = %s ORDER BY orden",
+        (id_reporte,),
+    )
+    # El id del autor no se expone: solo si quien consulta es el autor.
+    return {
+        "id_reporte": r["id_reporte"],
+        "categoria_codigo": r["categoria_codigo"],
+        "categoria": r["categoria"],
+        "color_hex": r["color_hex"],
+        "latitud": r["latitud"],
+        "longitud": r["longitud"],
+        "direccion": r["direccion"],
+        "descripcion": r["descripcion"],
+        "estado": r["estado"],
+        "fecha_creacion": r["fecha_creacion"],
+        "fecha_expiracion": r["fecha_expiracion"],
+        "autor": "Anónimo" if r["es_anonimo"] else f"{r['nombres']} {r['apellidos']}",
+        "es_autor": usuario is not None and usuario["id_usuario"] == r["id_usuario"],
+        "imagenes": [fila["url_archivo"] for fila in imagenes],
+        "emergencia": _entidad_emergencia(r["id_entidad"], r["id_comuna"]),
+    }
+
+
+@router.post("/{id_reporte}/resolver")
+def resolver_reporte(
+    id_reporte: int = PathParam(ge=1),
+    usuario: dict = Depends(usuario_actual),
+):
+    """Quien creó el reporte lo marca como resuelto; el cambio queda en reporte_estado_historial."""
+    filas = consultar("SELECT id_usuario, estado FROM reporte WHERE id_reporte = %s", (id_reporte,))
+    if not filas:
+        raise HTTPException(status_code=404, detail="Reporte no encontrado")
+    reporte = filas[0]
+    if reporte["id_usuario"] != usuario["id_usuario"]:
+        raise HTTPException(status_code=403, detail="Solo quien creó el reporte puede marcarlo como resuelto")
+    if reporte["estado"] not in ("PENDIENTE", "VALIDADO"):
+        raise HTTPException(status_code=409, detail=f"Este reporte ya está {reporte['estado'].lower()}")
+
+    with transaccion() as cursor:
+        cursor.execute(
+            "UPDATE reporte SET estado = 'RESUELTO' WHERE id_reporte = %s AND estado IN ('PENDIENTE', 'VALIDADO')",
+            (id_reporte,),
+        )
+        if cursor.rowcount == 0:
+            # Otro cambio de estado se adelantó entre la consulta y el UPDATE.
+            raise HTTPException(status_code=409, detail="El estado del reporte cambió. Vuelve a cargarlo")
+        cursor.execute(
+            """
+            INSERT INTO reporte_estado_historial (
+                id_reporte, estado_anterior, estado_nuevo, id_usuario_responsable, motivo
+            ) VALUES (%s, %s, 'RESUELTO', %s, 'Marcado como resuelto por quien lo reportó')
+            """,
+            (id_reporte, reporte["estado"], usuario["id_usuario"]),
+        )
+    return {"id_reporte": id_reporte, "estado": "RESUELTO"}
