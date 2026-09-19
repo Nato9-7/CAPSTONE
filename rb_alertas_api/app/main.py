@@ -38,4 +38,7 @@ app.include_router(usuarios.router, prefix = "/api/usuarios")
 app.include_router(reportes.router, prefix = "/api/reportes")
 
 # Evidencias (fotos/videos) adjuntas a los reportes.
-app.mount("/uploads", StaticFiles(directory = reportes.CARPETA_UPLOADS), name = "uploads")
+# Solo si la carpeta existe: si falta (p. ej. por permisos), la API arranca
+# igual y /uploads responde 404 en vez de fallar.
+if reportes.CARPETA_UPLOADS.is_dir():
+    app.mount("/uploads", StaticFiles(directory = reportes.CARPETA_UPLOADS), name = "uploads")
