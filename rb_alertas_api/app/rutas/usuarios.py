@@ -1,10 +1,12 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr, Field
 from uuid import UUID, uuid4
 import bcrypt
 import mysql.connector
 
 from app.db import consultar, ejecutar
+from app.seguridad import crear_sesion, esquema_bearer, revocar_sesion, usuario_actual
 
 router = APIRouter()
 
@@ -24,12 +26,12 @@ class LoginUsuario(BaseModel):
 
 
 @router.get("/")
-def listar_usuarios():
+def listar_usuarios(_: dict = Depends(usuario_actual)):
     return consultar("SELECT uuid_publico, nombres, email FROM usuario")
 
 
 @router.get("/{uuid_publico}")
-def obtener_usuario(uuid_publico: UUID):
+def obtener_usuario(uuid_publico: UUID, _: dict = Depends(usuario_actual)):
     filas = consultar(
         "SELECT uuid_publico, nombres, email FROM usuario WHERE uuid_publico = %s",
         (uuid_publico,)
@@ -40,9 +42,9 @@ def obtener_usuario(uuid_publico: UUID):
 
 
 @router.post("/login")
-def iniciar_sesion(datos: LoginUsuario):
+def iniciar_sesion(datos: LoginUsuario, request: Request):
     filas = consultar(
-        "SELECT uuid_publico, nombres, apellidos, email, password_hash FROM usuario WHERE email = %s",
+        "SELECT id_usuario, uuid_publico, nombres, apellidos, email, password_hash, estado FROM usuario WHERE email = %s",
         (datos.email,),
     )
     credenciales_invalidas = HTTPException(status_code=401, detail="Correo o contraseña incorrectos")
@@ -54,9 +56,18 @@ def iniciar_sesion(datos: LoginUsuario):
     if not bcrypt.checkpw(datos.password.encode("utf-8"), usuario["password_hash"].encode("utf-8")):
         raise credenciales_invalidas
 
-    # Token de sesión simple; reemplazar por JWT si se requiere expiración o roles.
+    if usuario["estado"] in ("SUSPENDIDO", "ELIMINADO"):
+        raise HTTPException(status_code=403, detail="Tu cuenta no está activa")
+
+    # El token queda registrado (hasheado) en usuario_sesion; la app lo envía
+    # como `Authorization: Bearer <token>` en las rutas protegidas.
+    token = crear_sesion(
+        usuario["id_usuario"],
+        request.client.host if request.client else None,
+        request.headers.get("user-agent"),
+    )
     return {
-        "token": str(uuid4()),
+        "token": token,
         "usuario": {
             "uuid_publico": usuario["uuid_publico"],
             "nombres": usuario["nombres"],
@@ -64,6 +75,13 @@ def iniciar_sesion(datos: LoginUsuario):
             "email": usuario["email"],
         },
     }
+
+
+@router.post("/logout", status_code=204)
+def cerrar_sesion(credenciales: HTTPAuthorizationCredentials | None = Depends(esquema_bearer)):
+    if credenciales is not None:
+        revocar_sesion(credenciales.credentials)
+    return Response(status_code=204)
 
 
 @router.post("/registro", status_code=201)

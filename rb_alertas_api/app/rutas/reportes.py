@@ -1,11 +1,12 @@
 import os
 from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import uuid4
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 import mysql.connector
 
 from app.db import consultar, transaccion
+from app.seguridad import usuario_actual
 
 router = APIRouter()
 
@@ -130,7 +131,7 @@ def listar_reportes(limite: int = Query(200, ge=1, le=500)):
 
 @router.post("/", status_code=201)
 def crear_reporte(
-    uuid_usuario: UUID = Form(),
+    usuario: dict = Depends(usuario_actual),
     id_categoria: int = Form(ge=1),
     descripcion: str = Form(min_length=1, max_length=500),
     latitud: float = Form(ge=-90, le=90),
@@ -142,17 +143,8 @@ def crear_reporte(
     if not descripcion:
         raise HTTPException(status_code=422, detail="La descripción no puede estar vacía")
 
-    usuarios = consultar(
-        """
-        SELECT id_usuario FROM usuario
-        WHERE uuid_publico = %s AND estado NOT IN ('SUSPENDIDO', 'ELIMINADO')
-        """,
-        (str(uuid_usuario),),
-    )
-    if not usuarios:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    usuario = usuarios[0]
-
+    # El autor sale del token de sesión validado en el servidor (usuario_actual),
+    # no de un dato que envíe el cliente.
     categorias = consultar(
         "SELECT horas_vigencia FROM categoria_incidente WHERE id_categoria = %s AND activa = 1",
         (id_categoria,),

@@ -107,8 +107,9 @@ class ReporteServicio {
     );
   }
 
+  /// [token] es el de la sesión (login): la API identifica al autor con él.
   Future<int> enviarReporte({
-    required String uuidUsuario,
+    required String token,
     required int idCategoria,
     required String descripcion,
     required double latitud,
@@ -121,8 +122,8 @@ class ReporteServicio {
       Uri.parse('$baseUrl/api/reportes/'),
     );
 
+    solicitud.headers['Authorization'] = 'Bearer $token';
     solicitud.fields.addAll({
-      'uuid_usuario': uuidUsuario,
       'id_categoria': idCategoria.toString(),
       'descripcion': descripcion,
       'latitud': latitud.toString(),
