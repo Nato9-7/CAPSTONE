@@ -63,16 +63,7 @@ def revocar_sesion(token: str) -> None:
     )
 
 
-def usuario_actual(credenciales: HTTPAuthorizationCredentials | None = Depends(esquema_bearer)) -> dict:
-    """Dependencia para rutas protegidas: exige `Authorization: Bearer <token>` de una sesión vigente."""
-    no_autorizado = HTTPException(
-        status_code=401,
-        detail="Tu sesión no es válida o expiró. Vuelve a iniciar sesión",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    if credenciales is None:
-        raise no_autorizado
-
+def _usuario_de_sesion(token: str) -> dict | None:
     filas = consultar(
         """
         SELECT u.id_usuario, u.uuid_publico
@@ -83,8 +74,23 @@ def usuario_actual(credenciales: HTTPAuthorizationCredentials | None = Depends(e
           AND s.fecha_expiracion > NOW()
           AND u.estado NOT IN ('SUSPENDIDO', 'ELIMINADO')
         """,
-        (hash_token(credenciales.credentials),),
+        (hash_token(token),),
     )
-    if not filas:
-        raise no_autorizado
-    return filas[0]
+    return filas[0] if filas else None
+
+
+def usuario_actual(credenciales: HTTPAuthorizationCredentials | None = Depends(esquema_bearer)) -> dict:
+    """Dependencia para rutas protegidas: exige `Authorization: Bearer <token>` de una sesión vigente."""
+    usuario = _usuario_de_sesion(credenciales.credentials) if credenciales else None
+    if usuario is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Tu sesión no es válida o expiró. Vuelve a iniciar sesión",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return usuario
+
+
+def usuario_opcional(credenciales: HTTPAuthorizationCredentials | None = Depends(esquema_bearer)) -> dict | None:
+    """Como usuario_actual, pero sin exigir sesión: devuelve None si no hay token válido."""
+    return _usuario_de_sesion(credenciales.credentials) if credenciales else None

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:rb_alertas/servicios/reporte_servicio.dart';
+import 'package:rb_alertas/vistas/detalle_incidente_vista.dart';
 import 'package:rb_alertas/widgets/barra_navegacion_inferior.dart';
 import 'package:rb_alertas/widgets/categoria_visual.dart';
 
@@ -62,80 +63,15 @@ class _MapaVistaState extends State<MapaVista> {
         .toList();
   }
 
-  String _formatearFecha(DateTime fecha) {
-    String dosDigitos(int n) => n.toString().padLeft(2, '0');
-    return '${dosDigitos(fecha.day)}-${dosDigitos(fecha.month)}-${fecha.year} '
-        '${dosDigitos(fecha.hour)}:${dosDigitos(fecha.minute)}';
-  }
-
-  void _mostrarDetalle(ReporteMapa reporte) {
-    final color = colorCategoria(reporte.categoriaCodigo, colorHex: reporte.colorHex);
-    final fecha = reporte.fechaCreacion;
-
-    // isScrollControlled + scroll: la descripción puede tener hasta 500
-    // caracteres y saltos de línea, y sin esto la hoja se desborda.
-    showModalBottomSheet(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (context) => SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  CircleAvatar(
-                    radius: 18,
-                    backgroundColor: color,
-                    child: Icon(
-                      iconoCategoria(reporte.categoriaCodigo),
-                      color: Colors.white,
-                      size: 18,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Text(
-                    reporte.categoria,
-                    style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Text(
-                reporte.descripcion,
-                style: const TextStyle(fontSize: 14.5, height: 1.4),
-              ),
-              if (reporte.direccion != null) ...[
-                const SizedBox(height: 12),
-                _datoDetalle(Icons.place_outlined, reporte.direccion!),
-              ],
-              if (fecha != null) ...[
-                const SizedBox(height: 6),
-                _datoDetalle(Icons.schedule_rounded, _formatearFecha(fecha)),
-              ],
-            ],
-          ),
-        ),
+  Future<void> _abrirDetalle(ReporteMapa reporte) async {
+    final cambio = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => DetalleIncidenteVista(idReporte: reporte.id),
       ),
     );
-  }
-
-  Widget _datoDetalle(IconData icono, String texto) {
-    return Row(
-      children: [
-        Icon(icono, size: 16, color: _colorTextoGris),
-        const SizedBox(width: 6),
-        Expanded(
-          child: Text(
-            texto,
-            style: const TextStyle(fontSize: 13, color: _colorTextoGris),
-          ),
-        ),
-      ],
-    );
+    // Si se marcó como resuelto, deja de ser vigente: se recargan los pines.
+    if (cambio == true && mounted) _cargarReportes();
   }
 
   @override
@@ -185,7 +121,7 @@ class _MapaVistaState extends State<MapaVista> {
                       width: 40,
                       height: 40,
                       child: GestureDetector(
-                        onTap: () => _mostrarDetalle(reporte),
+                        onTap: () => _abrirDetalle(reporte),
                         child: _PinReporte(
                           icono: iconoCategoria(reporte.categoriaCodigo),
                           color: colorCategoria(
