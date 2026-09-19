@@ -205,8 +205,8 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
   }
 
   Future<void> _enviarReporte() async {
-    final uuidUsuario = Sesion.uuidUsuario;
-    if (uuidUsuario == null) {
+    final token = Sesion.token;
+    if (token == null || token.isEmpty) {
       _mostrarMensaje('Debes iniciar sesión para enviar un reporte');
       return;
     }
@@ -224,7 +224,7 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
 
     try {
       await _reporteServicio.enviarReporte(
-        uuidUsuario: uuidUsuario,
+        token: token,
         idCategoria: _idCategoria!,
         descripcion: _descripcionController.text.trim(),
         latitud: _ubicacion.latitude,
