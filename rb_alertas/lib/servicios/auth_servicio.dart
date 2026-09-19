@@ -1,10 +1,15 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:rb_alertas/config/api_config.dart';
 
 class AuthServicioException implements Exception {
   final String mensaje;
-  AuthServicioException(this.mensaje);
+  // Código que manda la API para errores que la app trata distinto
+  // (por ejemplo AuthServicio.codigoEmailNoVerificado).
+  final String? codigo;
+
+  AuthServicioException(this.mensaje, {this.codigo});
 }
 
 class LoginResultado {
@@ -15,7 +20,8 @@ class LoginResultado {
 }
 
 class AuthServicio {
-  static const String baseUrl = 'http://129.213.86.163:8000';
+  static const String baseUrl = ApiConfig.baseUrl;
+  static const String codigoEmailNoVerificado = 'EMAIL_NO_VERIFICADO';
 
   Future<LoginResultado> login({
     required String email,
@@ -30,7 +36,7 @@ class AuthServicio {
     );
 
     if (respuesta.statusCode == 200) {
-      final cuerpo = jsonDecode(respuesta.body) as Map<String, dynamic>;
+      final cuerpo = _json(respuesta) as Map<String, dynamic>;
       return LoginResultado(
         token: (cuerpo['token'] ?? cuerpo['access_token'] ?? '').toString(),
         usuario:
@@ -38,18 +44,10 @@ class AuthServicio {
       );
     }
 
-    String mensaje = 'Correo o contraseña incorrectos';
-    try {
-      final cuerpo = jsonDecode(respuesta.body);
-      if (cuerpo is Map && cuerpo['detail'] != null) {
-        mensaje = cuerpo['detail'].toString();
-      }
-    } catch (_) {
-      // se usa el mensaje por defecto si el cuerpo no es JSON válido
-    }
-    throw AuthServicioException(mensaje);
+    throw _error(respuesta, 'Correo o contraseña incorrectos');
   }
 
+  /// Crea la cuenta; la API envía un correo con el enlace para verificarla.
   Future<void> registrar({
     required String nombres,
     required String apellidos,
@@ -77,15 +75,44 @@ class AuthServicio {
       return;
     }
 
-    String mensaje = 'No se pudo completar el registro';
+    throw _error(respuesta, 'No se pudo completar el registro');
+  }
+
+  /// Pide un nuevo correo de verificación. Devuelve el mensaje para mostrar.
+  Future<String> reenviarVerificacion(String email) async {
+    final respuesta = await http.post(
+      Uri.parse('$baseUrl/api/usuarios/reenviar-verificacion'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'email': email}),
+    );
+
+    if (respuesta.statusCode == 202) {
+      final cuerpo = _json(respuesta);
+      return (cuerpo is Map ? cuerpo['detail'] : null)?.toString() ??
+          'Te enviamos un nuevo enlace a tu correo.';
+    }
+    throw _error(respuesta, 'No se pudo reenviar el correo');
+  }
+
+  // La API responde JSON sin charset; se decodifica como UTF-8 para que
+  // las tildes y la ñ se vean bien.
+  dynamic _json(http.Response respuesta) =>
+      jsonDecode(utf8.decode(respuesta.bodyBytes));
+
+  AuthServicioException _error(http.Response respuesta, String porDefecto) {
     try {
-      final cuerpo = jsonDecode(respuesta.body);
-      if (cuerpo is Map && cuerpo['detail'] != null) {
-        mensaje = cuerpo['detail'].toString();
+      final cuerpo = _json(respuesta);
+      final detalle = cuerpo is Map ? cuerpo['detail'] : null;
+      if (detalle is String) return AuthServicioException(detalle);
+      if (detalle is Map && detalle['mensaje'] != null) {
+        return AuthServicioException(
+          detalle['mensaje'].toString(),
+          codigo: detalle['codigo']?.toString(),
+        );
       }
     } catch (_) {
       // se usa el mensaje por defecto si el cuerpo no es JSON válido
     }
-    throw AuthServicioException(mensaje);
+    return AuthServicioException(porDefecto);
   }
 }
