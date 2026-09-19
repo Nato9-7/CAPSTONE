@@ -8,7 +8,10 @@ IconData iconoCategoria(String codigo) {
   if (c.contains('mascota')) return Icons.pets_rounded;
   if (c.contains('incendio')) return Icons.local_fire_department_rounded;
   if (c.contains('sospech')) return Icons.visibility_outlined;
-  if (c.contains('medic') || c.contains('salud')) return Icons.medical_services_outlined;
+  if (c.contains('emergencia') || c.contains('medic') || c.contains('salud')) {
+    return Icons.medical_services_outlined;
+  }
+  if (c.contains('vial')) return Icons.construction_rounded;
   return Icons.report_gmailerrorred_rounded;
 }
 

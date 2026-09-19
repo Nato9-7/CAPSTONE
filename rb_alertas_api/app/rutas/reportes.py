@@ -101,7 +101,7 @@ def listar_reportes(limite: int = Query(200, ge=1, le=500)):
                r.fecha_creacion
         FROM reporte r
         JOIN categoria_incidente c ON c.id_categoria = r.id_categoria
-        WHERE r.estado <> 'descartado'
+        WHERE r.estado IN ('PENDIENTE', 'VALIDADO')
           AND (r.fecha_expiracion IS NULL OR r.fecha_expiracion > NOW())
         ORDER BY r.fecha_creacion DESC
         LIMIT %s
@@ -133,11 +133,12 @@ async def crear_reporte(
     usuario = usuarios[0]
 
     categorias = consultar(
-        "SELECT id_categoria FROM categoria_incidente WHERE id_categoria = %s AND activa = 1",
+        "SELECT horas_vigencia FROM categoria_incidente WHERE id_categoria = %s AND activa = 1",
         (id_categoria,),
     )
     if not categorias:
         raise HTTPException(status_code=422, detail="Categoría no válida")
+    horas_vigencia = categorias[0]["horas_vigencia"]
 
     punto_wkt = f"POINT({longitud} {latitud})"
     id_comuna = _resolver_comuna(punto_wkt, usuario["id_comuna"])
@@ -172,9 +173,11 @@ async def crear_reporte(
                 f"""
                 INSERT INTO reporte (
                     id_usuario, id_categoria, id_comuna, id_localidad,
-                    ubicacion, direccion_referencia, descripcion, estado,
-                    es_anonimo, total_confirmaciones, total_desmentidos
-                ) VALUES (%s, %s, %s, %s, {PUNTO_SQL}, %s, %s, 'pendiente', 0, 0, 0)
+                    ubicacion, direccion_referencia, descripcion, fecha_expiracion
+                ) VALUES (
+                    %s, %s, %s, %s, {PUNTO_SQL}, %s, %s,
+                    DATE_ADD(NOW(), INTERVAL %s HOUR)
+                )
                 """,
                 (
                     usuario["id_usuario"],
@@ -184,6 +187,7 @@ async def crear_reporte(
                     punto_wkt,
                     direccion,
                     descripcion,
+                    horas_vigencia,
                 ),
             )
             id_reporte = cursor.lastrowid
@@ -200,6 +204,6 @@ async def crear_reporte(
 
     return {
         "id_reporte": id_reporte,
-        "estado": "pendiente",
+        "estado": "PENDIENTE",
         "evidencia_url": evidencia_url,
     }
