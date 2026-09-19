@@ -46,9 +46,13 @@ class _InicioSesionVistaState extends State<InicioSesionVista> {
       );
     } on AuthServicioException catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.mensaje)),
-      );
+      if (e.codigo == AuthServicio.codigoEmailNoVerificado) {
+        _avisarCorreoSinVerificar(e.mensaje, _emailController.text.trim());
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.mensaje)),
+        );
+      }
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -57,6 +61,40 @@ class _InicioSesionVistaState extends State<InicioSesionVista> {
     } finally {
       if (mounted) setState(() => _cargando = false);
     }
+  }
+
+  void _avisarCorreoSinVerificar(String mensaje, String email) {
+    showDialog<void>(
+      context: context,
+      builder: (dialogo) => AlertDialog(
+        title: const Text('Verifica tu correo'),
+        content: Text(mensaje),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(dialogo);
+              String resultado;
+              try {
+                resultado = await _authServicio.reenviarVerificacion(email);
+              } on AuthServicioException catch (e) {
+                resultado = e.mensaje;
+              } catch (_) {
+                resultado = 'No se pudo conectar con el servidor';
+              }
+              if (!mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(resultado)),
+              );
+            },
+            child: const Text('Reenviar correo'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogo),
+            child: const Text('Entendido'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override

@@ -1,14 +1,24 @@
 import hashlib
+import ipaddress
 import secrets
 
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from app.correo import HORAS_VIGENCIA_VERIFICACION
 from app.db import consultar, ejecutar
 
 DURACION_SESION_DIAS = 30
 
 esquema_bearer = HTTPBearer(auto_error=False)
+
+
+def _ip_valida(ip: str | None) -> str | None:
+    """INET6_ATON da error con textos que no son IP (p. ej. 'testclient'): esos se guardan como NULL."""
+    try:
+        return str(ipaddress.ip_address(ip)) if ip else None
+    except ValueError:
+        return None
 
 
 def hash_token(token: str) -> str:
@@ -25,7 +35,23 @@ def crear_sesion(id_usuario: int, ip: str | None, user_agent: str | None) -> str
             id_usuario, refresh_token_hash, ip_origen, user_agent, fecha_expiracion
         ) VALUES (%s, %s, INET6_ATON(%s), %s, DATE_ADD(NOW(), INTERVAL %s DAY))
         """,
-        (id_usuario, hash_token(token), ip, (user_agent or "")[:255] or None, DURACION_SESION_DIAS),
+        (id_usuario, hash_token(token), _ip_valida(ip), (user_agent or "")[:255] or None, DURACION_SESION_DIAS),
+    )
+    return token
+
+
+def crear_token_verificacion(cursor, id_usuario: int, ip: str | None) -> str:
+    """Token de un solo uso para verificar el correo (usuario_token, tipo VERIFICACION_EMAIL).
+
+    Recibe un cursor para quedar en la misma transacción que la creación del usuario.
+    """
+    token = secrets.token_urlsafe(32)
+    cursor.execute(
+        """
+        INSERT INTO usuario_token (id_usuario, tipo, token_hash, fecha_expiracion, ip_solicitud)
+        VALUES (%s, 'VERIFICACION_EMAIL', %s, DATE_ADD(NOW(), INTERVAL %s HOUR), INET6_ATON(%s))
+        """,
+        (id_usuario, hash_token(token), HORAS_VIGENCIA_VERIFICACION, _ip_valida(ip)),
     )
     return token
 
