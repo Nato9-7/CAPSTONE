@@ -67,6 +67,86 @@ def listar_usuarios(_: dict = Depends(usuario_actual)):
     return consultar("SELECT uuid_publico, nombres, email FROM usuario")
 
 
+@router.get("/perfil")
+def perfil(usuario: dict = Depends(usuario_actual)):
+    """Datos de la pantalla Perfil: cuenta, comuna, actividad y teléfonos de emergencia."""
+    filas = consultar(
+        """
+        SELECT u.nombres, u.apellidos, u.email, u.telefono, u.url_foto_perfil,
+               u.email_verificado, u.estado, u.fecha_creacion,
+               c.id_comuna, c.nombre AS comuna, r.nombre AS region
+        FROM usuario u
+        LEFT JOIN comuna c ON c.id_comuna = u.id_comuna
+        LEFT JOIN region r ON r.id_region = c.id_region
+        WHERE u.id_usuario = %s
+        """,
+        (usuario["id_usuario"],),
+    )
+    if not filas:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    datos = filas[0]
+
+    actividad = consultar(
+        """
+        SELECT COUNT(*) AS total,
+               SUM(estado = 'RESUELTO') AS resueltos
+        FROM reporte WHERE id_usuario = %s
+        """,
+        (usuario["id_usuario"],),
+    )[0]
+
+    # Si la cuenta no tiene comuna, se usa la del último reporte y, si tampoco
+    # hay, la comuna con cobertura: así siempre hay teléfonos que mostrar.
+    id_comuna = datos["id_comuna"]
+    if id_comuna is None:
+        referencia = consultar(
+            """
+            SELECT c.id_comuna, c.nombre AS comuna, r.nombre AS region
+            FROM reporte rep
+            JOIN comuna c ON c.id_comuna = rep.id_comuna
+            JOIN region r ON r.id_region = c.id_region
+            WHERE rep.id_usuario = %s
+            ORDER BY rep.fecha_creacion DESC LIMIT 1
+            """,
+            (usuario["id_usuario"],),
+        ) or consultar(
+            """
+            SELECT c.id_comuna, c.nombre AS comuna, r.nombre AS region
+            FROM comuna c JOIN region r ON r.id_region = c.id_region
+            WHERE c.operativa = 1 ORDER BY c.id_comuna LIMIT 1
+            """
+        )
+        if referencia:
+            id_comuna = referencia[0]["id_comuna"]
+            datos["comuna"] = referencia[0]["comuna"]
+            datos["region"] = referencia[0]["region"]
+
+    emergencias = consultar(
+        """
+        SELECT nombre, tipo, telefono FROM entidad_emergencia
+        WHERE id_comuna = %s AND activa = 1
+        ORDER BY FIELD(tipo, 'CARABINEROS', 'BOMBEROS', 'SAMU', 'SEGURIDAD_CIUDADANA'), id_entidad
+        """,
+        (id_comuna,),
+    ) if id_comuna is not None else []
+
+    return {
+        "nombres": datos["nombres"],
+        "apellidos": datos["apellidos"],
+        "email": datos["email"],
+        "telefono": datos["telefono"],
+        "url_foto_perfil": datos["url_foto_perfil"],
+        "email_verificado": bool(datos["email_verificado"]),
+        "estado": datos["estado"],
+        "fecha_creacion": datos["fecha_creacion"],
+        "comuna": datos["comuna"],
+        "region": datos["region"],
+        "total_reportes": int(actividad["total"] or 0),
+        "total_resueltos": int(actividad["resueltos"] or 0),
+        "emergencias": emergencias,
+    }
+
+
 @router.get("/verificar", response_class=HTMLResponse)
 def verificar_correo(token: str = Query(min_length=20, max_length=200)):
     """Destino del enlace del correo: marca el correo como verificado y activa la cuenta."""
