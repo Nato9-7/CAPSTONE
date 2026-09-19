@@ -13,11 +13,13 @@ class CategoriaIncidente {
   final int id;
   final String codigo;
   final String nombre;
+  final String? colorHex;
 
   CategoriaIncidente({
     required this.id,
     required this.codigo,
     required this.nombre,
+    this.colorHex,
   });
 
   factory CategoriaIncidente.desdeJson(Map<String, dynamic> json) {
@@ -25,6 +27,7 @@ class CategoriaIncidente {
       id: json['id_categoria'] as int,
       codigo: (json['codigo'] ?? '').toString(),
       nombre: (json['nombre'] ?? '').toString(),
+      colorHex: json['color_hex']?.toString(),
     );
   }
 }
