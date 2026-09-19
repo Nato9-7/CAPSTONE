@@ -6,4 +6,8 @@ class ApiConfig {
     'API_URL',
     defaultValue: 'http://129.213.86.163:8000',
   );
+
+  /// URL completa de un archivo servido por la API (p. ej. "/uploads/reportes/x.jpg").
+  static String urlArchivo(String ruta) =>
+      ruta.startsWith('http') ? ruta : '$baseUrl$ruta';
 }

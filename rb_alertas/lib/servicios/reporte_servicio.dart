@@ -67,6 +67,81 @@ class ReporteMapa {
   }
 }
 
+class EntidadEmergencia {
+  final String nombre;
+  final String tipo;
+  final String telefono;
+
+  EntidadEmergencia({required this.nombre, required this.tipo, required this.telefono});
+
+  factory EntidadEmergencia.desdeJson(Map<String, dynamic> json) {
+    return EntidadEmergencia(
+      nombre: (json['nombre'] ?? '').toString(),
+      tipo: (json['tipo'] ?? '').toString(),
+      telefono: (json['telefono'] ?? '').toString(),
+    );
+  }
+}
+
+class DetalleReporte {
+  final int id;
+  final String categoriaCodigo;
+  final String categoria;
+  final String? colorHex;
+  final double latitud;
+  final double longitud;
+  final String? direccion;
+  final String descripcion;
+  final String estado;
+  final DateTime? fechaCreacion;
+  final String autor;
+  // true si quien consulta (según el token de la sesión) creó el reporte.
+  final bool esAutor;
+  final List<String> imagenes;
+  final EntidadEmergencia? emergencia;
+
+  DetalleReporte({
+    required this.id,
+    required this.categoriaCodigo,
+    required this.categoria,
+    required this.colorHex,
+    required this.latitud,
+    required this.longitud,
+    required this.direccion,
+    required this.descripcion,
+    required this.estado,
+    required this.fechaCreacion,
+    required this.autor,
+    required this.esAutor,
+    required this.imagenes,
+    required this.emergencia,
+  });
+
+  bool get activo => estado == 'PENDIENTE' || estado == 'VALIDADO';
+
+  factory DetalleReporte.desdeJson(Map<String, dynamic> json) {
+    final emergencia = json['emergencia'];
+    return DetalleReporte(
+      id: json['id_reporte'] as int,
+      categoriaCodigo: (json['categoria_codigo'] ?? '').toString(),
+      categoria: (json['categoria'] ?? '').toString(),
+      colorHex: json['color_hex']?.toString(),
+      latitud: (json['latitud'] as num).toDouble(),
+      longitud: (json['longitud'] as num).toDouble(),
+      direccion: json['direccion']?.toString(),
+      descripcion: (json['descripcion'] ?? '').toString(),
+      estado: (json['estado'] ?? '').toString(),
+      fechaCreacion: DateTime.tryParse((json['fecha_creacion'] ?? '').toString()),
+      autor: (json['autor'] ?? '').toString(),
+      esAutor: json['es_autor'] == true,
+      imagenes: [for (final url in (json['imagenes'] as List? ?? [])) url.toString()],
+      emergencia: emergencia is Map<String, dynamic>
+          ? EntidadEmergencia.desdeJson(emergencia)
+          : null,
+    );
+  }
+}
+
 class Evidencia {
   final String nombreArchivo;
   final Uint8List bytes;
@@ -90,6 +165,37 @@ class ReporteServicio {
     }
     throw ReporteServicioException(
       _mensajeDeError(respuesta, 'No se pudieron cargar las categorías'),
+    );
+  }
+
+  /// Detalle de un reporte. Con [token], la API indica si quien consulta es el autor.
+  Future<DetalleReporte> obtenerDetalle(int idReporte, {String? token}) async {
+    final respuesta = await http.get(
+      Uri.parse('$baseUrl/api/reportes/$idReporte'),
+      headers: {
+        if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+      },
+    );
+
+    if (respuesta.statusCode == 200) {
+      return DetalleReporte.desdeJson(
+        jsonDecode(utf8.decode(respuesta.bodyBytes)) as Map<String, dynamic>,
+      );
+    }
+    throw ReporteServicioException(
+      _mensajeDeError(respuesta, 'No se pudo cargar el reporte'),
+    );
+  }
+
+  /// Marca el reporte como resuelto (solo lo permite la API a su autor).
+  Future<void> marcarResuelto(int idReporte, String token) async {
+    final respuesta = await http.post(
+      Uri.parse('$baseUrl/api/reportes/$idReporte/resolver'),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+    if (respuesta.statusCode == 200) return;
+    throw ReporteServicioException(
+      _mensajeDeError(respuesta, 'No se pudo marcar como resuelto'),
     );
   }
 
