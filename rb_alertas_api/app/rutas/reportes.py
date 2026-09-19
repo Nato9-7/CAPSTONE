@@ -1,3 +1,4 @@
+import logging
 import os
 from pathlib import Path
 from uuid import uuid4
@@ -9,12 +10,23 @@ from app.db import consultar, transaccion
 from app.seguridad import usuario_actual
 
 router = APIRouter()
+log = logging.getLogger("rb_alertas.reportes")
 
 # En Docker esta carpeta debe montarse como volumen; si no, las evidencias
-# se pierden al recrear el contenedor.
+# se pierden al recrear el contenedor. El volumen debe pertenecer al usuario
+# con que corre la API (en la imagen, appuser).
 CARPETA_UPLOADS = Path(os.getenv("CARPETA_UPLOADS", Path(__file__).resolve().parents[2] / "uploads"))
 CARPETA_EVIDENCIAS = CARPETA_UPLOADS / "reportes"
-CARPETA_EVIDENCIAS.mkdir(parents=True, exist_ok=True)
+
+# Si la carpeta no se puede escribir, la API arranca igual y solo rechaza
+# las evidencias: sin esto, un problema de permisos tumba toda la API.
+try:
+    CARPETA_EVIDENCIAS.mkdir(parents=True, exist_ok=True)
+    EVIDENCIAS_DISPONIBLES = os.access(CARPETA_EVIDENCIAS, os.W_OK)
+except OSError:
+    EVIDENCIAS_DISPONIBLES = False
+if not EVIDENCIAS_DISPONIBLES:
+    log.error("No se puede escribir en %s: los reportes funcionan, pero sin evidencias", CARPETA_EVIDENCIAS)
 
 TAMANO_MAXIMO_EVIDENCIA = 20 * 1024 * 1024  # 20 MB
 
@@ -166,6 +178,11 @@ def crear_reporte(
     evidencia_url = None
 
     if evidencia is not None and evidencia.filename:
+        if not EVIDENCIAS_DISPONIBLES:
+            raise HTTPException(
+                status_code=503,
+                detail="Por ahora no se pueden adjuntar fotos o videos. Envía el reporte sin evidencia.",
+            )
         contenido = evidencia.file.read(TAMANO_MAXIMO_EVIDENCIA + 1)
         if len(contenido) > TAMANO_MAXIMO_EVIDENCIA:
             raise HTTPException(status_code=413, detail="La evidencia no puede superar los 20 MB")
