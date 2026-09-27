@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:rb_alertas/vistas/pantalla_bienvenida_vista.dart';
 
@@ -10,10 +11,16 @@ class RBAlertasApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
+    return MaterialApp(
       title: 'RB Alertas',
       debugShowCheckedModeBanner: false,
-      home: PantallaBienvenidaVista(),
+      // En web, Flutter no deja arrastrar las listas horizontales con el
+      // mouse (p. ej. los filtros del mapa); así se pueden deslizar igual
+      // que con el dedo.
+      scrollBehavior: const MaterialScrollBehavior().copyWith(
+        dragDevices: PointerDeviceKind.values.toSet(),
+      ),
+      home: const PantallaBienvenidaVista(),
     );
   }
 }

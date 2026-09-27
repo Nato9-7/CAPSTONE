@@ -86,21 +86,37 @@ class _RegistroVistaState extends State<RegistroVista> {
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _cargando = true);
+    final email = _emailController.text.trim();
 
     try {
       await _authServicio.registrar(
         nombres: _nombresController.text.trim(),
         apellidos: _apellidosController.text.trim(),
         rut: _rutController.text.trim(),
-        email: _emailController.text.trim(),
+        email: email,
         telefono: _telefonoController.text.trim(),
         password: _passwordController.text,
       );
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Cuenta creada correctamente')),
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Revisa tu correo'),
+          content: Text(
+            'Te enviamos un enlace a $email para activar tu cuenta. '
+            'Ábrelo y después inicia sesión.\n\n'
+            'Si no lo ves en unos minutos, revisa la carpeta de spam.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Entendido'),
+            ),
+          ],
+        ),
       );
+      if (!mounted) return;
       Navigator.maybePop(context);
     } on AuthServicioException catch (e) {
       if (!mounted) return;

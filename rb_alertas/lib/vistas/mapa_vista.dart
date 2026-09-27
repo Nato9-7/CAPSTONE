@@ -1,11 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-
-enum _TipoAlerta { accidente, robo, mascota }
+import 'package:rb_alertas/servicios/reporte_servicio.dart';
+import 'package:rb_alertas/vistas/detalle_incidente_vista.dart';
+import 'package:rb_alertas/widgets/barra_navegacion_inferior.dart';
+import 'package:rb_alertas/widgets/categoria_visual.dart';
 
 class MapaVista extends StatefulWidget {
-  const MapaVista({super.key});
+  /// Punto donde se abre el mapa (por ejemplo, el reporte recién enviado).
+  final LatLng? centrarEn;
+
+  const MapaVista({super.key, this.centrarEn});
 
   @override
   State<MapaVista> createState() => _MapaVistaState();
@@ -18,46 +23,95 @@ class _MapaVistaState extends State<MapaVista> {
   // Puerto Montt, Chile (referencia del mockup).
   static const _centroInicial = LatLng(-41.4693, -72.9424);
 
-  _TipoAlerta? _filtroSeleccionado;
+  final _reporteServicio = ReporteServicio();
+  List<ReporteMapa> _reportes = [];
+  // Las categorías salen de la BD: el filtro muestra todas las que existan.
+  List<CategoriaIncidente> _categorias = [];
+  String? _codigoFiltro;
+
+  @override
+  void initState() {
+    super.initState();
+    _cargarReportes();
+    _cargarCategorias();
+  }
+
+  Future<void> _cargarCategorias() async {
+    try {
+      final categorias = await _reporteServicio.obtenerCategorias();
+      if (!mounted) return;
+      setState(() => _categorias = categorias);
+    } catch (_) {
+      // Sin categorías solo se pierde el filtro: el mapa sigue funcionando.
+    }
+  }
+
+  Future<void> _cargarReportes() async {
+    try {
+      final reportes = await _reporteServicio.obtenerReportes();
+      if (!mounted) return;
+      setState(() => _reportes = reportes);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No se pudieron cargar los reportes del mapa'),
+        ),
+      );
+    }
+  }
+
+  List<ReporteMapa> get _reportesVisibles {
+    if (_codigoFiltro == null) return _reportes;
+    return _reportes.where((r) => r.categoriaCodigo == _codigoFiltro).toList();
+  }
+
+  Future<void> _abrirDetalle(ReporteMapa reporte) async {
+    final cambio = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => DetalleIncidenteVista(idReporte: reporte.id),
+      ),
+    );
+    // Si se marcó como resuelto, deja de ser vigente: se recargan los pines.
+    if (cambio == true && mounted) _cargarReportes();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 1,
-        foregroundColor: Colors.black87,
-        leading: IconButton(
-          icon: const Icon(Icons.menu_rounded),
-          onPressed: () {},
-        ),
-        title: const Text(
-          'RB Alertas',
-          style: TextStyle(
-            color: _colorAzul,
-            fontWeight: FontWeight.w800,
-            fontSize: 20,
-          ),
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings_outlined),
-            onPressed: () {},
-          ),
-        ],
-      ),
       body: Stack(
         children: [
           FlutterMap(
-            options: const MapOptions(
-              initialCenter: _centroInicial,
-              initialZoom: 14.5,
+            options: MapOptions(
+              initialCenter: widget.centrarEn ?? _centroInicial,
+              initialZoom: widget.centrarEn != null ? 16 : 14.5,
             ),
             children: [
               TileLayer(
                 urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 userAgentPackageName: 'com.rbalertas.rb_alertas',
+              ),
+              MarkerLayer(
+                markers: [
+                  for (final reporte in _reportesVisibles)
+                    Marker(
+                      point: LatLng(reporte.latitud, reporte.longitud),
+                      width: 40,
+                      height: 40,
+                      child: GestureDetector(
+                        onTap: () => _abrirDetalle(reporte),
+                        child: _PinReporte(
+                          icono: iconoCategoria(reporte.categoriaCodigo),
+                          color: colorCategoria(
+                            reporte.categoriaCodigo,
+                            colorHex: reporte.colorHex,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ],
           ),
@@ -81,10 +135,11 @@ class _MapaVistaState extends State<MapaVista> {
                 _BarraBusqueda(colorTexto: _colorTextoGris),
                 const SizedBox(height: 12),
                 _ChipsFiltro(
-                  seleccionado: _filtroSeleccionado,
+                  categorias: _categorias,
+                  codigoSeleccionado: _codigoFiltro,
                   colorAzul: _colorAzul,
-                  onSeleccionar: (tipo) {
-                    setState(() => _filtroSeleccionado = tipo);
+                  onSeleccionar: (codigo) {
+                    setState(() => _codigoFiltro = codigo);
                   },
                 ),
               ],
@@ -92,7 +147,9 @@ class _MapaVistaState extends State<MapaVista> {
           ),
         ],
       ),
-      bottomNavigationBar: _BarraNavegacionInferior(colorAzul: _colorAzul),
+      bottomNavigationBar: const BarraNavegacionInferior(
+        seccionActiva: SeccionApp.mapa,
+      ),
     );
   }
 }
@@ -140,66 +197,62 @@ class _BarraBusqueda extends StatelessWidget {
 }
 
 class _ChipsFiltro extends StatelessWidget {
-  final _TipoAlerta? seleccionado;
+  final List<CategoriaIncidente> categorias;
+  final String? codigoSeleccionado;
   final Color colorAzul;
-  final ValueChanged<_TipoAlerta?> onSeleccionar;
+  final ValueChanged<String?> onSeleccionar;
 
   const _ChipsFiltro({
-    required this.seleccionado,
+    required this.categorias,
+    required this.codigoSeleccionado,
     required this.colorAzul,
     required this.onSeleccionar,
   });
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        _chip(
+          etiqueta: 'Todos',
+          icono: null,
+          color: colorAzul,
+          activo: codigoSeleccionado == null,
+          onTap: () => onSeleccionar(null),
+        ),
+        for (final categoria in categorias)
           _chip(
-            etiqueta: 'Todos',
-            icono: null,
-            activo: seleccionado == null,
-            onTap: () => onSeleccionar(null),
+            etiqueta: etiquetaCortaCategoria(
+              categoria.codigo,
+              categoria.nombre,
+            ),
+            icono: iconoCategoria(categoria.codigo),
+            color: colorCategoria(
+              categoria.codigo,
+              colorHex: categoria.colorHex,
+            ),
+            activo: codigoSeleccionado == categoria.codigo,
+            onTap: () => onSeleccionar(categoria.codigo),
           ),
-          const SizedBox(width: 8),
-          _chip(
-            etiqueta: 'Accidentes',
-            icono: Icons.personal_injury_rounded,
-            activo: seleccionado == _TipoAlerta.accidente,
-            onTap: () => onSeleccionar(_TipoAlerta.accidente),
-          ),
-          const SizedBox(width: 8),
-          _chip(
-            etiqueta: 'Robos',
-            icono: Icons.warning_rounded,
-            activo: seleccionado == _TipoAlerta.robo,
-            onTap: () => onSeleccionar(_TipoAlerta.robo),
-          ),
-          const SizedBox(width: 8),
-          _chip(
-            etiqueta: 'Mascotas',
-            icono: Icons.pets_rounded,
-            activo: seleccionado == _TipoAlerta.mascota,
-            onTap: () => onSeleccionar(_TipoAlerta.mascota),
-          ),
-        ],
-      ),
+      ],
     );
   }
 
   Widget _chip({
     required String etiqueta,
     required IconData? icono,
+    required Color color,
     required bool activo,
     required VoidCallback onTap,
   }) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
-          color: activo ? colorAzul : Colors.white,
+          color: activo ? color : Colors.white,
           borderRadius: BorderRadius.circular(20),
           boxShadow: [
             BoxShadow(
@@ -213,11 +266,8 @@ class _ChipsFiltro extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             if (icono != null) ...[
-              Icon(
-                icono,
-                size: 16,
-                color: activo ? Colors.white : const Color(0xFF6B7280),
-              ),
+              // Inactivo: el ícono va del color de la categoría, para reconocerla.
+              Icon(icono, size: 16, color: activo ? Colors.white : color),
               const SizedBox(width: 6),
             ],
             Text(
@@ -235,80 +285,28 @@ class _ChipsFiltro extends StatelessWidget {
   }
 }
 
-class _BarraNavegacionInferior extends StatelessWidget {
-  final Color colorAzul;
+class _PinReporte extends StatelessWidget {
+  final IconData icono;
+  final Color color;
 
-  const _BarraNavegacionInferior({required this.colorAzul});
+  const _PinReporte({required this.icono, required this.color});
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      decoration: const BoxDecoration(
-        color: Colors.white,
+      decoration: BoxDecoration(
+        color: color,
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.white, width: 2.5),
         boxShadow: [
-          BoxShadow(color: Color(0x14000000), blurRadius: 8, offset: Offset(0, -2)),
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.25),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
         ],
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
-        children: [
-          _item(icono: Icons.map_rounded, etiqueta: 'Mapa', activo: true),
-          _item(icono: Icons.add_circle_outline_rounded, etiqueta: 'Reportar', activo: false),
-          _item(
-            icono: Icons.notifications_none_rounded,
-            etiqueta: 'Alertas',
-            activo: false,
-            conInsignia: true,
-          ),
-          _item(icono: Icons.person_outline_rounded, etiqueta: 'Perfil', activo: false),
-        ],
-      ),
-    );
-  }
-
-  Widget _item({
-    required IconData icono,
-    required String etiqueta,
-    required bool activo,
-    bool conInsignia = false,
-  }) {
-    final color = activo ? colorAzul : const Color(0xFF9CA3AF);
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-          decoration: BoxDecoration(
-            color: activo ? colorAzul.withValues(alpha: 0.12) : Colors.transparent,
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              Icon(icono, color: color, size: 24),
-              if (conInsignia)
-                Positioned(
-                  right: -2,
-                  top: -2,
-                  child: Container(
-                    width: 8,
-                    height: 8,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFFE53935),
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 2),
-        Text(
-          etiqueta,
-          style: TextStyle(fontSize: 11, color: color, fontWeight: FontWeight.w600),
-        ),
-      ],
+      child: Icon(icono, color: Colors.white, size: 20),
     );
   }
 }
