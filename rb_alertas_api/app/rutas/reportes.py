@@ -3,10 +3,13 @@ import os
 from pathlib import Path
 from uuid import uuid4
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Path as PathParam, Query, UploadFile
+from pydantic import BaseModel
 import mysql.connector
 
-from app.db import consultar, transaccion
+from app.db import consultar, ejecutar, transaccion
 from app.seguridad import usuario_actual, usuario_opcional
 
 router = APIRouter()
@@ -30,12 +33,17 @@ if not EVIDENCIAS_DISPONIBLES:
 
 TAMANO_MAXIMO_EVIDENCIA = 20 * 1024 * 1024  # 20 MB
 
-# Radio máximo desde el centroide de una comuna operativa para asignarle un
-# reporte cuando no hay polígono cargado (Puerto Montt cabe holgado en 40 km).
+# Radio máximo desde el centroide de una comuna operativa para asignarle un reporte 
 RADIO_MAXIMO_COMUNA_METROS = 40_000
 
+# Radio de alertas cercanas cuando el usuario no tiene preferencia guardada
+# (usuario_preferencia.radio_alerta_metros) ni lo pide explícitamente.
+RADIO_ALERTA_POR_DEFECTO_METROS = 2000
+
+# Votos necesarios para que la comunidad valide o descarte un reporte.
+VOTOS_PARA_CAMBIAR_ESTADO = 3
+
 # Con SRID 4326 MySQL lee el WKT como latitud-longitud; se fija el orden
-# para escribir siempre POINT(longitud latitud).
 PUNTO_SQL = "ST_GeomFromText(%s, 4326, 'axis-order=long-lat')"
 
 
@@ -70,6 +78,24 @@ def _detectar_formato(contenido: bytes):
             return ".mov"
         return ".mp4"
     return None
+
+
+def _radio_alerta_metros(usuario: dict | None, radio_km: float | None) -> int:
+    """Radio a consultar: el que pide el cliente, si no el del usuario, si no el estándar."""
+    if radio_km is not None:
+        return int(radio_km * 1000)
+    if usuario is not None:
+        try:
+            filas = consultar(
+                "SELECT radio_alerta_metros FROM usuario_preferencia WHERE id_usuario = %s",
+                (usuario["id_usuario"],),
+            )
+        except mysql.connector.Error:
+            # Sin tabla de preferencias la pantalla igual funciona con el radio estándar.
+            filas = []
+        if filas and filas[0]["radio_alerta_metros"]:
+            return int(filas[0]["radio_alerta_metros"])
+    return RADIO_ALERTA_POR_DEFECTO_METROS
 
 
 def _resolver_comuna(punto_wkt: str):
@@ -138,6 +164,94 @@ def listar_reportes(limite: int = Query(200, ge=1, le=500)):
         LIMIT %s
         """,
         (limite,),
+    )
+
+
+@router.get("/cercanos")
+def listar_reportes_cercanos(
+    usuario: dict | None = Depends(usuario_opcional),
+    latitud: float = Query(ge=-90, le=90),
+    longitud: float = Query(ge=-180, le=180),
+    radio_km: float | None = Query(None, gt=0, le=50),
+    limite: int = Query(50, ge=1, le=200),
+):
+    """Reportes vigentes alrededor del punto, del más reciente al más antiguo.
+
+    Alimenta la pantalla Alertas: cada fila trae la distancia en metros al punto
+    consultado para poder mostrar "a 500 m" sin recalcular en el cliente.
+
+    Sin `radio_km`, se usa el radio que el usuario guardó en sus preferencias;
+    si no tiene sesión o no lo ha configurado, RADIO_ALERTA_POR_DEFECTO_METROS.
+    La respuesta devuelve el radio aplicado para poder mostrarlo en pantalla.
+    """
+    radio_metros = _radio_alerta_metros(usuario, radio_km)
+    punto_wkt = f"POINT({longitud} {latitud})"
+    reportes = consultar(
+        f"""
+        SELECT r.id_reporte, c.codigo AS categoria_codigo, c.nombre AS categoria,
+               c.color_hex, ST_Latitude(r.ubicacion) AS latitud,
+               ST_Longitude(r.ubicacion) AS longitud,
+               r.direccion_referencia AS direccion, r.descripcion, r.estado,
+               r.fecha_creacion, r.total_confirmaciones, r.total_desmentidos,
+               ST_Distance(r.ubicacion, {PUNTO_SQL}) AS distancia_metros
+        FROM reporte r
+        JOIN categoria_incidente c ON c.id_categoria = r.id_categoria
+        WHERE r.estado IN ('PENDIENTE', 'VALIDADO')
+          AND (r.fecha_expiracion IS NULL OR r.fecha_expiracion > NOW())
+          AND ST_Distance(r.ubicacion, {PUNTO_SQL}) <= %s
+        ORDER BY r.fecha_creacion DESC
+        LIMIT %s
+        """,
+        (punto_wkt, punto_wkt, radio_metros, limite),
+    )
+    return {
+        "radio_metros": radio_metros,
+        "total": len(reportes),
+        "reportes": reportes,
+    }
+
+
+@router.get("/mios")
+def listar_mis_reportes(
+    usuario: dict = Depends(usuario_actual),
+    limite: int = Query(100, ge=1, le=300),
+):
+    """Historial de reportes de quien consulta, del más reciente al más antiguo.
+
+    `estado_visual` traduce el estado de la BD a lo que ve el usuario:
+    RESUELTA, VENCIDA (vigencia cumplida sin resolver) o ACTIVA.
+    """
+    return consultar(
+        """
+        SELECT r.id_reporte, c.codigo AS categoria_codigo, c.nombre AS categoria,
+               c.color_hex, ST_Latitude(r.ubicacion) AS latitud,
+               ST_Longitude(r.ubicacion) AS longitud,
+               r.direccion_referencia AS direccion, r.descripcion,
+               r.estado, r.fecha_creacion, r.fecha_expiracion,
+               r.total_confirmaciones, r.total_desmentidos,
+               COALESCE(l.nombre, cm.nombre) AS zona,
+               CASE
+                   WHEN r.estado = 'RESUELTO' THEN 'RESUELTA'
+                   WHEN r.estado = 'DESCARTADO' THEN 'DESCARTADA'
+                   WHEN r.estado = 'EXPIRADO' THEN 'VENCIDA'
+                   WHEN r.fecha_expiracion IS NOT NULL
+                        AND r.fecha_expiracion <= NOW() THEN 'VENCIDA'
+                   ELSE 'ACTIVA'
+               END AS estado_visual,
+               (
+                   SELECT i.url_archivo FROM reporte_imagen i
+                   WHERE i.id_reporte = r.id_reporte
+                   ORDER BY i.orden LIMIT 1
+               ) AS imagen
+        FROM reporte r
+        JOIN categoria_incidente c ON c.id_categoria = r.id_categoria
+        LEFT JOIN comuna cm ON cm.id_comuna = r.id_comuna
+        LEFT JOIN localidad l ON l.id_localidad = r.id_localidad
+        WHERE r.id_usuario = %s
+        ORDER BY r.fecha_creacion DESC
+        LIMIT %s
+        """,
+        (usuario["id_usuario"], limite),
     )
 
 
@@ -270,6 +384,7 @@ def detalle_reporte(
     filas = consultar(
         """
         SELECT r.id_reporte, r.id_usuario, r.id_comuna, r.estado, r.es_anonimo,
+               r.total_confirmaciones, r.total_desmentidos,
                c.codigo AS categoria_codigo, c.nombre AS categoria, c.color_hex, c.id_entidad,
                ST_Latitude(r.ubicacion) AS latitud, ST_Longitude(r.ubicacion) AS longitud,
                r.direccion_referencia AS direccion, r.descripcion,
@@ -290,6 +405,16 @@ def detalle_reporte(
         "SELECT url_archivo FROM reporte_imagen WHERE id_reporte = %s ORDER BY orden",
         (id_reporte,),
     )
+
+    # Voto propio, para que la app muestre cuál de los dos botones está marcado.
+    mi_voto = None
+    if usuario is not None:
+        votos = consultar(
+            "SELECT tipo_voto FROM reporte_voto WHERE id_reporte = %s AND id_usuario = %s",
+            (id_reporte, usuario["id_usuario"]),
+        )
+        if votos:
+            mi_voto = votos[0]["tipo_voto"]
     # El id del autor no se expone: solo si quien consulta es el autor.
     return {
         "id_reporte": r["id_reporte"],
@@ -305,8 +430,92 @@ def detalle_reporte(
         "fecha_expiracion": r["fecha_expiracion"],
         "autor": "Anónimo" if r["es_anonimo"] else f"{r['nombres']} {r['apellidos']}",
         "es_autor": usuario is not None and usuario["id_usuario"] == r["id_usuario"],
+        "total_confirmaciones": r["total_confirmaciones"],
+        "total_desmentidos": r["total_desmentidos"],
+        "mi_voto": mi_voto,
         "imagenes": [fila["url_archivo"] for fila in imagenes],
         "emergencia": _entidad_emergencia(r["id_entidad"], r["id_comuna"]),
+    }
+
+
+class VotoReporte(BaseModel):
+    tipo_voto: Literal["CONFIRMA", "DESMIENTE"]
+
+
+def _reporte_votable(id_reporte: int, id_usuario: int) -> dict:
+    """Valida que el reporte admita votos de este usuario y lo devuelve."""
+    filas = consultar(
+        """
+        SELECT id_usuario, estado,
+               (fecha_expiracion IS NOT NULL AND fecha_expiracion <= NOW()) AS vencido
+        FROM reporte WHERE id_reporte = %s
+        """,
+        (id_reporte,),
+    )
+    if not filas:
+        raise HTTPException(status_code=404, detail="Reporte no encontrado")
+    reporte = filas[0]
+    if reporte["id_usuario"] == id_usuario:
+        raise HTTPException(status_code=403, detail="No puedes votar tu propio reporte")
+    if reporte["estado"] not in ("PENDIENTE", "VALIDADO") or reporte["vencido"]:
+        raise HTTPException(status_code=409, detail="Este reporte ya no admite votos")
+    return reporte
+
+
+@router.put("/{id_reporte}/voto")
+def votar_reporte(
+    datos: VotoReporte,
+    id_reporte: int = PathParam(ge=1),
+    usuario: dict = Depends(usuario_actual),
+):
+    """Confirma o desmiente un reporte. Un voto por persona: repetirlo lo cambia.
+
+    Los contadores de `reporte` y el paso a VALIDADO/DESCARTADO los mantienen
+    los triggers de reporte_voto, no esta función: así el conteo no se duplica
+    ni se descuadra si alguien vota fuera de la API.
+    """
+    _reporte_votable(id_reporte, usuario["id_usuario"])
+    try:
+        ejecutar(
+            """
+            INSERT INTO reporte_voto (id_reporte, id_usuario, tipo_voto)
+            VALUES (%s, %s, %s)
+            ON DUPLICATE KEY UPDATE tipo_voto = VALUES(tipo_voto), fecha_voto = NOW()
+            """,
+            (id_reporte, usuario["id_usuario"], datos.tipo_voto),
+        )
+    except mysql.connector.Error as error:
+        raise HTTPException(status_code=400, detail=error.msg)
+    return _resumen_votos(id_reporte, datos.tipo_voto)
+
+
+@router.delete("/{id_reporte}/voto")
+def quitar_voto(
+    id_reporte: int = PathParam(ge=1),
+    usuario: dict = Depends(usuario_actual),
+):
+    """Retira el voto propio. Si no había voto, responde igual (operación idempotente)."""
+    ejecutar(
+        "DELETE FROM reporte_voto WHERE id_reporte = %s AND id_usuario = %s",
+        (id_reporte, usuario["id_usuario"]),
+    )
+    return _resumen_votos(id_reporte, None)
+
+
+def _resumen_votos(id_reporte: int, mi_voto: str | None) -> dict:
+    """Contadores ya actualizados por el trigger, para refrescar la pantalla."""
+    filas = consultar(
+        "SELECT total_confirmaciones, total_desmentidos, estado FROM reporte WHERE id_reporte = %s",
+        (id_reporte,),
+    )
+    if not filas:
+        raise HTTPException(status_code=404, detail="Reporte no encontrado")
+    return {
+        "id_reporte": id_reporte,
+        "total_confirmaciones": filas[0]["total_confirmaciones"],
+        "total_desmentidos": filas[0]["total_desmentidos"],
+        "estado": filas[0]["estado"],
+        "mi_voto": mi_voto,
     }
 
 
