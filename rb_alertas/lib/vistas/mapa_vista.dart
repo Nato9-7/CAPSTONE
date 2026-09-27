@@ -54,7 +54,9 @@ class _MapaVistaState extends State<MapaVista> {
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No se pudieron cargar los reportes del mapa')),
+        const SnackBar(
+          content: Text('No se pudieron cargar los reportes del mapa'),
+        ),
       );
     }
   }
@@ -79,29 +81,6 @@ class _MapaVistaState extends State<MapaVista> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 1,
-        foregroundColor: Colors.black87,
-        leading: IconButton(
-          icon: const Icon(Icons.menu_rounded),
-          onPressed: () {},
-        ),
-        title: const Text(
-          'RB Alertas',
-          style: TextStyle(
-            color: _colorAzul,
-            fontWeight: FontWeight.w800,
-            fontSize: 20,
-          ),
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings_outlined),
-            onPressed: () {},
-          ),
-        ],
-      ),
       body: Stack(
         children: [
           FlutterMap(
@@ -245,9 +224,15 @@ class _ChipsFiltro extends StatelessWidget {
         ),
         for (final categoria in categorias)
           _chip(
-            etiqueta: etiquetaCortaCategoria(categoria.codigo, categoria.nombre),
+            etiqueta: etiquetaCortaCategoria(
+              categoria.codigo,
+              categoria.nombre,
+            ),
             icono: iconoCategoria(categoria.codigo),
-            color: colorCategoria(categoria.codigo, colorHex: categoria.colorHex),
+            color: colorCategoria(
+              categoria.codigo,
+              colorHex: categoria.colorHex,
+            ),
             activo: codigoSeleccionado == categoria.codigo,
             onTap: () => onSeleccionar(categoria.codigo),
           ),

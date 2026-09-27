@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:rb_alertas/servicios/perfil_servicio.dart';
-import 'package:rb_alertas/servicios/reporte_servicio.dart' show EntidadEmergencia;
+import 'package:rb_alertas/servicios/reporte_servicio.dart'
+    show EntidadEmergencia;
 import 'package:rb_alertas/servicios/sesion.dart';
 import 'package:rb_alertas/vistas/inicio_sesion_vista.dart';
+import 'package:rb_alertas/vistas/mapa_vista.dart';
 import 'package:rb_alertas/widgets/barra_navegacion_inferior.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -65,7 +67,10 @@ class _PerfilVistaState extends State<PerfilVista> {
         title: Text(entidad.nombre),
         content: Text('¿Llamar al ${entidad.telefono}?'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
           FilledButton.icon(
             style: FilledButton.styleFrom(backgroundColor: _colorRojo),
             onPressed: () => Navigator.pop(context, true),
@@ -88,7 +93,10 @@ class _PerfilVistaState extends State<PerfilVista> {
         title: const Text('Cerrar sesión'),
         content: const Text('¿Quieres salir de tu cuenta en este dispositivo?'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: _colorRojo),
             onPressed: () => Navigator.pop(context, true),
@@ -107,7 +115,7 @@ class _PerfilVistaState extends State<PerfilVista> {
     if (!mounted) return;
     Navigator.pushAndRemoveUntil(
       context,
-      MaterialPageRoute(builder: (context) => const InicioSesionVista()),
+      MaterialPageRoute(builder: (context) => const MapaVista()),
       (ruta) => false,
     );
   }
@@ -118,28 +126,10 @@ class _PerfilVistaState extends State<PerfilVista> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _colorFondo,
-      appBar: AppBar(
-        backgroundColor: _colorFondo,
-        surfaceTintColor: Colors.transparent,
-        elevation: 0,
-        centerTitle: true,
-        leading: IconButton(
-          icon: const Icon(Icons.menu_rounded, color: _colorAzul),
-          onPressed: () {},
-        ),
-        title: const Text(
-          'RB Alertas',
-          style: TextStyle(color: _colorAzul, fontWeight: FontWeight.w800, fontSize: 20),
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings_outlined, color: Color(0xFF374151)),
-            onPressed: () {},
-          ),
-        ],
-      ),
       body: _cuerpo(),
-      bottomNavigationBar: const BarraNavegacionInferior(seccionActiva: SeccionApp.perfil),
+      bottomNavigationBar: const BarraNavegacionInferior(
+        seccionActiva: SeccionApp.perfil,
+      ),
     );
   }
 
@@ -147,7 +137,9 @@ class _PerfilVistaState extends State<PerfilVista> {
     final perfil = _perfil;
     if (perfil == null) {
       if (_error == null) {
-        return const Center(child: CircularProgressIndicator(color: _colorAzul));
+        return const Center(
+          child: CircularProgressIndicator(color: _colorAzul),
+        );
       }
       return Center(
         child: Padding(
@@ -155,9 +147,28 @@ class _PerfilVistaState extends State<PerfilVista> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(_error!, textAlign: TextAlign.center, style: const TextStyle(color: _colorTextoGris)),
+              Text(
+                _error!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Color.fromARGB(255, 105, 115, 136),
+                ),
+              ),
               const SizedBox(height: 12),
-              OutlinedButton(onPressed: _cargar, child: const Text('Reintentar')),
+              OutlinedButton(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const InicioSesionVista(),
+                    ),
+                  );
+                },
+                child: const Text(
+                  'Crear cuenta / Iniciar sesión',
+                  style: TextStyle(color: _colorAzul),
+                ),
+              ),
             ],
           ),
         ),
@@ -179,7 +190,11 @@ class _PerfilVistaState extends State<PerfilVista> {
                   const SizedBox(height: 20),
                   const Text(
                     'Accesos Directos Emergencias',
-                    style: TextStyle(fontSize: 16.5, fontWeight: FontWeight.w800, color: _colorTitulo),
+                    style: TextStyle(
+                      fontSize: 16.5,
+                      fontWeight: FontWeight.w800,
+                      color: _colorTitulo,
+                    ),
                   ),
                   const SizedBox(height: 12),
                   _emergencias(perfil),
@@ -195,16 +210,16 @@ class _PerfilVistaState extends State<PerfilVista> {
   }
 
   BoxDecoration get _estiloTarjeta => BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _colorBorde),
-      );
+    color: Colors.white,
+    borderRadius: BorderRadius.circular(14),
+    border: Border.all(color: _colorBorde),
+  );
 
   Widget _tarjetaUsuario(PerfilUsuario p) {
-    final iniciales = [p.nombres, p.apellidos]
-        .where((x) => x.isNotEmpty)
-        .map((x) => x[0].toUpperCase())
-        .join();
+    final iniciales = [
+      p.nombres,
+      p.apellidos,
+    ].where((x) => x.isNotEmpty).map((x) => x[0].toUpperCase()).join();
 
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
@@ -222,7 +237,11 @@ class _PerfilVistaState extends State<PerfilVista> {
                 child: (p.urlFoto == null || p.urlFoto!.isEmpty)
                     ? Text(
                         iniciales.isEmpty ? '?' : iniciales,
-                        style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w700, color: _colorAzul),
+                        style: const TextStyle(
+                          fontSize: 26,
+                          fontWeight: FontWeight.w700,
+                          color: _colorAzul,
+                        ),
                       )
                     : null,
               ),
@@ -238,7 +257,11 @@ class _PerfilVistaState extends State<PerfilVista> {
                       border: Border.all(color: Colors.white, width: 2),
                     ),
                     padding: const EdgeInsets.all(2),
-                    child: const Icon(Icons.check, size: 12, color: Colors.white),
+                    child: const Icon(
+                      Icons.check,
+                      size: 12,
+                      color: Colors.white,
+                    ),
                   ),
                 ),
             ],
@@ -247,16 +270,35 @@ class _PerfilVistaState extends State<PerfilVista> {
           Text(
             p.nombreCompleto.isEmpty ? p.email : p.nombreCompleto,
             textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: _colorTitulo),
+            style: const TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w800,
+              color: _colorTitulo,
+            ),
           ),
           const SizedBox(height: 4),
-          Text(p.lugar, style: const TextStyle(fontSize: 13, color: _colorTextoGris)),
+          Text(
+            p.lugar,
+            style: const TextStyle(fontSize: 13, color: _colorTextoGris),
+          ),
           const SizedBox(height: 16),
           Row(
             children: [
-              Expanded(child: _contador('${p.totalReportes}', 'Reportes\nRealizados', _colorAzul)),
+              Expanded(
+                child: _contador(
+                  '${p.totalReportes}',
+                  'Reportes\nRealizados',
+                  _colorAzul,
+                ),
+              ),
               const SizedBox(width: 12),
-              Expanded(child: _contador('${p.totalResueltos}', 'Alertas\nResueltas', _colorVerde)),
+              Expanded(
+                child: _contador(
+                  '${p.totalResueltos}',
+                  'Alertas\nResueltas',
+                  _colorVerde,
+                ),
+              ),
             ],
           ),
         ],
@@ -273,12 +315,23 @@ class _PerfilVistaState extends State<PerfilVista> {
       ),
       child: Column(
         children: [
-          Text(valor, style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: color)),
+          Text(
+            valor,
+            style: TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.w800,
+              color: color,
+            ),
+          ),
           const SizedBox(height: 2),
           Text(
             etiqueta,
             textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 11.5, color: _colorTextoGris, height: 1.3),
+            style: const TextStyle(
+              fontSize: 11.5,
+              color: _colorTextoGris,
+              height: 1.3,
+            ),
           ),
         ],
       ),
@@ -323,7 +376,10 @@ class _PerfilVistaState extends State<PerfilVista> {
             children: [
               Container(
                 padding: const EdgeInsets.all(9),
-                decoration: BoxDecoration(color: color.withValues(alpha: 0.12), shape: BoxShape.circle),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.12),
+                  shape: BoxShape.circle,
+                ),
                 child: Icon(icono, color: color, size: 20),
               ),
               const SizedBox(height: 8),
@@ -332,10 +388,17 @@ class _PerfilVistaState extends State<PerfilVista> {
                 textAlign: TextAlign.center,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: _colorTitulo),
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                  color: _colorTitulo,
+                ),
               ),
               const SizedBox(height: 2),
-              Text(entidad.telefono, style: const TextStyle(fontSize: 12.5, color: _colorTextoGris)),
+              Text(
+                entidad.telefono,
+                style: const TextStyle(fontSize: 12.5, color: _colorTextoGris),
+              ),
             ],
           ),
         ),
@@ -387,10 +450,18 @@ class _PerfilVistaState extends State<PerfilVista> {
           _opcion(
             Icons.lock_outline,
             'Privacidad y Seguridad',
-            () => _mostrarMensaje('Privacidad y seguridad estará disponible pronto'),
+            () => _mostrarMensaje(
+              'Privacidad y seguridad estará disponible pronto',
+            ),
           ),
           const Divider(height: 1, color: _colorBorde),
-          _opcion(Icons.logout, 'Cerrar Sesión', _cerrarSesion, color: _colorRojo, flecha: false),
+          _opcion(
+            Icons.logout,
+            'Cerrar Sesión',
+            _cerrarSesion,
+            color: _colorRojo,
+            flecha: false,
+          ),
         ],
       ),
     );
@@ -405,12 +476,22 @@ class _PerfilVistaState extends State<PerfilVista> {
   }) {
     return ListTile(
       onTap: alTocar,
-      leading: Icon(icono, color: color == _colorTitulo ? _colorTextoGris : color, size: 22),
+      leading: Icon(
+        icono,
+        color: color == _colorTitulo ? _colorTextoGris : color,
+        size: 22,
+      ),
       title: Text(
         texto,
-        style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600, color: color),
+        style: TextStyle(
+          fontSize: 14.5,
+          fontWeight: FontWeight.w600,
+          color: color,
+        ),
       ),
-      trailing: flecha ? const Icon(Icons.chevron_right, color: _colorTextoGris, size: 20) : null,
+      trailing: flecha
+          ? const Icon(Icons.chevron_right, color: _colorTextoGris, size: 20)
+          : null,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
     );
   }

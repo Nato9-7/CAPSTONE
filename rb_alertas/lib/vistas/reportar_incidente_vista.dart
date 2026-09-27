@@ -132,7 +132,8 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
     // Si el usuario ya marcó otro punto, esta respuesta llegó tarde.
     if (!mounted || _ubicacion != punto) return;
     setState(() {
-      _direccion = direccion ??
+      _direccion =
+          direccion ??
           '${punto.latitude.toStringAsFixed(5)}, ${punto.longitude.toStringAsFixed(5)}';
     });
   }
@@ -193,7 +194,8 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
     if (!mounted) return;
 
     final nombre = archivo.name.toLowerCase();
-    final esVideo = (archivo.mimeType ?? '').startsWith('video/') ||
+    final esVideo =
+        (archivo.mimeType ?? '').startsWith('video/') ||
         nombre.endsWith('.mp4') ||
         nombre.endsWith('.mov') ||
         nombre.endsWith('.webm');
@@ -255,39 +257,12 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
   @override
   Widget build(BuildContext context) {
     // Mientras se envía no se puede salir: el resultado se perdería.
-    return PopScope(
-      canPop: !_enviando,
-      child: _pantalla(),
-    );
+    return PopScope(canPop: !_enviando, child: _pantalla());
   }
 
   Widget _pantalla() {
     return Scaffold(
       backgroundColor: _colorFondo,
-      appBar: AppBar(
-        backgroundColor: _colorFondo,
-        surfaceTintColor: Colors.transparent,
-        elevation: 0,
-        centerTitle: true,
-        leading: IconButton(
-          icon: const Icon(Icons.menu_rounded, color: _colorAzul),
-          onPressed: () {},
-        ),
-        title: const Text(
-          'RB Alertas',
-          style: TextStyle(
-            color: _colorAzul,
-            fontWeight: FontWeight.w800,
-            fontSize: 20,
-          ),
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings_outlined, color: _colorAzul),
-            onPressed: () {},
-          ),
-        ],
-      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
         child: Center(
@@ -339,7 +314,9 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
                       _etiqueta('UBICACIÓN DETECTADA'),
                       const Spacer(),
                       TextButton.icon(
-                        onPressed: _buscandoUbicacion ? null : _detectarUbicacion,
+                        onPressed: _buscandoUbicacion
+                            ? null
+                            : _detectarUbicacion,
                         style: TextButton.styleFrom(
                           foregroundColor: _colorAzul,
                           padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -349,7 +326,10 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
                         icon: const Icon(Icons.my_location_rounded, size: 16),
                         label: const Text(
                           'Actualizar',
-                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
                     ],
@@ -366,7 +346,9 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: _colorAzul,
                         foregroundColor: Colors.white,
-                        disabledBackgroundColor: _colorAzul.withValues(alpha: 0.6),
+                        disabledBackgroundColor: _colorAzul.withValues(
+                          alpha: 0.6,
+                        ),
                         elevation: 0,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
@@ -443,7 +425,10 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
             SizedBox(
               width: 18,
               height: 18,
-              child: CircularProgressIndicator(strokeWidth: 2, color: _colorAzul),
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: _colorAzul,
+              ),
             ),
             SizedBox(width: 10),
             Text(
@@ -460,9 +445,7 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
     return Wrap(
       spacing: 8,
       runSpacing: 8,
-      children: [
-        for (final categoria in categorias) _chipCategoria(categoria),
-      ],
+      children: [for (final categoria in categorias) _chipCategoria(categoria)],
     );
   }
 
@@ -481,7 +464,11 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(iconoCategoria(categoria.codigo), size: 18, color: colorContenido),
+              Icon(
+                iconoCategoria(categoria.codigo),
+                size: 18,
+                color: colorContenido,
+              ),
               const SizedBox(width: 6),
               Text(
                 categoria.nombre,
@@ -591,13 +578,20 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Icon(Icons.videocam_outlined, color: _colorAzul, size: 34),
+                    const Icon(
+                      Icons.videocam_outlined,
+                      color: _colorAzul,
+                      size: 34,
+                    ),
                     const SizedBox(height: 6),
                     Text(
                       evidencia.nombreArchivo,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 13, color: Color(0xFF374151)),
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: Color(0xFF374151),
+                      ),
                     ),
                   ],
                 ),
@@ -613,7 +607,11 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
                 child: IconButton(
                   tooltip: 'Quitar evidencia',
                   visualDensity: VisualDensity.compact,
-                  icon: const Icon(Icons.close_rounded, color: Colors.white, size: 18),
+                  icon: const Icon(
+                    Icons.close_rounded,
+                    color: Colors.white,
+                    size: 18,
+                  ),
                   onPressed: () => setState(() => _evidencia = null),
                 ),
               ),
@@ -673,12 +671,17 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
                     Icon(
                       Icons.location_on,
                       size: 34,
-                      color: _ubicacionConfirmada ? _colorAzul : _colorTextoGris,
+                      color: _ubicacionConfirmada
+                          ? _colorAzul
+                          : _colorTextoGris,
                     ),
                     const SizedBox(height: 2),
                     Container(
                       constraints: const BoxConstraints(maxWidth: 230),
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(6),
@@ -713,7 +716,10 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
                 child: SizedBox(
                   width: 18,
                   height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: _colorAzul),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: _colorAzul,
+                  ),
                 ),
               ),
 

@@ -35,6 +35,7 @@ class _DetalleIncidenteVistaState extends State<DetalleIncidenteVista> {
   DetalleReporte? _detalle;
   String? _error;
   bool _resolviendo = false;
+  bool _votando = false;
   bool _cambio = false;
 
   @override
@@ -159,6 +160,33 @@ class _DetalleIncidenteVistaState extends State<DetalleIncidenteVista> {
     if (mounted) _mostrarMensaje('Copiado: pégalo donde quieras compartirlo');
   }
 
+  /// Registra, cambia o retira el voto del usuario sobre este reporte.
+  /// Tocar de nuevo el botón ya marcado equivale a retirar el voto.
+  Future<void> _votar(DetalleReporte d, TipoVoto voto) async {
+    final token = Sesion.token;
+    if (token == null || token.isEmpty) {
+      _mostrarMensaje('Inicia sesión para confirmar o desmentir un reporte');
+      return;
+    }
+
+    setState(() => _votando = true);
+    try {
+      final resumen = d.miVoto == voto
+          ? await _reporteServicio.quitarVoto(d.id, token)
+          : await _reporteServicio.votar(d.id, token, voto);
+      if (!mounted) return;
+      // El estado puede haber cambiado a VALIDADO o DESCARTADO por el trigger.
+      if (resumen.estado != d.estado) _cambio = true;
+      await _cargar();
+    } on ReporteServicioException catch (e) {
+      if (mounted) _mostrarMensaje(e.mensaje);
+    } catch (_) {
+      if (mounted) _mostrarMensaje('No se pudo conectar con el servidor');
+    } finally {
+      if (mounted) setState(() => _votando = false);
+    }
+  }
+
   Future<void> _marcarResuelto(DetalleReporte d) async {
     final token = Sesion.token;
     if (token == null || token.isEmpty) {
@@ -273,6 +301,8 @@ class _DetalleIncidenteVistaState extends State<DetalleIncidenteVista> {
               _imagen(detalle),
               const SizedBox(height: 14),
               _tarjetaInformacion(detalle),
+              const SizedBox(height: 14),
+              _tarjetaVotos(detalle),
               const SizedBox(height: 14),
               _tarjetaUbicacion(detalle),
               const SizedBox(height: 18),
@@ -438,6 +468,104 @@ class _DetalleIncidenteVistaState extends State<DetalleIncidenteVista> {
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  /// Confirmar o desmentir (CU-16). El autor no vota su propio reporte: ve
+  /// solo el recuento.
+  Widget _tarjetaVotos(DetalleReporte d) {
+    final puedeVotar = d.esAutor == false && d.activo;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: _estiloTarjeta,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.groups_outlined, color: _colorAzul, size: 20),
+              SizedBox(width: 6),
+              Text(
+                '¿Sigue ocurriendo?',
+                style: TextStyle(fontSize: 16.5, fontWeight: FontWeight.w800, color: _colorTitulo),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            puedeVotar
+                ? 'Tu voto ayuda a la comunidad a saber si el reporte es confiable.'
+                : d.esAutor
+                    ? 'Así responde la comunidad a tu reporte.'
+                    : 'Este reporte ya no admite votos.',
+            style: const TextStyle(fontSize: 12.5, color: Color(0xFF6B7280)),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: _botonVoto(
+                  d: d,
+                  voto: TipoVoto.confirma,
+                  icono: Icons.thumb_up_alt_outlined,
+                  iconoActivo: Icons.thumb_up_alt_rounded,
+                  etiqueta: 'Confirmo',
+                  cantidad: d.confirmaciones,
+                  color: _colorVerde,
+                  habilitado: puedeVotar,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _botonVoto(
+                  d: d,
+                  voto: TipoVoto.desmiente,
+                  icono: Icons.thumb_down_alt_outlined,
+                  iconoActivo: Icons.thumb_down_alt_rounded,
+                  etiqueta: 'Desmiento',
+                  cantidad: d.desmentidos,
+                  color: _colorRojo,
+                  habilitado: puedeVotar,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _botonVoto({
+    required DetalleReporte d,
+    required TipoVoto voto,
+    required IconData icono,
+    required IconData iconoActivo,
+    required String etiqueta,
+    required int cantidad,
+    required Color color,
+    required bool habilitado,
+  }) {
+    final marcado = d.miVoto == voto;
+    return SizedBox(
+      height: 44,
+      child: OutlinedButton.icon(
+        onPressed: habilitado && !_votando ? () => _votar(d, voto) : null,
+        style: OutlinedButton.styleFrom(
+          foregroundColor: marcado ? Colors.white : color,
+          backgroundColor: marcado ? color : Colors.white,
+          disabledForegroundColor: marcado ? Colors.white : color.withValues(alpha: 0.55),
+          disabledBackgroundColor: marcado ? color.withValues(alpha: 0.75) : Colors.white,
+          side: BorderSide(color: color.withValues(alpha: habilitado ? 0.8 : 0.35), width: 1.3),
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+        icon: Icon(marcado ? iconoActivo : icono, size: 18),
+        label: Text(
+          '$etiqueta  $cantidad',
+          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+        ),
       ),
     );
   }

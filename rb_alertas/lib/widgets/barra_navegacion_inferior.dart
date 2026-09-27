@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:rb_alertas/vistas/alertas_vista.dart';
 import 'package:rb_alertas/vistas/mapa_vista.dart';
 import 'package:rb_alertas/vistas/perfil_vista.dart';
 import 'package:rb_alertas/vistas/reportar_incidente_vista.dart';
@@ -22,14 +23,12 @@ class BarraNavegacionInferior extends StatelessWidget {
   void _irA(BuildContext context, SeccionApp seccion) {
     if (!habilitada || seccion == seccionActiva) return;
 
-    final Widget? destino = switch (seccion) {
+    final Widget destino = switch (seccion) {
       SeccionApp.mapa => const MapaVista(),
       SeccionApp.reportar => const ReportarIncidenteVista(),
       SeccionApp.perfil => const PerfilVista(),
-      // Alertas todavía no tiene pantalla.
-      SeccionApp.alertas => null,
+      SeccionApp.alertas => const AlertasVista(),
     };
-    if (destino == null) return;
 
     Navigator.pushReplacement(
       context,
