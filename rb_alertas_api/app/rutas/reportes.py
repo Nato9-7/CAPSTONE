@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import os
 from pathlib import Path
@@ -376,6 +377,26 @@ def _entidad_emergencia(id_entidad, id_comuna: int):
     return filas[0] if filas else None
 
 
+# Nombres de fantasía para quien reporta: por seguridad, el nombre real nunca
+# sale de la API (evita represalias contra quien denuncia).
+ADJETIVOS_SURICATA = (
+    "Vigía", "Centinela", "Valiente", "Atenta", "Curiosa", "Veloz", "Guardiana", "Exploradora",
+    "Solidaria", "Despierta", "Alerta", "Intrépida", "Astuta", "Serena", "Audaz", "Protectora",
+)
+
+
+def alias_autor(id_reporte: int) -> str:
+    """Alias fijo por reporte (siempre el mismo al recargar), p. ej. «Suricata Centinela 42».
+
+    Sale del id del reporte y no del usuario: dos reportes de la misma persona tienen
+    alias distintos, así nadie puede juntar sus reportes para adivinar quién es.
+    """
+    semilla = int.from_bytes(hashlib.sha256(f"alias-reporte:{id_reporte}".encode()).digest()[:8], "big")
+    adjetivo = ADJETIVOS_SURICATA[semilla % len(ADJETIVOS_SURICATA)]
+    numero = 10 + (semilla // len(ADJETIVOS_SURICATA)) % 90
+    return f"Suricata {adjetivo} {numero}"
+
+
 @router.get("/{id_reporte}")
 def detalle_reporte(
     id_reporte: int = PathParam(ge=1),
@@ -383,16 +404,14 @@ def detalle_reporte(
 ):
     filas = consultar(
         """
-        SELECT r.id_reporte, r.id_usuario, r.id_comuna, r.estado, r.es_anonimo,
+        SELECT r.id_reporte, r.id_usuario, r.id_comuna, r.estado,
                r.total_confirmaciones, r.total_desmentidos,
                c.codigo AS categoria_codigo, c.nombre AS categoria, c.color_hex, c.id_entidad,
                ST_Latitude(r.ubicacion) AS latitud, ST_Longitude(r.ubicacion) AS longitud,
                r.direccion_referencia AS direccion, r.descripcion,
-               r.fecha_creacion, r.fecha_expiracion,
-               u.nombres, u.apellidos
+               r.fecha_creacion, r.fecha_expiracion
         FROM reporte r
         JOIN categoria_incidente c ON c.id_categoria = r.id_categoria
-        JOIN usuario u ON u.id_usuario = r.id_usuario
         WHERE r.id_reporte = %s
         """,
         (id_reporte,),
@@ -428,7 +447,7 @@ def detalle_reporte(
         "estado": r["estado"],
         "fecha_creacion": r["fecha_creacion"],
         "fecha_expiracion": r["fecha_expiracion"],
-        "autor": "Anónimo" if r["es_anonimo"] else f"{r['nombres']} {r['apellidos']}",
+        "autor": alias_autor(r["id_reporte"]),
         "es_autor": usuario is not None and usuario["id_usuario"] == r["id_usuario"],
         "total_confirmaciones": r["total_confirmaciones"],
         "total_desmentidos": r["total_desmentidos"],
