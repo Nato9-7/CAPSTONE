@@ -5,7 +5,7 @@ import secrets
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.correo import HORAS_VIGENCIA_VERIFICACION
+from app.correo import HORAS_VIGENCIA_RECUPERACION, HORAS_VIGENCIA_VERIFICACION
 from app.db import consultar, ejecutar
 
 DURACION_SESION_DIAS = 30
@@ -40,20 +40,47 @@ def crear_sesion(id_usuario: int, ip: str | None, user_agent: str | None) -> str
     return token
 
 
+def _crear_token(cursor, id_usuario: int, tipo: str, horas_vigencia: int, ip: str | None) -> str:
+    token = secrets.token_urlsafe(32)
+    cursor.execute(
+        """
+        INSERT INTO usuario_token (id_usuario, tipo, token_hash, fecha_expiracion, ip_solicitud)
+        VALUES (%s, %s, %s, DATE_ADD(NOW(), INTERVAL %s HOUR), INET6_ATON(%s))
+        """,
+        (id_usuario, tipo, hash_token(token), horas_vigencia, _ip_valida(ip)),
+    )
+    return token
+
+
 def crear_token_verificacion(cursor, id_usuario: int, ip: str | None) -> str:
     """Token de un solo uso para verificar el correo (usuario_token, tipo VERIFICACION_EMAIL).
 
     Recibe un cursor para quedar en la misma transacción que la creación del usuario.
     """
-    token = secrets.token_urlsafe(32)
+    return _crear_token(cursor, id_usuario, "VERIFICACION_EMAIL", HORAS_VIGENCIA_VERIFICACION, ip)
+
+
+def crear_token_recuperacion(cursor, id_usuario: int, ip: str | None) -> str:
+    """Token de un solo uso para cambiar la contraseña (usuario_token, tipo RECUPERACION_PASSWORD).
+
+    Anula los enlaces de recuperación anteriores: solo sirve el último correo enviado.
+    """
     cursor.execute(
         """
-        INSERT INTO usuario_token (id_usuario, tipo, token_hash, fecha_expiracion, ip_solicitud)
-        VALUES (%s, 'VERIFICACION_EMAIL', %s, DATE_ADD(NOW(), INTERVAL %s HOUR), INET6_ATON(%s))
+        UPDATE usuario_token SET fecha_uso = NOW()
+        WHERE id_usuario = %s AND tipo = 'RECUPERACION_PASSWORD' AND fecha_uso IS NULL
         """,
-        (id_usuario, hash_token(token), HORAS_VIGENCIA_VERIFICACION, _ip_valida(ip)),
+        (id_usuario,),
     )
-    return token
+    return _crear_token(cursor, id_usuario, "RECUPERACION_PASSWORD", HORAS_VIGENCIA_RECUPERACION, ip)
+
+
+def revocar_sesiones_usuario(cursor, id_usuario: int) -> None:
+    """Cierra todas las sesiones abiertas del usuario (p. ej. al cambiar la contraseña)."""
+    cursor.execute(
+        "UPDATE usuario_sesion SET fecha_revocacion = NOW() WHERE id_usuario = %s AND fecha_revocacion IS NULL",
+        (id_usuario,),
+    )
 
 
 def revocar_sesion(token: str) -> None:
