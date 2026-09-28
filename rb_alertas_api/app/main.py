@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
+from pathlib import Path
 from app.rutas import reportes, usuarios
 
 app = FastAPI(title = "API de RB Alertas")
@@ -36,6 +37,12 @@ def ping():
 
 app.include_router(usuarios.router, prefix = "/api/usuarios")
 app.include_router(reportes.router, prefix = "/api/reportes")
+
+# Logo de la app para las páginas que abren los enlaces del correo y los correos.
+# Igual que /uploads: si la carpeta faltara, la API arranca igual (solo sin logo).
+CARPETA_ESTATICOS = Path(__file__).parent / "estaticos"
+if CARPETA_ESTATICOS.is_dir():
+    app.mount("/estaticos", StaticFiles(directory = CARPETA_ESTATICOS), name = "estaticos")
 
 # Evidencias (fotos/videos) adjuntas a los reportes.
 # Solo si la carpeta existe: si falta (p. ej. por permisos), la API arranca

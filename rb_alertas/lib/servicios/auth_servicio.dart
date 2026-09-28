@@ -94,6 +94,23 @@ class AuthServicio {
     throw _error(respuesta, 'No se pudo reenviar el correo');
   }
 
+  /// Pide el correo con el enlace para crear una contraseña nueva.
+  /// Devuelve el mensaje para mostrar.
+  Future<String> recuperarPassword(String email) async {
+    final respuesta = await http.post(
+      Uri.parse('$baseUrl/api/usuarios/recuperar-password'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'email': email}),
+    );
+
+    if (respuesta.statusCode == 202) {
+      final cuerpo = _json(respuesta);
+      return (cuerpo is Map ? cuerpo['detail'] : null)?.toString() ??
+          'Te enviamos un enlace a tu correo.';
+    }
+    throw _error(respuesta, 'No se pudo enviar el correo');
+  }
+
   // La API responde JSON sin charset; se decodifica como UTF-8 para que
   // las tildes y la ñ se vean bien.
   dynamic _json(http.Response respuesta) =>

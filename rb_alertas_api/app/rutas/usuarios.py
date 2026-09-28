@@ -1,21 +1,28 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr, Field
 from uuid import uuid4
 import bcrypt
+import html
 import mysql.connector
 
-from app.correo import correo_verificacion, enviar_correo
+from app.correo import correo_recuperacion, correo_verificacion, enviar_correo
 from app.db import consultar, transaccion
 from app.seguridad import (
     crear_sesion,
+    crear_token_recuperacion,
     crear_token_verificacion,
     esquema_bearer,
     hash_token,
     revocar_sesion,
+    revocar_sesiones_usuario,
     usuario_actual,
 )
+
+# Mismos límites que el registro (bcrypt solo usa los primeros 72 bytes).
+LARGO_MINIMO_PASSWORD = 8
+LARGO_MAXIMO_PASSWORD = 72
 
 router = APIRouter()
 
@@ -38,6 +45,10 @@ class ReenvioVerificacion(BaseModel):
     email: EmailStr
 
 
+class RecuperacionPassword(BaseModel):
+    email: EmailStr
+
+
 def _ip(request: Request) -> str | None:
     return request.client.host if request.client else None
 
@@ -48,17 +59,48 @@ def _programar_correo_verificacion(tareas: BackgroundTasks, nombre: str, email: 
     tareas.add_task(enviar_correo, email, asunto, texto, html)
 
 
-def _pagina(titulo: str, mensaje: str, ok: bool, status_code: int = 200) -> HTMLResponse:
-    color = "#0056D2" if ok else "#B91C1C"
+# Páginas que abren los enlaces del correo. Usan los mismos colores y formas que
+# las pantallas de la app (inicio de sesión): tarjeta blanca sobre fondo claro.
+_ESTILO_PAGINAS = """
+body{margin:0;padding:40px 20px;background:#F8FAFC;font-family:'Segoe UI',Roboto,Arial,sans-serif;color:#374151}
+.tarjeta{max-width:420px;margin:auto;box-sizing:border-box;background:#fff;border:1.5px solid #DCE4F2;
+  border-radius:24px;box-shadow:0 4px 16px rgba(0,0,0,.04);padding:36px 28px;text-align:center}
+.logo{display:block;width:88px;height:88px;object-fit:contain;margin:0 auto 22px}
+h1{margin:0 0 10px;font-size:24px;font-weight:800;letter-spacing:-.4px;color:#0056D2}
+h1.error{color:#B91C1C}
+p{margin:0 0 8px;font-size:14px;line-height:1.45;color:#6B7280}
+form{text-align:left;margin-top:24px}
+label{display:block;font-size:13px;font-weight:700;color:#1F2937;margin-bottom:8px}
+input[type=password]{width:100%;box-sizing:border-box;padding:14px 16px;margin-bottom:18px;font-size:15px;
+  background:#F0F4FF;border:1.2px solid #D4E2FB;border-radius:12px;outline:none}
+input[type=password]:focus{border:1.8px solid #0056D2}
+.ayuda{font-size:12.5px;margin:-8px 0 22px}
+.aviso{background:#FEE2E2;color:#B91C1C;border-radius:12px;padding:10px 14px;font-size:13.5px;margin:0 0 18px}
+button{width:100%;height:48px;border:0;border-radius:12px;background:#0056D2;color:#fff;font-size:16px;
+  font-weight:700;cursor:pointer}
+"""
+
+
+_LOGO = '<img class="logo" src="/estaticos/logo.png" alt="RB Alertas">'
+
+
+def _documento(cuerpo: str, status_code: int = 200) -> HTMLResponse:
     return HTMLResponse(
         status_code=status_code,
         content=f"""<!doctype html><html lang="es"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>RB Alertas</title></head>
-<body style="font-family:Segoe UI,Arial,sans-serif;background:#F1F3F8;margin:0;padding:48px 16px">
-<div style="max-width:440px;margin:auto;background:#fff;border-radius:10px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,.06)">
-<div style="background:{color};color:#fff;padding:20px 24px;font-size:20px;font-weight:bold">{titulo}</div>
-<p style="color:#374151;line-height:1.5;padding:8px 24px 16px;margin:16px 0">{mensaje}</p>
-</div></body></html>""",
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>RB Alertas</title>
+<style>{_ESTILO_PAGINAS}</style></head>
+<body><div class="tarjeta">{cuerpo}</div></body></html>""",
+    )
+
+
+def _pagina(titulo: str, mensaje: str, ok: bool, status_code: int = 200) -> HTMLResponse:
+    clase = "" if ok else ' class="error"'
+    return _documento(
+        f"""{_LOGO}
+<h1{clase}>{titulo}</h1>
+<p>{mensaje}</p>""",
+        status_code,
     )
 
 
@@ -205,6 +247,153 @@ def reenviar_verificacion(datos: ReenvioVerificacion, request: Request, tareas: 
         token = crear_token_verificacion(cursor, usuario["id_usuario"], _ip(request))
     _programar_correo_verificacion(tareas, usuario["nombres"], usuario["email"], token)
     return respuesta
+
+
+@router.post("/recuperar-password", status_code=202)
+def recuperar_password(datos: RecuperacionPassword, request: Request, tareas: BackgroundTasks):
+    """Envía un enlace para crear una contraseña nueva."""
+    # Misma respuesta exista o no la cuenta, para no revelar qué correos están registrados.
+    respuesta = {"detail": "Si el correo está registrado, te enviamos un enlace para crear una contraseña nueva."}
+    filas = consultar(
+        """
+        SELECT id_usuario, nombres, apellidos, email FROM usuario
+        WHERE email = %s AND estado NOT IN ('SUSPENDIDO', 'ELIMINADO')
+        """,
+        (datos.email,),
+    )
+    if not filas:
+        return respuesta
+
+    usuario = filas[0]
+    reciente = consultar(
+        """
+        SELECT 1 FROM usuario_token
+        WHERE id_usuario = %s AND tipo = 'RECUPERACION_PASSWORD'
+          AND fecha_creacion > NOW() - INTERVAL 1 MINUTE
+        """,
+        (usuario["id_usuario"],),
+    )
+    if reciente:
+        # Máximo un correo por minuto: evita usar esto para llenar la bandeja de alguien.
+        return respuesta
+
+    with transaccion() as cursor:
+        token = crear_token_recuperacion(cursor, usuario["id_usuario"], _ip(request))
+    asunto, texto, html_cuerpo = correo_recuperacion(
+        f"{usuario['nombres']} {usuario['apellidos']}", usuario["email"], token
+    )
+    tareas.add_task(enviar_correo, usuario["email"], asunto, texto, html_cuerpo)
+    return respuesta
+
+
+def _usuario_de_token_recuperacion(token: str):
+    filas = consultar(
+        """
+        SELECT t.id_token, u.id_usuario, u.email
+        FROM usuario_token t
+        JOIN usuario u ON u.id_usuario = t.id_usuario
+        WHERE t.token_hash = %s AND t.tipo = 'RECUPERACION_PASSWORD'
+          AND t.fecha_uso IS NULL AND t.fecha_expiracion > NOW()
+          AND u.estado NOT IN ('SUSPENDIDO', 'ELIMINADO')
+        """,
+        (hash_token(token),),
+    )
+    return filas[0] if filas else None
+
+
+def _enlace_vencido() -> HTMLResponse:
+    return _pagina(
+        "El enlace no es válido o ya venció",
+        "Abre RB Alertas, toca «¿Olvidé mi contraseña?» y pide un enlace nuevo. "
+        "Cada enlace sirve una sola vez y dura 1 hora.",
+        ok=False,
+        status_code=400,
+    )
+
+
+def _formulario_restablecer(token: str, email: str, error: str | None = None, status_code: int = 200) -> HTMLResponse:
+    """Página del enlace del correo: formulario para escribir la contraseña nueva."""
+    error_html = f'<div class="aviso">{html.escape(error)}</div>' if error else ""
+    campos = f'required minlength="{LARGO_MINIMO_PASSWORD}" maxlength="{LARGO_MAXIMO_PASSWORD}" autocomplete="new-password"'
+    respuesta = _documento(
+        f"""{_LOGO}
+<h1>Crea tu contraseña nueva</h1>
+<p>Cuenta: <b style="color:#1F2937">{html.escape(email)}</b></p>
+<form method="post" action="restablecer">
+{error_html}
+<input type="hidden" name="token" value="{html.escape(token)}">
+<label for="password">Contraseña nueva</label>
+<input type="password" id="password" name="password" placeholder="••••••••" {campos}>
+<label for="confirmacion">Repite la contraseña</label>
+<input type="password" id="confirmacion" name="confirmacion" placeholder="••••••••" {campos}>
+<p class="ayuda">Mínimo {LARGO_MINIMO_PASSWORD} caracteres.</p>
+<button type="submit">Guardar contraseña</button>
+</form>""",
+        status_code,
+    )
+    # El token va en la URL: que no se guarde en caché ni viaje a otros sitios.
+    respuesta.headers["Cache-Control"] = "no-store"
+    respuesta.headers["Referrer-Policy"] = "no-referrer"
+    return respuesta
+
+
+@router.get("/restablecer", response_class=HTMLResponse)
+def formulario_restablecer(token: str = Query(min_length=20, max_length=200)):
+    """Destino del enlace del correo de recuperación."""
+    usuario = _usuario_de_token_recuperacion(token)
+    if usuario is None:
+        return _enlace_vencido()
+    return _formulario_restablecer(token, usuario["email"])
+
+
+@router.post("/restablecer", response_class=HTMLResponse)
+def restablecer_password(
+    token: str = Form(min_length=20, max_length=200),
+    password: str = Form(""),
+    confirmacion: str = Form(""),
+):
+    usuario = _usuario_de_token_recuperacion(token)
+    if usuario is None:
+        return _enlace_vencido()
+
+    error = None
+    if not LARGO_MINIMO_PASSWORD <= len(password) <= LARGO_MAXIMO_PASSWORD:
+        error = f"La contraseña debe tener entre {LARGO_MINIMO_PASSWORD} y {LARGO_MAXIMO_PASSWORD} caracteres."
+    elif len(password.encode("utf-8")) > LARGO_MAXIMO_PASSWORD:
+        error = "La contraseña es demasiado larga."
+    elif password != confirmacion:
+        error = "Las contraseñas no coinciden."
+    if error:
+        return _formulario_restablecer(token, usuario["email"], error, status_code=400)
+
+    password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    with transaccion() as cursor:
+        # Se marca el token como usado primero: si dos envíos llegan juntos, solo uno pasa.
+        cursor.execute(
+            "UPDATE usuario_token SET fecha_uso = NOW() WHERE id_token = %s AND fecha_uso IS NULL",
+            (usuario["id_token"],),
+        )
+        if cursor.rowcount != 1:
+            return _enlace_vencido()
+        # Abrir el enlace del correo también demuestra que el correo es suyo.
+        cursor.execute(
+            """
+            UPDATE usuario
+            SET password_hash = %s, password_actualizada = NOW(), intentos_fallidos = 0,
+                email_verificado = 1, estado = IF(estado = 'PENDIENTE', 'ACTIVO', estado)
+            WHERE id_usuario = %s
+            """,
+            (password_hash, usuario["id_usuario"]),
+        )
+        # Quien tuviera la contraseña anterior queda fuera de todos los dispositivos.
+        revocar_sesiones_usuario(cursor, usuario["id_usuario"])
+
+    return _pagina(
+        "¡Contraseña actualizada!",
+        "Ya puedes iniciar sesión en RB Alertas con tu contraseña nueva. "
+        "Por seguridad, cerramos la sesión en todos tus dispositivos.",
+        ok=True,
+    )
 
 
 @router.post("/login")

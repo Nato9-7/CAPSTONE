@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:rb_alertas/servicios/auth_servicio.dart';
 import 'package:rb_alertas/servicios/sesion.dart';
 import 'package:rb_alertas/vistas/mapa_vista.dart';
+import 'package:rb_alertas/vistas/recuperar_contrasena_vista.dart';
 import 'package:rb_alertas/vistas/registro_vista.dart';
 import 'package:rb_alertas/widgets/app_logo.dart';
 
@@ -300,7 +301,14 @@ class _InicioSesionVistaState extends State<InicioSesionVista> {
                         alignment: Alignment.centerRight,
                         child: InkWell(
                           onTap: () {
-                            // Acción para recuperar contraseña
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => RecuperarContrasenaVista(
+                                  emailInicial: _emailController.text.trim(),
+                                ),
+                              ),
+                            );
                           },
                           child: const Text(
                             '¿Olvidé mi contraseña?',
