@@ -12,6 +12,7 @@ log = logging.getLogger("rb_alertas.correo")
 
 ZONA_CHILE = ZoneInfo("America/Santiago")
 HORAS_VIGENCIA_VERIFICACION = 24
+HORAS_VIGENCIA_RECUPERACION = 1
 
 
 def correo_configurado() -> bool:
@@ -92,7 +93,9 @@ def _plantilla(titulo: str, subtitulo: str, saludo: str, intro: str, filas: list
   <tr><td align="center">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
            style="max-width:570px;background:#FFFFFF;border-radius:8px;overflow:hidden;font-family:'Segoe UI',Arial,sans-serif">
-      <tr><td style="background:#0B3D91;padding:20px 24px">
+      <tr><td style="background:#0056D2;padding:20px 24px">
+        <img src="{html.escape(_url_api())}/estaticos/logo.png" width="56" height="56" alt="RB Alertas"
+             style="display:block;margin:0 0 12px;border:0">
         <div style="color:#FFFFFF;font-size:19px;font-weight:bold">{html.escape(titulo)}</div>
         <div style="color:#DCE6F7;font-size:13px;margin-top:6px">{html.escape(subtitulo)}</div>
       </td></tr>
@@ -112,10 +115,13 @@ def _plantilla(titulo: str, subtitulo: str, saludo: str, intro: str, filas: list
 </body></html>"""
 
 
+def _url_api() -> str:
+    return os.getenv("URL_PUBLICA_API", "http://129.213.86.163:8000").rstrip("/")
+
+
 def correo_verificacion(nombre: str, email: str, token: str) -> tuple[str, str, str]:
     """Asunto, texto plano y HTML del correo para verificar la cuenta."""
-    url_api = os.getenv("URL_PUBLICA_API", "http://129.213.86.163:8000").rstrip("/")
-    enlace = f"{url_api}/api/usuarios/verificar?token={token}"
+    enlace = f"{_url_api()}/api/usuarios/verificar?token={token}"
     ahora = datetime.now(ZONA_CHILE)
     vence = ahora + timedelta(hours=HORAS_VIGENCIA_VERIFICACION)
     fecha = ahora.strftime("%d-%m-%Y")
@@ -141,6 +147,40 @@ def correo_verificacion(nombre: str, email: str, token: str) -> tuple[str, str, 
     texto = (
         f"Estimado(a) {nombre}:\n\n{intro}\n\n"
         f"Abre este enlace para verificar tu correo (válido hasta el {vence_texto}, hora de Chile):\n{enlace}\n\n"
+        f"{nota}\n\n{generado}\n"
+    )
+    return asunto, texto, html_cuerpo
+
+
+def correo_recuperacion(nombre: str, email: str, token: str) -> tuple[str, str, str]:
+    """Asunto, texto plano y HTML del correo para crear una contraseña nueva."""
+    enlace = f"{_url_api()}/api/usuarios/restablecer?token={token}"
+    ahora = datetime.now(ZONA_CHILE)
+    vence = ahora + timedelta(hours=HORAS_VIGENCIA_RECUPERACION)
+    fecha = ahora.strftime("%d-%m-%Y")
+    fecha_hora = ahora.strftime("%d-%m-%Y, %H:%M")
+    vence_texto = vence.strftime("%d-%m-%Y, %H:%M")
+
+    asunto = f"Recupera tu contraseña · RB Alertas · {fecha}"
+    intro = (f"El {fecha_hora} se pidió cambiar la contraseña de tu cuenta en RB Alertas. "
+             "Para crear una nueva, abre el enlace de abajo.")
+    nota = ("Si no lo pediste tú, ignora este mensaje: tu contraseña actual sigue funcionando. "
+            "El enlace sirve una sola vez. Nunca te pediremos tu contraseña por correo.")
+    generado = f"Generado automáticamente por RB Alertas el {fecha_hora} (hora de Chile)."
+
+    html_cuerpo = _plantilla(
+        titulo="Recupera tu contraseña",
+        subtitulo=f"RB Alertas · {fecha}",
+        saludo=f"Estimado(a) {nombre}:",
+        intro=intro,
+        filas=[("Correo", email), ("Enlace válido hasta", f"{vence_texto} (hora de Chile)")],
+        boton=("Crear contraseña nueva", enlace),
+        nota=nota,
+        generado=generado,
+    )
+    texto = (
+        f"Estimado(a) {nombre}:\n\n{intro}\n\n"
+        f"Enlace (válido hasta el {vence_texto}, hora de Chile):\n{enlace}\n\n"
         f"{nota}\n\n{generado}\n"
     )
     return asunto, texto, html_cuerpo
