@@ -6,6 +6,7 @@ import 'package:latlong2/latlong.dart' show LatLng;
 import 'package:rb_alertas/config/api_config.dart';
 import 'package:rb_alertas/servicios/reporte_servicio.dart';
 import 'package:rb_alertas/servicios/sesion.dart';
+import 'package:rb_alertas/widgets/app_logo.dart';
 import 'package:rb_alertas/widgets/categoria_visual.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -87,13 +88,6 @@ class _DetalleIncidenteVistaState extends State<DetalleIncidenteVista> {
     if (dias == 0) return '$hora · Hoy';
     if (dias == 1) return '$hora · Ayer';
     return '$hora · ${dos(fecha.day)}-${dos(fecha.month)}-${fecha.year}';
-  }
-
-  String _iniciales(String nombre) {
-    final partes = nombre.split(' ').where((p) => p.isNotEmpty).toList();
-    if (partes.isEmpty || nombre == 'Anónimo') return '?';
-    final segunda = partes.length > 1 ? partes[1][0] : '';
-    return (partes.first[0] + segunda).toUpperCase();
   }
 
   bool _esVideo(String url) {
@@ -441,13 +435,12 @@ class _DetalleIncidenteVistaState extends State<DetalleIncidenteVista> {
           const SizedBox(height: 12),
           Row(
             children: [
-              CircleAvatar(
+              // El autor aparece con un alias de suricata (lo arma la API):
+              // su nombre real no se muestra por seguridad.
+              const CircleAvatar(
                 radius: 18,
-                backgroundColor: _colorAzul,
-                child: Text(
-                  _iniciales(d.autor),
-                  style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700),
-                ),
+                backgroundColor: Color(0xFFE5EDFF),
+                child: ClipOval(child: AppLogo(size: 32)),
               ),
               const SizedBox(width: 10),
               Expanded(

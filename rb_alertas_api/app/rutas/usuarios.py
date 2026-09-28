@@ -2,7 +2,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr, Field
-from uuid import UUID, uuid4
+from uuid import uuid4
 import bcrypt
 import mysql.connector
 
@@ -60,11 +60,6 @@ def _pagina(titulo: str, mensaje: str, ok: bool, status_code: int = 200) -> HTML
 <p style="color:#374151;line-height:1.5;padding:8px 24px 16px;margin:16px 0">{mensaje}</p>
 </div></body></html>""",
     )
-
-
-@router.get("/")
-def listar_usuarios(_: dict = Depends(usuario_actual)):
-    return consultar("SELECT uuid_publico, nombres, email FROM usuario")
 
 
 @router.get("/perfil")
@@ -210,17 +205,6 @@ def reenviar_verificacion(datos: ReenvioVerificacion, request: Request, tareas: 
         token = crear_token_verificacion(cursor, usuario["id_usuario"], _ip(request))
     _programar_correo_verificacion(tareas, usuario["nombres"], usuario["email"], token)
     return respuesta
-
-
-@router.get("/{uuid_publico}")
-def obtener_usuario(uuid_publico: UUID, _: dict = Depends(usuario_actual)):
-    filas = consultar(
-        "SELECT uuid_publico, nombres, email FROM usuario WHERE uuid_publico = %s",
-        (str(uuid_publico),)
-    )
-    if not filas:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    return filas[0]
 
 
 @router.post("/login")
