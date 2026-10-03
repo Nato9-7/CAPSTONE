@@ -4,7 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 from pathlib import Path
-from app.rutas import reportes, usuarios
+from app.rutas import notificaciones, reportes, usuarios, zonas
 
 app = FastAPI(title = "API de RB Alertas")
 
@@ -37,6 +37,8 @@ def ping():
 
 app.include_router(usuarios.router, prefix = "/api/usuarios")
 app.include_router(reportes.router, prefix = "/api/reportes")
+app.include_router(zonas.router, prefix = "/api/usuarios/zonas")
+app.include_router(notificaciones.router, prefix = "/api/usuarios/notificaciones")
 
 # Logo de la app para las páginas que abren los enlaces del correo y los correos.
 # Igual que /uploads: si la carpeta faltara, la API arranca igual (solo sin logo).

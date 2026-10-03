@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:rb_alertas/servicios/estado_alertas_servicio.dart';
 import 'package:rb_alertas/vistas/alertas_vista.dart';
 import 'package:rb_alertas/vistas/mapa_vista.dart';
 import 'package:rb_alertas/vistas/perfil_vista.dart';
@@ -151,13 +152,19 @@ class BarraNavegacionInferior extends StatelessWidget {
                   Positioned(
                     right: -2,
                     top: -2,
-                    child: Container(
-                      width: 8,
-                      height: 8,
-                      decoration: const BoxDecoration(
-                        color: Color(0xFFE53935),
-                        shape: BoxShape.circle,
-                      ),
+                    child: ValueListenableBuilder<bool>(
+                      valueListenable: EstadoAlertas.hayNuevas,
+                      builder: (context, hayNuevas, _) {
+                        if (!hayNuevas) return const SizedBox.shrink();
+                        return Container(
+                          width: 8,
+                          height: 8,
+                          decoration: const BoxDecoration(
+                            color: Color(0xFFE53935),
+                            shape: BoxShape.circle,
+                          ),
+                        );
+                      },
                     ),
                   ),
               ],

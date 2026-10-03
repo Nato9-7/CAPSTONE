@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:rb_alertas/servicios/estado_alertas_servicio.dart';
+import 'package:rb_alertas/servicios/notificaciones_servicio.dart';
 import 'package:rb_alertas/servicios/reporte_servicio.dart';
 import 'package:rb_alertas/servicios/sesion.dart';
 import 'package:rb_alertas/servicios/ubicacion_servicio.dart';
 import 'package:rb_alertas/vistas/detalle_incidente_vista.dart';
 import 'package:rb_alertas/vistas/inicio_sesion_vista.dart';
+import 'package:rb_alertas/vistas/zonas_seguras_vista.dart';
 import 'package:rb_alertas/widgets/barra_navegacion_inferior.dart';
 import 'package:rb_alertas/widgets/categoria_visual.dart';
 
@@ -57,9 +60,9 @@ class _AlertasVistaState extends State<AlertasVista>
   void initState() {
     super.initState();
     _tabs = TabController(
-      length: 2,
+      length: 3,
       vsync: this,
-      initialIndex: widget.pestanaInicial.clamp(0, 1),
+      initialIndex: widget.pestanaInicial.clamp(0, 2),
     );
   }
 
@@ -103,7 +106,11 @@ class _AlertasVistaState extends State<AlertasVista>
             Expanded(
               child: TabBarView(
                 controller: _tabs,
-                children: const [_PanelCercanas(), _PanelMisReportes()],
+                children: const [
+                  _PanelCercanas(),
+                  _PanelMisZonas(),
+                  _PanelMisReportes(),
+                ],
               ),
             ),
           ],
@@ -146,8 +153,10 @@ class _SelectorPestanas extends StatelessWidget {
           fontSize: 13,
           fontWeight: FontWeight.w600,
         ),
+        labelPadding: const EdgeInsets.symmetric(horizontal: 4),
         tabs: const [
           Tab(height: 36, text: 'Cerca de ti'),
+          Tab(height: 36, text: 'Mis zonas'),
           Tab(height: 36, text: 'Mis reportes'),
         ],
       ),
@@ -225,6 +234,7 @@ class _PanelCercanasState extends State<_PanelCercanas>
         longitud: punto.longitude,
         radioKm: _radioKm,
       );
+      EstadoAlertas.marcarVistos(cercanas.reportes.map((r) => r.id));
       if (!mounted) return;
       setState(() {
         _punto = punto;
@@ -1212,6 +1222,367 @@ class _EstadoVacio extends StatelessWidget {
               ),
             ],
           ],
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Pestaña 3: incidentes dentro de las zonas seguras del usuario
+// ---------------------------------------------------------------------------
+
+/// A diferencia de "Cerca de ti", esto no depende de dónde esté el teléfono:
+/// son los incidentes que cayeron dentro de una zona segura configurada, esté
+/// el usuario ahí o no.
+class _PanelMisZonas extends StatefulWidget {
+  const _PanelMisZonas();
+
+  @override
+  State<_PanelMisZonas> createState() => _PanelMisZonasState();
+}
+
+class _PanelMisZonasState extends State<_PanelMisZonas>
+    with AutomaticKeepAliveClientMixin {
+  final _servicio = NotificacionesServicio();
+
+  List<AlertaDeZona> _alertas = const [];
+  bool _cargando = true;
+  String? _error;
+  bool _sinSesion = false;
+
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  void initState() {
+    super.initState();
+    _cargar();
+  }
+
+  Future<void> _cargar() async {
+    final token = Sesion.token;
+    if (token == null || token.isEmpty) {
+      setState(() {
+        _cargando = false;
+        _sinSesion = true;
+      });
+      return;
+    }
+    setState(() {
+      _cargando = true;
+      _error = null;
+      _sinSesion = false;
+    });
+    try {
+      final datos = await _servicio.listar(token);
+      if (!mounted) return;
+      setState(() {
+        _alertas = datos.alertas;
+        _cargando = false;
+      });
+      EstadoAlertas.registrarZonasSinLeer(datos.noLeidas);
+    } on NotificacionesServicioException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _cargando = false;
+        _error = e.mensaje;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _cargando = false;
+        _error = 'No se pudo conectar con el servidor';
+      });
+    }
+  }
+
+  /// Abre el incidente y marca la alerta como leída. El cambio se pinta de
+  /// inmediato en memoria para no esperar una recarga completa de la lista.
+  Future<void> _abrir(AlertaDeZona alerta) async {
+    final token = Sesion.token;
+    if (!alerta.leida && token != null) {
+      setState(() => alerta.leida = true);
+      _servicio.marcarLeida(token, alerta.id);
+      // El contador se recalcula sobre la lista ya pintada: la insignia se
+      // apaga en cuanto el usuario abre la ultima alerta sin leer.
+      EstadoAlertas.registrarZonasSinLeer(
+        _alertas.where((a) => !a.leida).length,
+      );
+    }
+    final cambio = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => DetalleIncidenteVista(idReporte: alerta.reporte.id),
+      ),
+    );
+    if (cambio == true && mounted) _cargar();
+  }
+
+  Future<void> _abrirZonas() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const ZonasSegurasVista()),
+    );
+    if (mounted) _cargar();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+
+    if (_cargando) {
+      return const Center(child: CircularProgressIndicator(color: _colorAzul));
+    }
+    if (_sinSesion) {
+      return _EstadoVacio(
+        icono: Icons.lock_outline,
+        titulo: 'Inicia sesión',
+        detalle: 'Necesitas una cuenta para configurar zonas seguras y recibir sus alertas.',
+        accion: 'Iniciar sesión',
+        onAccion: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const InicioSesionVista()),
+        ),
+      );
+    }
+    if (_error != null) {
+      return _EstadoVacio(
+        icono: Icons.cloud_off_rounded,
+        titulo: 'No se pudieron cargar tus alertas',
+        detalle: _error!,
+        accion: 'Reintentar',
+        onAccion: _cargar,
+      );
+    }
+    if (_alertas.isEmpty) {
+      // El mismo estado sirve para "no tienes zonas" y "tus zonas están
+      // tranquilas": en ambos casos la acción útil es revisar las zonas.
+      return RefreshIndicator(
+        color: _colorAzul,
+        onRefresh: _cargar,
+        child: ListView(
+          children: [
+            SizedBox(height: MediaQuery.of(context).size.height * 0.12),
+            _EstadoVacio(
+              icono: Icons.shield_outlined,
+              titulo: 'Sin alertas en tus zonas',
+              detalle: 'Cuando alguien reporte un incidente dentro de una de tus '
+                  'zonas seguras, aparecerá aquí aunque no estés en el lugar.',
+              accion: 'Ver mis zonas',
+              onAccion: _abrirZonas,
+            ),
+          ],
+        ),
+      );
+    }
+
+    final noLeidas = _alertas.where((a) => !a.leida).length;
+    return RefreshIndicator(
+      color: _colorAzul,
+      onRefresh: _cargar,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+        children: [
+          _ResumenZonas(noLeidas: noLeidas, total: _alertas.length, onGestionar: _abrirZonas),
+          const SizedBox(height: 18),
+          const _TituloSeccion('ALERTAS EN TUS ZONAS'),
+          const SizedBox(height: 8),
+          for (final alerta in _alertas)
+            _FilaAlertaZona(alerta: alerta, onTap: () => _abrir(alerta)),
+        ],
+      ),
+    );
+  }
+}
+
+/// Encabezado de la pestaña: cuántas alertas sin leer y acceso a las zonas.
+class _ResumenZonas extends StatelessWidget {
+  final int noLeidas;
+  final int total;
+  final VoidCallback onGestionar;
+
+  const _ResumenZonas({
+    required this.noLeidas,
+    required this.total,
+    required this.onGestionar,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final hayNuevas = noLeidas > 0;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _colorBorde),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 46,
+            height: 46,
+            decoration: BoxDecoration(
+              color: hayNuevas ? _colorAzul : const Color(0xFFEFF1F5),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              Icons.shield_outlined,
+              size: 23,
+              color: hayNuevas ? Colors.white : _colorTitulo,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  hayNuevas
+                      ? '$noLeidas sin leer'
+                      : 'Todo al día',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: _colorTitulo,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '$total ${total == 1 ? 'alerta recibida' : 'alertas recibidas'} en tus zonas seguras',
+                  style: const TextStyle(fontSize: 12.5, color: _colorTextoGris),
+                ),
+              ],
+            ),
+          ),
+          TextButton(
+            onPressed: onGestionar,
+            child: const Text(
+              'Gestionar',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: _colorAzul,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Fila de la lista de alertas de zona. Las no leídas llevan franja lateral
+/// azul y el nombre de la zona en negrita.
+class _FilaAlertaZona extends StatelessWidget {
+  final AlertaDeZona alerta;
+  final VoidCallback onTap;
+
+  const _FilaAlertaZona({required this.alerta, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final reporte = alerta.reporte;
+    final color = colorCategoria(
+      reporte.categoriaCodigo,
+      colorHex: reporte.colorHex,
+    );
+    final sinLeer = !alerta.leida;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: sinLeer ? _colorAzul : _colorBorde),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: onTap,
+        child: IntrinsicHeight(
+          child: Row(
+            children: [
+              if (sinLeer) Container(width: 4, color: _colorAzul),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: 42,
+                        height: 42,
+                        decoration: BoxDecoration(
+                          color: color.withValues(alpha: sinLeer ? 1 : 0.12),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          iconoCategoria(reporte.categoriaCodigo),
+                          size: 21,
+                          color: sinLeer ? Colors.white : color,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              reporte.categoria,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w700,
+                                color: _colorTitulo,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Row(
+                              children: [
+                                Icon(
+                                  alerta.zona?.tipo.icono ?? Icons.place_outlined,
+                                  size: 13,
+                                  color: sinLeer ? _colorAzul : _colorTextoGris,
+                                ),
+                                const SizedBox(width: 4),
+                                Expanded(
+                                  child: Text(
+                                    alerta.referencia,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 12.5,
+                                      fontWeight: sinLeer
+                                          ? FontWeight.w600
+                                          : FontWeight.w400,
+                                      color: sinLeer
+                                          ? _colorAzul
+                                          : _colorTextoGris,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        tiempoRelativo(alerta.fechaEnvio),
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                          color: sinLeer ? _colorAzul : _colorTextoGris,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
