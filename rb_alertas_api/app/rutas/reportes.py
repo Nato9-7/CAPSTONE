@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import os
 from pathlib import Path
@@ -348,11 +349,59 @@ def crear_reporte(
             ruta_evidencia.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=error.msg)
 
+    # El aviso a las zonas seguras va aqui, con el reporte ya confirmado en la BD.
+    avisos = _notificar_zonas_seguras(id_reporte, punto_wkt, usuario["id_usuario"])
+
     return {
         "id_reporte": id_reporte,
         "estado": "PENDIENTE",
         "evidencia_url": evidencia_url,
+        "zonas_notificadas": avisos,
     }
+
+
+def _notificar_zonas_seguras(id_reporte: int, punto_wkt: str, id_autor: int) -> int:
+    """Avisa a los vecinos cuyo reporte cayo dentro de alguna de sus zonas seguras.
+
+    Corre DESPUES de confirmar el reporte y a proposito fuera de su transaccion:
+    si el cruce falla, el reporte ya quedo guardado y solo se pierde el aviso.
+    De cada usuario se toma su zona mas cercana al incidente, para que no reciba
+    dos alertas del mismo hecho cuando sus zonas se superponen.
+    """
+    try:
+        with transaccion() as cursor:
+            cursor.execute(
+                f"""
+                INSERT INTO notificacion (
+                    id_usuario, id_reporte, id_zona_segura, motivo, distancia_metros
+                )
+                SELECT id_usuario, %s, id_zona_segura, 'ZONA_SEGURA', distancia_metros
+                FROM (
+                    SELECT z.id_usuario,
+                           z.id_zona_segura,
+                           ROUND(ST_Distance_Sphere(z.centro, {PUNTO_SQL})) AS distancia_metros,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY z.id_usuario
+                               ORDER BY ST_Distance_Sphere(z.centro, {PUNTO_SQL})
+                           ) AS orden
+                    FROM zona_segura z
+                    JOIN usuario u ON u.id_usuario = z.id_usuario
+                    LEFT JOIN usuario_preferencia p ON p.id_usuario = z.id_usuario
+                    WHERE z.activa = 1
+                      AND z.notif_activa = 1
+                      AND z.id_usuario <> %s
+                      AND u.estado = 'ACTIVO'
+                      AND COALESCE(p.notif_zona_activa, 1) = 1
+                      AND ST_Distance_Sphere(z.centro, {PUNTO_SQL}) <= z.radio_metros
+                ) AS candidatas
+                WHERE orden = 1
+                """,
+                (id_reporte, punto_wkt, punto_wkt, id_autor, punto_wkt),
+            )
+            return cursor.rowcount or 0
+    except mysql.connector.Error as error:
+        log.error("No se pudieron generar las alertas de zona segura del reporte %s: %s", id_reporte, error)
+        return 0
 
 
 def _entidad_emergencia(id_entidad, id_comuna: int):
@@ -376,6 +425,26 @@ def _entidad_emergencia(id_entidad, id_comuna: int):
     return filas[0] if filas else None
 
 
+# Nombres de fantasía para quien reporta: por seguridad, el nombre real nunca
+# sale de la API (evita represalias contra quien denuncia).
+ADJETIVOS_SURICATA = (
+    "Vigía", "Centinela", "Valiente", "Atenta", "Curiosa", "Veloz", "Guardiana", "Exploradora",
+    "Solidaria", "Despierta", "Alerta", "Intrépida", "Astuta", "Serena", "Audaz", "Protectora",
+)
+
+
+def alias_autor(id_reporte: int) -> str:
+    """Alias fijo por reporte (siempre el mismo al recargar), p. ej. «Suricata Centinela 42».
+
+    Sale del id del reporte y no del usuario: dos reportes de la misma persona tienen
+    alias distintos, así nadie puede juntar sus reportes para adivinar quién es.
+    """
+    semilla = int.from_bytes(hashlib.sha256(f"alias-reporte:{id_reporte}".encode()).digest()[:8], "big")
+    adjetivo = ADJETIVOS_SURICATA[semilla % len(ADJETIVOS_SURICATA)]
+    numero = 10 + (semilla // len(ADJETIVOS_SURICATA)) % 90
+    return f"Suricata {adjetivo} {numero}"
+
+
 @router.get("/{id_reporte}")
 def detalle_reporte(
     id_reporte: int = PathParam(ge=1),
@@ -383,16 +452,14 @@ def detalle_reporte(
 ):
     filas = consultar(
         """
-        SELECT r.id_reporte, r.id_usuario, r.id_comuna, r.estado, r.es_anonimo,
+        SELECT r.id_reporte, r.id_usuario, r.id_comuna, r.estado,
                r.total_confirmaciones, r.total_desmentidos,
                c.codigo AS categoria_codigo, c.nombre AS categoria, c.color_hex, c.id_entidad,
                ST_Latitude(r.ubicacion) AS latitud, ST_Longitude(r.ubicacion) AS longitud,
                r.direccion_referencia AS direccion, r.descripcion,
-               r.fecha_creacion, r.fecha_expiracion,
-               u.nombres, u.apellidos
+               r.fecha_creacion, r.fecha_expiracion
         FROM reporte r
         JOIN categoria_incidente c ON c.id_categoria = r.id_categoria
-        JOIN usuario u ON u.id_usuario = r.id_usuario
         WHERE r.id_reporte = %s
         """,
         (id_reporte,),
@@ -428,7 +495,7 @@ def detalle_reporte(
         "estado": r["estado"],
         "fecha_creacion": r["fecha_creacion"],
         "fecha_expiracion": r["fecha_expiracion"],
-        "autor": "Anónimo" if r["es_anonimo"] else f"{r['nombres']} {r['apellidos']}",
+        "autor": alias_autor(r["id_reporte"]),
         "es_autor": usuario is not None and usuario["id_usuario"] == r["id_usuario"],
         "total_confirmaciones": r["total_confirmaciones"],
         "total_desmentidos": r["total_desmentidos"],
