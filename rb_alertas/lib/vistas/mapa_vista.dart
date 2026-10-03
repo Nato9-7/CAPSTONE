@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:rb_alertas/servicios/estado_alertas_servicio.dart';
 import 'package:rb_alertas/servicios/reporte_servicio.dart';
 import 'package:rb_alertas/vistas/detalle_incidente_vista.dart';
 import 'package:rb_alertas/widgets/barra_navegacion_inferior.dart';
@@ -49,6 +50,10 @@ class _MapaVistaState extends State<MapaVista> {
   Future<void> _cargarReportes() async {
     try {
       final reportes = await _reporteServicio.obtenerReportes();
+      EstadoAlertas.revisar(reportes.map((r) => r.id));
+      // Enciende la insignia por alertas de zona sin leer aunque el usuario
+      // todavia no haya entrado a la pestana Alertas.
+      EstadoAlertas.refrescarZonasSinLeer();
       if (!mounted) return;
       setState(() => _reportes = reportes);
     } catch (_) {

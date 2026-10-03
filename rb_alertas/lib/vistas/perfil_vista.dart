@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:rb_alertas/servicios/estado_alertas_servicio.dart';
 import 'package:rb_alertas/servicios/perfil_servicio.dart';
 import 'package:rb_alertas/servicios/reporte_servicio.dart'
     show EntidadEmergencia;
 import 'package:rb_alertas/servicios/sesion.dart';
 import 'package:rb_alertas/vistas/inicio_sesion_vista.dart';
 import 'package:rb_alertas/vistas/mapa_vista.dart';
+import 'package:rb_alertas/vistas/zonas_seguras_vista.dart';
 import 'package:rb_alertas/widgets/barra_navegacion_inferior.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -112,6 +114,7 @@ class _PerfilVistaState extends State<PerfilVista> {
       await _perfilServicio.cerrarSesion(token);
     }
     Sesion.cerrar();
+    EstadoAlertas.limpiar();
     if (!mounted) return;
     Navigator.pushAndRemoveUntil(
       context,
@@ -445,6 +448,15 @@ class _PerfilVistaState extends State<PerfilVista> {
             Icons.person_outline,
             'Editar Perfil',
             () => _mostrarMensaje('Editar perfil estará disponible pronto'),
+          ),
+          const Divider(height: 1, color: _colorBorde),
+          _opcion(
+            Icons.shield_outlined,
+            'Zonas Seguras',
+            () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const ZonasSegurasVista()),
+            ),
           ),
           const Divider(height: 1, color: _colorBorde),
           _opcion(

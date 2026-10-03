@@ -349,11 +349,59 @@ def crear_reporte(
             ruta_evidencia.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=error.msg)
 
+    # El aviso a las zonas seguras va aqui, con el reporte ya confirmado en la BD.
+    avisos = _notificar_zonas_seguras(id_reporte, punto_wkt, usuario["id_usuario"])
+
     return {
         "id_reporte": id_reporte,
         "estado": "PENDIENTE",
         "evidencia_url": evidencia_url,
+        "zonas_notificadas": avisos,
     }
+
+
+def _notificar_zonas_seguras(id_reporte: int, punto_wkt: str, id_autor: int) -> int:
+    """Avisa a los vecinos cuyo reporte cayo dentro de alguna de sus zonas seguras.
+
+    Corre DESPUES de confirmar el reporte y a proposito fuera de su transaccion:
+    si el cruce falla, el reporte ya quedo guardado y solo se pierde el aviso.
+    De cada usuario se toma su zona mas cercana al incidente, para que no reciba
+    dos alertas del mismo hecho cuando sus zonas se superponen.
+    """
+    try:
+        with transaccion() as cursor:
+            cursor.execute(
+                f"""
+                INSERT INTO notificacion (
+                    id_usuario, id_reporte, id_zona_segura, motivo, distancia_metros
+                )
+                SELECT id_usuario, %s, id_zona_segura, 'ZONA_SEGURA', distancia_metros
+                FROM (
+                    SELECT z.id_usuario,
+                           z.id_zona_segura,
+                           ROUND(ST_Distance_Sphere(z.centro, {PUNTO_SQL})) AS distancia_metros,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY z.id_usuario
+                               ORDER BY ST_Distance_Sphere(z.centro, {PUNTO_SQL})
+                           ) AS orden
+                    FROM zona_segura z
+                    JOIN usuario u ON u.id_usuario = z.id_usuario
+                    LEFT JOIN usuario_preferencia p ON p.id_usuario = z.id_usuario
+                    WHERE z.activa = 1
+                      AND z.notif_activa = 1
+                      AND z.id_usuario <> %s
+                      AND u.estado = 'ACTIVO'
+                      AND COALESCE(p.notif_zona_activa, 1) = 1
+                      AND ST_Distance_Sphere(z.centro, {PUNTO_SQL}) <= z.radio_metros
+                ) AS candidatas
+                WHERE orden = 1
+                """,
+                (id_reporte, punto_wkt, punto_wkt, id_autor, punto_wkt),
+            )
+            return cursor.rowcount or 0
+    except mysql.connector.Error as error:
+        log.error("No se pudieron generar las alertas de zona segura del reporte %s: %s", id_reporte, error)
+        return 0
 
 
 def _entidad_emergencia(id_entidad, id_comuna: int):
