@@ -1,5 +1,6 @@
 import hashlib
 import ipaddress
+import os
 import secrets
 
 from fastapi import Depends, HTTPException
@@ -9,6 +10,14 @@ from app.correo import HORAS_VIGENCIA_RECUPERACION, HORAS_VIGENCIA_VERIFICACION
 from app.db import consultar, ejecutar
 
 DURACION_SESION_DIAS = 30
+
+# Cuentas con acceso al panel de administración, separadas por coma en el .env.
+# Se reconocen por correo (verificado) para no tener que cambiar la BD.
+CORREOS_ADMIN = {
+    correo.strip().lower()
+    for correo in os.getenv("ADMIN_EMAILS", "rbalertas.notificaciones@gmail.com").split(",")
+    if correo.strip()
+}
 
 esquema_bearer = HTTPBearer(auto_error=False)
 
@@ -93,7 +102,7 @@ def revocar_sesion(token: str) -> None:
 def _usuario_de_sesion(token: str) -> dict | None:
     filas = consultar(
         """
-        SELECT u.id_usuario, u.uuid_publico
+        SELECT u.id_usuario, u.uuid_publico, u.email, u.email_verificado
         FROM usuario_sesion s
         JOIN usuario u ON u.id_usuario = s.id_usuario
         WHERE s.refresh_token_hash = %s
@@ -115,6 +124,17 @@ def usuario_actual(credenciales: HTTPAuthorizationCredentials | None = Depends(e
             detail="Tu sesión no es válida o expiró. Vuelve a iniciar sesión",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    return usuario
+
+
+def es_admin(email: str | None, email_verificado) -> bool:
+    return bool(email_verificado) and (email or "").strip().lower() in CORREOS_ADMIN
+
+
+def usuario_admin(usuario: dict = Depends(usuario_actual)) -> dict:
+    """Dependencia para las rutas del panel: además de sesión vigente, exige una cuenta admin."""
+    if not es_admin(usuario["email"], usuario["email_verificado"]):
+        raise HTTPException(status_code=403, detail="Esta sección es solo para administradores")
     return usuario
 
 

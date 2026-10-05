@@ -1,12 +1,20 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 from pathlib import Path
-from app.rutas import notificaciones, reportes, usuarios, zonas
+from app import grafo
+from app.rutas import admin, notificaciones, reportes, usuarios, zonas
 
-app = FastAPI(title = "API de RB Alertas")
+@asynccontextmanager
+async def ciclo_de_vida(app: FastAPI):
+    # Copia periódica MySQL -> Neo4j para el grafo del panel (no hace nada sin NEO4J_URI).
+    grafo.iniciar_sincronizacion_periodica()
+    yield
+
+app = FastAPI(title = "API de RB Alertas", lifespan = ciclo_de_vida)
 
 # Tope al cuerpo de la petición antes de que FastAPI lea el formulario: si no,
 # un archivo gigante se guarda completo en disco antes de validar sus 20 MB.
@@ -39,6 +47,7 @@ app.include_router(usuarios.router, prefix = "/api/usuarios")
 app.include_router(reportes.router, prefix = "/api/reportes")
 app.include_router(zonas.router, prefix = "/api/usuarios/zonas")
 app.include_router(notificaciones.router, prefix = "/api/usuarios/notificaciones")
+app.include_router(admin.router, prefix = "/api/admin")
 
 # Logo de la app para las páginas que abren los enlaces del correo y los correos.
 # Igual que /uploads: si la carpeta faltara, la API arranca igual (solo sin logo).

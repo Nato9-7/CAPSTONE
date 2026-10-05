@@ -19,6 +19,9 @@ class Sesion {
   static const _claveToken = 'sesion_token';
   static const _claveUsuario = 'sesion_usuario';
 
+  /// La cuenta admin solo usa el panel de administración (ver AdminVista).
+  static bool get esAdmin => usuario?['es_admin'] == true;
+
   static Future<void> iniciar(LoginResultado resultado) async {
     token = resultado.token;
     usuario = resultado.usuario;
@@ -50,13 +53,15 @@ class Sesion {
     try {
       final guardado = await _almacen.read(key: _claveToken);
       if (guardado == null || guardado.isEmpty) return false;
-      token = guardado;
       final datos = await _almacen.read(key: _claveUsuario);
       if (datos != null && datos.isNotEmpty) {
         usuario = jsonDecode(datos) as Map<String, dynamic>;
       }
+      token = guardado;
       return true;
     } catch (_) {
+      token = null;
+      usuario = null;
       return false;
     }
   }
