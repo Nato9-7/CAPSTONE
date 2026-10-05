@@ -37,6 +37,11 @@ class _ZonaDetalleVistaState extends State<ZonaDetalleVista> {
   final _servicio = ZonasServicio();
   final _ubicacionServicio = UbicacionServicio();
   final _mapController = MapController();
+  /// La vista previa necesita su propio controlador: `initialCenter` solo se
+  /// aplica al crear el mapa, asi que sin esto el circulo quedaria congelado
+  /// en el primer punto y no seguiria al pin.
+  final _vistaPreviaController = MapController();
+  bool _vistaPreviaLista = false;
   final _nombreCtrl = TextEditingController();
   final _direccionCtrl = TextEditingController();
 
@@ -79,6 +84,7 @@ class _ZonaDetalleVistaState extends State<ZonaDetalleVista> {
     _nombreCtrl.dispose();
     _direccionCtrl.dispose();
     _mapController.dispose();
+    _vistaPreviaController.dispose();
     super.dispose();
   }
 
@@ -98,6 +104,7 @@ class _ZonaDetalleVistaState extends State<ZonaDetalleVista> {
       if (!mounted) return;
       setState(() => _centro = punto);
       _mapController.move(punto, 15);
+      _sincronizarVistaPrevia();
       _completarDireccion(punto);
     } on UbicacionServicioException catch (e) {
       if (!silencioso) _mostrarMensaje(e.mensaje);
@@ -122,6 +129,21 @@ class _ZonaDetalleVistaState extends State<ZonaDetalleVista> {
       : '${(metros / 1000).toStringAsFixed(metros % 1000 == 0 ? 0 : 1)} km';
 
   int get _minutosCaminando => (_radio / _metrosPorMinutoCaminando).round();
+
+  /// Zoom al que el circulo entra completo en el recuadro de la vista previa.
+  double get _zoomVistaPrevia =>
+      _radio >= 2000 ? 12.5 : (_radio >= 1000 ? 13.5 : 14.5);
+
+  /// Lleva la vista previa al punto y al zoom actuales. Se llama al soltar el
+  /// mapa, al cambiar el radio y al usar el GPS; el move va despues del frame
+  /// porque el controlador no acepta ordenes mientras se esta construyendo.
+  void _sincronizarVistaPrevia() {
+    if (!_vistaPreviaLista) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_vistaPreviaLista) return;
+      _vistaPreviaController.move(_centro, _zoomVistaPrevia);
+    });
+  }
 
   Future<void> _guardar() async {
     final token = Sesion.token;
@@ -377,8 +399,9 @@ class _ZonaDetalleVistaState extends State<ZonaDetalleVista> {
                       },
                       // Al soltar, se intenta rellenar la dirección del punto.
                       onMapEvent: (evento) {
-                        if (evento is MapEventMoveEnd)
-                          _completarDireccion(_centro);
+                        if (evento is! MapEventMoveEnd) return;
+                        _sincronizarVistaPrevia();
+                        _completarDireccion(_centro);
                       },
                     ),
                     children: [
@@ -493,8 +516,10 @@ class _ZonaDetalleVistaState extends State<ZonaDetalleVista> {
             max: (_radios.length - 1).toDouble(),
             divisions: _radios.length - 1,
             activeColor: _colorAzul,
-            onChanged: (valor) =>
-                setState(() => _radio = _radios[valor.round()]),
+            onChanged: (valor) {
+              setState(() => _radio = _radios[valor.round()]);
+              _sincronizarVistaPrevia();
+            },
           ),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -573,17 +598,20 @@ class _ZonaDetalleVistaState extends State<ZonaDetalleVista> {
             child: SizedBox(
               height: 190,
               child: FlutterMap(
+                mapController: _vistaPreviaController,
                 // Mapa solo de lectura: el círculo se ajusta al radio elegido.
                 options: MapOptions(
                   initialCenter: _centro,
                   // El zoom baja a medida que crece el radio para que el
                   // círculo siempre entre completo en el recuadro.
-                  initialZoom: _radio >= 2000
-                      ? 12.5
-                      : (_radio >= 1000 ? 13.5 : 14.5),
+                  initialZoom: _zoomVistaPrevia,
                   interactionOptions: const InteractionOptions(
                     flags: InteractiveFlag.none,
                   ),
+                  onMapReady: () {
+                    _vistaPreviaLista = true;
+                    _sincronizarVistaPrevia();
+                  },
                 ),
                 children: [
                   TileLayer(

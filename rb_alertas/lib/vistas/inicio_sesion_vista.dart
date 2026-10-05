@@ -38,7 +38,7 @@ class _InicioSesionVistaState extends State<InicioSesionVista> {
         email: _emailController.text.trim(),
         password: _passwordController.text,
       );
-      Sesion.iniciar(resultado);
+      await Sesion.iniciar(resultado);
 
       if (!mounted) return;
       Navigator.pushReplacement(

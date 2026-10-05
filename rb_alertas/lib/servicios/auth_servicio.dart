@@ -23,6 +23,27 @@ class AuthServicio {
   static const String baseUrl = ApiConfig.baseUrl;
   static const String codigoEmailNoVerificado = 'EMAIL_NO_VERIFICADO';
 
+  /// Comprueba contra la API si un token guardado sigue vigente.
+  ///
+  /// `true` = sirve, `false` = la sesión ya no vale (hay que volver a entrar),
+  /// `null` = no se pudo preguntar (sin conexión); en ese caso no conviene
+  /// borrar la sesión, porque puede ser perfectamente válida.
+  Future<bool?> sesionVigente(String token) async {
+    try {
+      final respuesta = await http
+          .get(
+            Uri.parse('$baseUrl/api/usuarios/perfil'),
+            headers: {'Authorization': 'Bearer $token'},
+          )
+          .timeout(const Duration(seconds: 8));
+      if (respuesta.statusCode == 401) return false;
+      if (respuesta.statusCode == 200) return true;
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<LoginResultado> login({
     required String email,
     required String password,

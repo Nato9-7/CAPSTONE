@@ -4,7 +4,7 @@ class ApiConfig {
   //   flutter run --dart-define=API_URL=http://localhost:8000
   static const String baseUrl = String.fromEnvironment(
     'API_URL',
-    defaultValue: 'http://129.213.86.163:8000',
+    defaultValue: 'https://rbalerta.duckdns.org',
   );
 
   /// URL completa de un archivo servido por la API (p. ej. "/uploads/reportes/x.jpg").

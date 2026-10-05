@@ -69,7 +69,7 @@ def _zonas_del_usuario(id_usuario: int) -> list[dict]:
     filas = consultar(
         """
         SELECT id_zona_segura, nombre,
-               ST_Y(centro) AS latitud, ST_X(centro) AS longitud,
+               ST_Latitude(centro) AS latitud, ST_Longitude(centro) AS longitud,
                radio_metros, direccion_referencia, fecha_creacion
         FROM zona_segura
         WHERE id_usuario = %s AND activa = 1
@@ -135,7 +135,7 @@ def crear_zona(datos: ZonaSegura, usuario: dict = Depends(usuario_actual)):
     filas = consultar(
         """
         SELECT id_zona_segura, nombre,
-               ST_Y(centro) AS latitud, ST_X(centro) AS longitud,
+               ST_Latitude(centro) AS latitud, ST_Longitude(centro) AS longitud,
                radio_metros, direccion_referencia, fecha_creacion
         FROM zona_segura WHERE id_zona_segura = %s
         """,
@@ -183,7 +183,7 @@ def actualizar_zona(
     filas = consultar(
         """
         SELECT id_zona_segura, nombre,
-               ST_Y(centro) AS latitud, ST_X(centro) AS longitud,
+               ST_Latitude(centro) AS latitud, ST_Longitude(centro) AS longitud,
                radio_metros, direccion_referencia, fecha_creacion
         FROM zona_segura WHERE id_zona_segura = %s
         """,

@@ -113,7 +113,7 @@ class _PerfilVistaState extends State<PerfilVista> {
     if (token != null && token.isNotEmpty) {
       await _perfilServicio.cerrarSesion(token);
     }
-    Sesion.cerrar();
+    await Sesion.cerrar();
     EstadoAlertas.limpiar();
     if (!mounted) return;
     Navigator.pushAndRemoveUntil(

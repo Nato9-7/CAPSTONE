@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  La API de produccion se consume por HTTPS (https://rbalerta.duckdns.org), por lo que el
+  trafico sin cifrar queda prohibido de forma predeterminada.
+
+  La excepcion cubre unicamente el desarrollo local:
+    - 10.0.2.2  : host del PC visto desde el emulador de Android
+    - localhost : la propia aplicacion
+  Ninguna de las dos es alcanzable desde un dispositivo real en produccion.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">10.0.2.2</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+</network-security-config>

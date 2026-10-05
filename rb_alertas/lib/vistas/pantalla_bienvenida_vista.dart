@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:rb_alertas/servicios/auth_servicio.dart';
+import 'package:rb_alertas/servicios/sesion.dart';
 import 'package:rb_alertas/vistas/mapa_vista.dart';
 import 'package:rb_alertas/widgets/app_logo.dart';
 
@@ -14,13 +16,28 @@ class _PantallaBienvenidaVistaState extends State<PantallaBienvenidaVista> {
   @override
   void initState() {
     super.initState();
-    Future.delayed(const Duration(seconds: 5), () {
-      if (!mounted) return;
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => const MapaVista()),
-      );
-    });
+    _arrancar();
+  }
+
+  /// Mientras se muestra el logo se recupera la sesión guardada, así el
+  /// usuario entra directo sin volver a escribir su correo y contraseña.
+  Future<void> _arrancar() async {
+    final espera = Future.delayed(const Duration(seconds: 5));
+    await _recuperarSesion();
+    await espera;
+    if (!mounted) return;
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (context) => const MapaVista()),
+    );
+  }
+
+  Future<void> _recuperarSesion() async {
+    if (!await Sesion.restaurar()) return;
+    final vigente = await AuthServicio().sesionVigente(Sesion.token!);
+    // Solo se descarta cuando la API confirma que el token ya no sirve.
+    // Si no hubo respuesta (sin conexión), se conserva y se reintenta al usarla.
+    if (vigente == false) await Sesion.cerrar();
   }
 
   @override
