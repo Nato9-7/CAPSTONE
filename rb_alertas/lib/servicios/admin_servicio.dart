@@ -97,7 +97,9 @@ class ReporteAdmin {
       descripcion: (json['descripcion'] ?? '').toString(),
       direccion: json['direccion']?.toString(),
       zona: json['zona']?.toString(),
-      fechaCreacion: DateTime.tryParse(json['fecha_creacion']?.toString() ?? ''),
+      fechaCreacion: DateTime.tryParse(
+        json['fecha_creacion']?.toString() ?? '',
+      ),
       vencido: json['vencido'] == true,
       confirmaciones: (json['total_confirmaciones'] as num?)?.toInt() ?? 0,
       desmentidos: (json['total_desmentidos'] as num?)?.toInt() ?? 0,
@@ -146,11 +148,142 @@ class UsuarioAdmin {
       telefono: json['telefono']?.toString(),
       estado: (json['estado'] ?? '').toString(),
       emailVerificado: json['email_verificado'] == true,
-      fechaCreacion: DateTime.tryParse(json['fecha_creacion']?.toString() ?? ''),
+      fechaCreacion: DateTime.tryParse(
+        json['fecha_creacion']?.toString() ?? '',
+      ),
       totalReportes: (json['total_reportes'] as num?)?.toInt() ?? 0,
       esAdmin: json['es_admin'] == true,
     );
   }
+}
+
+class NodoGrafo {
+  /// "Tipo:id", p. ej. "Usuario:12". Es la misma clave que usan las aristas.
+  final String clave;
+  final String tipo;
+  final String etiqueta;
+  final Map<String, dynamic> datos;
+
+  /// 0 = el elemento en foco, 1 = conectado directo, 2 = a dos pasos.
+  final int anillo;
+
+  /// Texto corto extra (p. ej. "12 acciones") en las listas del inicio.
+  final String? detalle;
+
+  NodoGrafo({
+    required this.clave,
+    required this.tipo,
+    required this.etiqueta,
+    required this.datos,
+    this.anillo = 0,
+    this.detalle,
+  });
+
+  int get id => (datos['id'] as num).toInt();
+  String? get estado => datos['estado']?.toString();
+
+  factory NodoGrafo.desdeJson(Map<String, dynamic> json) => NodoGrafo(
+    clave: json['clave'].toString(),
+    tipo: json['tipo'].toString(),
+    etiqueta: (json['etiqueta'] ?? '').toString(),
+    datos: (json['datos'] as Map?)?.cast<String, dynamic>() ?? {},
+    anillo: (json['anillo'] as num?)?.toInt() ?? 0,
+    detalle: json['detalle']?.toString(),
+  );
+}
+
+class AristaGrafo {
+  final String origen;
+  final String destino;
+  final String tipo;
+  final Map<String, dynamic> datos;
+
+  AristaGrafo({
+    required this.origen,
+    required this.destino,
+    required this.tipo,
+    required this.datos,
+  });
+
+  factory AristaGrafo.desdeJson(Map<String, dynamic> json) => AristaGrafo(
+    origen: json['origen'].toString(),
+    destino: json['destino'].toString(),
+    tipo: json['tipo'].toString(),
+    datos: (json['datos'] as Map?)?.cast<String, dynamic>() ?? {},
+  );
+}
+
+/// Un elemento en foco con sus conexiones hasta 2 pasos.
+class FocoGrafo {
+  final String foco;
+  final List<NodoGrafo> nodos;
+  final List<AristaGrafo> aristas;
+
+  FocoGrafo({required this.foco, required this.nodos, required this.aristas});
+
+  NodoGrafo get nodoFoco => nodos.firstWhere((n) => n.clave == foco);
+
+  factory FocoGrafo.desdeJson(Map<String, dynamic> json) => FocoGrafo(
+    foco: json['foco'].toString(),
+    nodos: [
+      for (final n in (json['nodos'] as List? ?? []))
+        NodoGrafo.desdeJson(n as Map<String, dynamic>),
+    ],
+    aristas: [
+      for (final a in (json['aristas'] as List? ?? []))
+        AristaGrafo.desdeJson(a as Map<String, dynamic>),
+    ],
+  );
+}
+
+class HallazgoGrafo {
+  /// "alerta" (conviene revisarlo) o "info".
+  final String nivel;
+  final String texto;
+  final NodoGrafo nodo;
+
+  HallazgoGrafo({required this.nivel, required this.texto, required this.nodo});
+
+  bool get esAlerta => nivel == 'alerta';
+}
+
+/// Portada del grafo: hallazgos y elementos desde donde empezar a explorar.
+class InicioGrafo {
+  final List<HallazgoGrafo> hallazgos;
+  final List<NodoGrafo> reportes;
+  final List<NodoGrafo> vecinos;
+  final List<NodoGrafo> lugares;
+
+  /// Fecha (texto ISO) de la última copia de MySQL a Neo4j, si hubo.
+  final String? sincronizadoEn;
+
+  InicioGrafo({
+    required this.hallazgos,
+    required this.reportes,
+    required this.vecinos,
+    required this.lugares,
+    required this.sincronizadoEn,
+  });
+
+  static List<NodoGrafo> _nodos(dynamic lista) => [
+    for (final n in (lista as List? ?? []))
+      NodoGrafo.desdeJson(n as Map<String, dynamic>),
+  ];
+
+  factory InicioGrafo.desdeJson(Map<String, dynamic> json) => InicioGrafo(
+    hallazgos: [
+      for (final h in (json['hallazgos'] as List? ?? []))
+        HallazgoGrafo(
+          nivel: (h['nivel'] ?? 'info').toString(),
+          texto: (h['texto'] ?? '').toString(),
+          nodo: NodoGrafo.desdeJson(h['nodo'] as Map<String, dynamic>),
+        ),
+    ],
+    reportes: _nodos(json['reportes']),
+    vecinos: _nodos(json['vecinos']),
+    lugares: _nodos(json['lugares']),
+    sincronizadoEn: (json['sincronizacion'] as Map?)?['fecha']?.toString(),
+  );
 }
 
 /// Rutas /api/admin: solo responden a la cuenta administradora.
@@ -193,12 +326,10 @@ class AdminServicio {
     String estado, {
     String? motivo,
   }) async {
-    await _enviar(
-      'PATCH',
-      token,
-      '/api/admin/reportes/$idReporte/estado',
-      {'estado': estado, 'motivo': ?motivo},
-    );
+    await _enviar('PATCH', token, '/api/admin/reportes/$idReporte/estado', {
+      'estado': estado,
+      'motivo': ?motivo,
+    });
   }
 
   Future<void> suspenderAutor(String token, int idReporte) async {
@@ -218,6 +349,24 @@ class AdminServicio {
     await _enviar('PATCH', token, '/api/admin/usuarios/$idUsuario/estado', {
       'estado': estado,
     });
+  }
+
+  Future<InicioGrafo> inicioGrafo(String token) async {
+    final cuerpo = await _get(token, '/api/admin/grafo/inicio');
+    return InicioGrafo.desdeJson(cuerpo as Map<String, dynamic>);
+  }
+
+  /// [nodo] en el centro, con sus conexiones hasta 2 pasos.
+  Future<FocoGrafo> focoGrafo(String token, NodoGrafo nodo) async {
+    final cuerpo = await _get(
+      token,
+      '/api/admin/grafo/nodo/${nodo.tipo}/${nodo.id}',
+    );
+    return FocoGrafo.desdeJson(cuerpo as Map<String, dynamic>);
+  }
+
+  Future<void> sincronizarGrafo(String token) async {
+    await _enviar('POST', token, '/api/admin/grafo/sincronizar', null);
   }
 
   Future<dynamic> _get(
