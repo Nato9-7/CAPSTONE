@@ -13,6 +13,7 @@ from app.seguridad import (
     crear_sesion,
     crear_token_recuperacion,
     crear_token_verificacion,
+    es_admin,
     esquema_bearer,
     hash_token,
     revocar_sesion,
@@ -175,6 +176,7 @@ def perfil(usuario: dict = Depends(usuario_actual)):
         "url_foto_perfil": datos["url_foto_perfil"],
         "email_verificado": bool(datos["email_verificado"]),
         "estado": datos["estado"],
+        "es_admin": es_admin(datos["email"], datos["email_verificado"]),
         "fecha_creacion": datos["fecha_creacion"],
         "comuna": datos["comuna"],
         "region": datos["region"],
@@ -441,6 +443,7 @@ def iniciar_sesion(datos: LoginUsuario, request: Request):
             "nombres": usuario["nombres"],
             "apellidos": usuario["apellidos"],
             "email": usuario["email"],
+            "es_admin": es_admin(usuario["email"], usuario["email_verificado"]),
         },
     }
 

@@ -4,6 +4,7 @@ import 'package:rb_alertas/servicios/perfil_servicio.dart';
 import 'package:rb_alertas/servicios/reporte_servicio.dart'
     show EntidadEmergencia;
 import 'package:rb_alertas/servicios/sesion.dart';
+import 'package:rb_alertas/vistas/admin_vista.dart';
 import 'package:rb_alertas/vistas/inicio_sesion_vista.dart';
 import 'package:rb_alertas/vistas/mapa_vista.dart';
 import 'package:rb_alertas/vistas/zonas_seguras_vista.dart';
@@ -202,7 +203,7 @@ class _PerfilVistaState extends State<PerfilVista> {
                   const SizedBox(height: 12),
                   _emergencias(perfil),
                   const SizedBox(height: 20),
-                  _opciones(),
+                  _opciones(perfil),
                 ],
               ),
             ),
@@ -439,11 +440,23 @@ class _PerfilVistaState extends State<PerfilVista> {
     }
   }
 
-  Widget _opciones() {
+  Widget _opciones(PerfilUsuario perfil) {
     return Container(
       decoration: _estiloTarjeta,
       child: Column(
         children: [
+          if (perfil.esAdmin) ...[
+            _opcion(
+              Icons.admin_panel_settings_outlined,
+              'Panel de Administración',
+              () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const AdminVista()),
+              ),
+              color: _colorAzul,
+            ),
+            const Divider(height: 1, color: _colorBorde),
+          ],
           _opcion(
             Icons.person_outline,
             'Editar Perfil',
