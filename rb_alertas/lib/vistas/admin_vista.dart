@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:rb_alertas/config/api_config.dart';
 import 'package:rb_alertas/servicios/admin_servicio.dart';
+import 'package:rb_alertas/servicios/estado_alertas_servicio.dart';
+import 'package:rb_alertas/servicios/perfil_servicio.dart';
 import 'package:rb_alertas/servicios/sesion.dart';
+import 'package:rb_alertas/vistas/mapa_vista.dart';
 import 'package:rb_alertas/widgets/categoria_visual.dart';
 
 const _colorAzul = Color(0xFF0056D2);
@@ -99,10 +102,45 @@ Widget _mensajeCentro(String texto, {VoidCallback? reintentar}) {
   );
 }
 
-/// Panel de administración. Solo aparece en Perfil para la cuenta admin,
-/// y la API vuelve a comprobarlo en cada ruta /api/admin.
+/// Panel de administración: es la única pantalla de la cuenta admin (el login
+/// la abre en vez del mapa). La API vuelve a comprobarlo en cada ruta /api/admin.
 class AdminVista extends StatelessWidget {
   const AdminVista({super.key});
+
+  Future<void> _cerrarSesion(BuildContext context) async {
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Cerrar sesión'),
+        content: const Text('¿Quieres salir del panel de administración?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: _colorRojo),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Cerrar sesión'),
+          ),
+        ],
+      ),
+    );
+    if (confirmar != true) return;
+
+    final token = Sesion.token;
+    if (token != null && token.isNotEmpty) {
+      await PerfilServicio().cerrarSesion(token);
+    }
+    Sesion.cerrar();
+    EstadoAlertas.limpiar();
+    if (!context.mounted) return;
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (context) => const MapaVista()),
+      (ruta) => false,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -119,6 +157,13 @@ class AdminVista extends StatelessWidget {
             'Panel de Administración',
             style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
           ),
+          actions: [
+            IconButton(
+              tooltip: 'Cerrar sesión',
+              icon: const Icon(Icons.logout, color: _colorRojo),
+              onPressed: () => _cerrarSesion(context),
+            ),
+          ],
           bottom: const TabBar(
             labelColor: _colorAzul,
             unselectedLabelColor: _colorTextoGris,

@@ -7,6 +7,9 @@ class Sesion {
   static String? token;
   static Map<String, dynamic>? usuario;
 
+  /// La cuenta admin solo usa el panel de administración (ver AdminVista).
+  static bool get esAdmin => usuario?['es_admin'] == true;
+
   static void iniciar(LoginResultado resultado) {
     token = resultado.token;
     usuario = resultado.usuario;

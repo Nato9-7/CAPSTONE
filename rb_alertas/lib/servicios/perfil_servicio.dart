@@ -15,7 +15,6 @@ class PerfilUsuario {
   final String email;
   final String? urlFoto;
   final bool emailVerificado;
-  final bool esAdmin;
   final String? comuna;
   final String? region;
   final int totalReportes;
@@ -28,7 +27,6 @@ class PerfilUsuario {
     required this.email,
     required this.urlFoto,
     required this.emailVerificado,
-    required this.esAdmin,
     required this.comuna,
     required this.region,
     required this.totalReportes,
@@ -50,7 +48,6 @@ class PerfilUsuario {
       email: (json['email'] ?? '').toString(),
       urlFoto: json['url_foto_perfil']?.toString(),
       emailVerificado: json['email_verificado'] == true,
-      esAdmin: json['es_admin'] == true,
       comuna: json['comuna']?.toString(),
       region: json['region']?.toString(),
       totalReportes: (json['total_reportes'] as num?)?.toInt() ?? 0,
