@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:rb_alertas/servicios/auth_servicio.dart';
 import 'package:rb_alertas/servicios/sesion.dart';
+import 'package:rb_alertas/vistas/admin_vista.dart';
 import 'package:rb_alertas/vistas/mapa_vista.dart';
 import 'package:rb_alertas/vistas/recuperar_contrasena_vista.dart';
 import 'package:rb_alertas/vistas/registro_vista.dart';
@@ -41,6 +42,15 @@ class _InicioSesionVistaState extends State<InicioSesionVista> {
       Sesion.iniciar(resultado);
 
       if (!mounted) return;
+      if (Sesion.esAdmin) {
+        // La cuenta admin entra directo al panel, sin el mapa ni el resto de la app.
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (context) => const AdminVista()),
+          (ruta) => false,
+        );
+        return;
+      }
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (context) => const MapaVista()),
