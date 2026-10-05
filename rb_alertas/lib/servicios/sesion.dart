@@ -13,9 +13,7 @@ class Sesion {
   static String? token;
   static Map<String, dynamic>? usuario;
 
-  static const _almacen = FlutterSecureStorage(
-    aOptions: AndroidOptions(encryptedSharedPreferences: true),
-  );
+  static const _almacen = FlutterSecureStorage();
   static const _claveToken = 'sesion_token';
   static const _claveUsuario = 'sesion_usuario';
 
