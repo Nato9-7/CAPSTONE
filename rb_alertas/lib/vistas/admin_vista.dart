@@ -4,7 +4,9 @@ import 'package:rb_alertas/servicios/admin_servicio.dart';
 import 'package:rb_alertas/servicios/estado_alertas_servicio.dart';
 import 'package:rb_alertas/servicios/perfil_servicio.dart';
 import 'package:rb_alertas/servicios/sesion.dart';
+import 'package:rb_alertas/vistas/admin_grafo_vista.dart';
 import 'package:rb_alertas/vistas/mapa_vista.dart';
+import 'package:rb_alertas/widgets/app_logo.dart';
 import 'package:rb_alertas/widgets/categoria_visual.dart';
 
 const _colorAzul = Color(0xFF0056D2);
@@ -94,7 +96,10 @@ Widget _mensajeCentro(String texto, {VoidCallback? reintentar}) {
         Center(
           child: OutlinedButton(
             onPressed: reintentar,
-            child: const Text('Reintentar', style: TextStyle(color: _colorAzul)),
+            child: const Text(
+              'Reintentar',
+              style: TextStyle(color: _colorAzul),
+            ),
           ),
         ),
       ],
@@ -145,42 +150,106 @@ class AdminVista extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Scaffold(
         backgroundColor: _colorFondo,
-        appBar: AppBar(
-          backgroundColor: Colors.white,
-          surfaceTintColor: Colors.white,
-          elevation: 0,
-          foregroundColor: _colorTitulo,
-          title: const Text(
-            'Panel de Administración',
-            style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-          ),
-          actions: [
-            IconButton(
-              tooltip: 'Cerrar sesión',
-              icon: const Icon(Icons.logout, color: _colorRojo),
-              onPressed: () => _cerrarSesion(context),
-            ),
-          ],
-          bottom: const TabBar(
-            labelColor: _colorAzul,
-            unselectedLabelColor: _colorTextoGris,
-            indicatorColor: _colorAzul,
-            labelStyle: TextStyle(fontWeight: FontWeight.w700),
-            tabs: [
-              Tab(text: 'Resumen'),
-              Tab(text: 'Reportes'),
-              Tab(text: 'Usuarios'),
+        body: SafeArea(
+          child: Column(
+            children: [
+              _encabezado(context),
+              const _SelectorPestanas(),
+              const SizedBox(height: 4),
+              const Expanded(
+                child: TabBarView(
+                  children: [
+                    _PestanaResumen(),
+                    _PestanaReportes(),
+                    _PestanaUsuarios(),
+                    PestanaGrafo(),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
-        body: const SafeArea(
-          child: TabBarView(
-            children: [_PestanaResumen(), _PestanaReportes(), _PestanaUsuarios()],
+      ),
+    );
+  }
+
+  /// Logo y nombre de la app, como en el inicio de sesión.
+  Widget _encabezado(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+      child: Row(
+        children: [
+          const ClipOval(child: AppLogo(size: 44)),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'RB Alertas',
+                  style: TextStyle(
+                    fontSize: 21,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.4,
+                    color: _colorAzul,
+                  ),
+                ),
+                Text(
+                  'Panel de Administración',
+                  style: TextStyle(fontSize: 12.5, color: _colorTextoGris),
+                ),
+              ],
+            ),
           ),
+          IconButton(
+            tooltip: 'Cerrar sesión',
+            icon: const Icon(Icons.logout, color: _colorRojo),
+            onPressed: () => _cerrarSesion(context),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Pestañas tipo píldora, iguales a las de la pantalla Alertas.
+class _SelectorPestanas extends StatelessWidget {
+  const _SelectorPestanas();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: _colorBorde),
+      ),
+      child: const TabBar(
+        dividerColor: Colors.transparent,
+        indicatorSize: TabBarIndicatorSize.tab,
+        indicator: BoxDecoration(
+          color: _colorAzul,
+          borderRadius: BorderRadius.all(Radius.circular(20)),
         ),
+        labelColor: Colors.white,
+        unselectedLabelColor: _colorTextoGris,
+        labelStyle: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+        unselectedLabelStyle: TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+        ),
+        labelPadding: EdgeInsets.symmetric(horizontal: 4),
+        tabs: [
+          Tab(height: 36, text: 'Resumen'),
+          Tab(height: 36, text: 'Reportes'),
+          Tab(height: 36, text: 'Usuarios'),
+          Tab(height: 36, text: 'Grafo'),
+        ],
       ),
     );
   }
@@ -220,7 +289,9 @@ class _PestanaResumenState extends State<_PestanaResumen>
     } on AdminServicioException catch (e) {
       if (mounted) setState(() => _error = e.mensaje);
     } catch (_) {
-      if (mounted) setState(() => _error = 'No se pudo conectar con el servidor');
+      if (mounted) {
+        setState(() => _error = 'No se pudo conectar con el servidor');
+      }
     }
   }
 
@@ -444,7 +515,9 @@ class _PestanaReportesState extends State<_PestanaReportes>
     } on AdminServicioException catch (e) {
       if (mounted) setState(() => _error = e.mensaje);
     } catch (_) {
-      if (mounted) setState(() => _error = 'No se pudo conectar con el servidor');
+      if (mounted) {
+        setState(() => _error = 'No se pudo conectar con el servidor');
+      }
     }
   }
 
@@ -596,10 +669,10 @@ class _PestanaReportesState extends State<_PestanaReportes>
 
   Widget _tarjeta(ReporteAdmin r) {
     final color = colorCategoria(r.categoriaCodigo, colorHex: r.colorHex);
-    final lugar = [r.direccion, r.zona]
-        .whereType<String>()
-        .where((p) => p.isNotEmpty)
-        .join(' · ');
+    final lugar = [
+      r.direccion,
+      r.zona,
+    ].whereType<String>().where((p) => p.isNotEmpty).join(' · ');
 
     return Container(
       decoration: _estiloTarjeta,
@@ -760,7 +833,9 @@ class _PestanaUsuariosState extends State<_PestanaUsuarios>
     } on AdminServicioException catch (e) {
       if (mounted) setState(() => _error = e.mensaje);
     } catch (_) {
-      if (mounted) setState(() => _error = 'No se pudo conectar con el servidor');
+      if (mounted) {
+        setState(() => _error = 'No se pudo conectar con el servidor');
+      }
     }
   }
 
@@ -881,10 +956,10 @@ class _PestanaUsuariosState extends State<_PestanaUsuarios>
   }
 
   Widget _tarjeta(UsuarioAdmin u) {
-    final iniciales = [u.nombres, u.apellidos]
-        .where((x) => x.isNotEmpty)
-        .map((x) => x[0].toUpperCase())
-        .join();
+    final iniciales = [
+      u.nombres,
+      u.apellidos,
+    ].where((x) => x.isNotEmpty).map((x) => x[0].toUpperCase()).join();
     final moderable = !u.esAdmin && u.estado != 'ELIMINADO';
 
     return Container(

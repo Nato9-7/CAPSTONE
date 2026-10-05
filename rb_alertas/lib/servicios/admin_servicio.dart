@@ -97,7 +97,9 @@ class ReporteAdmin {
       descripcion: (json['descripcion'] ?? '').toString(),
       direccion: json['direccion']?.toString(),
       zona: json['zona']?.toString(),
-      fechaCreacion: DateTime.tryParse(json['fecha_creacion']?.toString() ?? ''),
+      fechaCreacion: DateTime.tryParse(
+        json['fecha_creacion']?.toString() ?? '',
+      ),
       vencido: json['vencido'] == true,
       confirmaciones: (json['total_confirmaciones'] as num?)?.toInt() ?? 0,
       desmentidos: (json['total_desmentidos'] as num?)?.toInt() ?? 0,
@@ -146,11 +148,89 @@ class UsuarioAdmin {
       telefono: json['telefono']?.toString(),
       estado: (json['estado'] ?? '').toString(),
       emailVerificado: json['email_verificado'] == true,
-      fechaCreacion: DateTime.tryParse(json['fecha_creacion']?.toString() ?? ''),
+      fechaCreacion: DateTime.tryParse(
+        json['fecha_creacion']?.toString() ?? '',
+      ),
       totalReportes: (json['total_reportes'] as num?)?.toInt() ?? 0,
       esAdmin: json['es_admin'] == true,
     );
   }
+}
+
+class NodoGrafo {
+  /// "Tipo:id", p. ej. "Usuario:12". Es la misma clave que usan las aristas.
+  final String clave;
+  final String tipo;
+  final String etiqueta;
+  final Map<String, dynamic> datos;
+
+  NodoGrafo({
+    required this.clave,
+    required this.tipo,
+    required this.etiqueta,
+    required this.datos,
+  });
+
+  int get id => (datos['id'] as num).toInt();
+
+  factory NodoGrafo.desdeJson(Map<String, dynamic> json) => NodoGrafo(
+    clave: json['clave'].toString(),
+    tipo: json['tipo'].toString(),
+    etiqueta: (json['etiqueta'] ?? '').toString(),
+    datos: (json['datos'] as Map?)?.cast<String, dynamic>() ?? {},
+  );
+}
+
+class AristaGrafo {
+  final String origen;
+  final String destino;
+  final String tipo;
+  final Map<String, dynamic> datos;
+
+  AristaGrafo({
+    required this.origen,
+    required this.destino,
+    required this.tipo,
+    required this.datos,
+  });
+
+  factory AristaGrafo.desdeJson(Map<String, dynamic> json) => AristaGrafo(
+    origen: json['origen'].toString(),
+    destino: json['destino'].toString(),
+    tipo: json['tipo'].toString(),
+    datos: (json['datos'] as Map?)?.cast<String, dynamic>() ?? {},
+  );
+}
+
+class GrafoAdmin {
+  final List<NodoGrafo> nodos;
+  final List<AristaGrafo> aristas;
+  final List<String> hallazgos;
+
+  /// Fecha (texto ISO) de la última copia de MySQL a Neo4j, si hubo.
+  final String? sincronizadoEn;
+
+  GrafoAdmin({
+    required this.nodos,
+    required this.aristas,
+    required this.hallazgos,
+    required this.sincronizadoEn,
+  });
+
+  factory GrafoAdmin.desdeJson(Map<String, dynamic> json) => GrafoAdmin(
+    nodos: [
+      for (final n in (json['nodos'] as List? ?? []))
+        NodoGrafo.desdeJson(n as Map<String, dynamic>),
+    ],
+    aristas: [
+      for (final a in (json['aristas'] as List? ?? []))
+        AristaGrafo.desdeJson(a as Map<String, dynamic>),
+    ],
+    hallazgos: [
+      for (final h in (json['hallazgos'] as List? ?? [])) h.toString(),
+    ],
+    sincronizadoEn: (json['sincronizacion'] as Map?)?['fecha']?.toString(),
+  );
 }
 
 /// Rutas /api/admin: solo responden a la cuenta administradora.
@@ -193,12 +273,10 @@ class AdminServicio {
     String estado, {
     String? motivo,
   }) async {
-    await _enviar(
-      'PATCH',
-      token,
-      '/api/admin/reportes/$idReporte/estado',
-      {'estado': estado, 'motivo': ?motivo},
-    );
+    await _enviar('PATCH', token, '/api/admin/reportes/$idReporte/estado', {
+      'estado': estado,
+      'motivo': ?motivo,
+    });
   }
 
   Future<void> suspenderAutor(String token, int idReporte) async {
@@ -218,6 +296,25 @@ class AdminServicio {
     await _enviar('PATCH', token, '/api/admin/usuarios/$idUsuario/estado', {
       'estado': estado,
     });
+  }
+
+  /// [vista]: general, votos o sospechosos.
+  Future<GrafoAdmin> grafo(String token, String vista) async {
+    final cuerpo = await _get(token, '/api/admin/grafo', {'vista': vista});
+    return GrafoAdmin.desdeJson(cuerpo as Map<String, dynamic>);
+  }
+
+  /// Lo conectado directamente con un nodo, para seguir explorando.
+  Future<GrafoAdmin> vecindario(String token, NodoGrafo nodo) async {
+    final cuerpo = await _get(
+      token,
+      '/api/admin/grafo/nodo/${nodo.tipo}/${nodo.id}',
+    );
+    return GrafoAdmin.desdeJson(cuerpo as Map<String, dynamic>);
+  }
+
+  Future<void> sincronizarGrafo(String token) async {
+    await _enviar('POST', token, '/api/admin/grafo/sincronizar', null);
   }
 
   Future<dynamic> _get(

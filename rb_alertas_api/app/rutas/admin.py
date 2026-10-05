@@ -3,6 +3,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Path as PathParam, Query
 from pydantic import BaseModel, Field
 
+from app import grafo
 from app.db import consultar, transaccion
 from app.rutas.reportes import alias_autor
 from app.seguridad import CORREOS_ADMIN, revocar_sesiones_usuario, usuario_admin
@@ -226,3 +227,184 @@ def cambiar_estado_usuario(datos: CambioEstadoUsuario, id_usuario: int = PathPar
             cursor.execute("SELECT estado FROM usuario WHERE id_usuario = %s", (id_usuario,))
             nuevo = cursor.fetchone()["estado"]
     return {"id_usuario": id_usuario, "estado": nuevo}
+
+
+# -----------------------------------------------------------------------------
+# Grafo (Neo4j). Ver app/grafo.py: los usuarios aparecen con seudónimo.
+
+TIPOS_NODO = ("Usuario", "Reporte", "Categoria", "Comuna", "Localidad", "ZonaSegura")
+
+# Cada consulta devuelve filas (a)-[rel]->(b) con esta misma forma.
+_PROYECCION = """
+RETURN DISTINCT labels(a)[0] AS tipo_a, properties(a) AS a, type(rel) AS tipo_rel, properties(rel) AS rel,
+       labels(b)[0] AS tipo_b, properties(b) AS b
+"""
+
+
+def _etiqueta(tipo: str, datos: dict) -> str:
+    if tipo == "Usuario":
+        return datos.get("alias") or f"Vecino {datos.get('id')}"
+    if tipo == "Reporte":
+        return f"#{datos.get('id')}"
+    return str(datos.get("nombre") or datos.get("id"))
+
+
+def _armar_grafo(filas: list[dict], hallazgos: list[str] | None = None) -> dict:
+    nodos, aristas = {}, []
+    for fila in filas:
+        claves = []
+        for lado in ("a", "b"):
+            tipo, datos = fila[f"tipo_{lado}"], fila[lado]
+            clave = f"{tipo}:{datos['id']}"
+            nodos.setdefault(clave, {"clave": clave, "tipo": tipo, "etiqueta": _etiqueta(tipo, datos), "datos": datos})
+            claves.append(clave)
+        aristas.append({"origen": claves[0], "destino": claves[1], "tipo": fila["tipo_rel"], "datos": fila["rel"] or {}})
+    return {
+        "nodos": list(nodos.values()),
+        "aristas": aristas,
+        "hallazgos": hallazgos or [],
+        "sincronizacion": grafo.ultima_sincronizacion,
+    }
+
+
+def _grafo_o_503(funcion):
+    try:
+        return funcion()
+    except grafo.GrafoNoDisponible as error:
+        raise HTTPException(status_code=503, detail=str(error))
+
+
+@router.get("/grafo")
+def ver_grafo(
+    vista: Literal["general", "votos", "sospechosos"] = "general",
+    limite: int = Query(40, ge=5, le=200),
+):
+    """Subgrafo para el panel. `limite` acota cuántos reportes o usuarios se incluyen."""
+    return _grafo_o_503(lambda: _VISTAS[vista](limite))
+
+
+def _vista_general(limite: int) -> dict:
+    filas = grafo.consultar_grafo(
+        """
+        MATCH (r:Reporte) WITH r ORDER BY r.fecha_creacion DESC LIMIT $limite
+        WITH collect(r) AS reportes
+        MATCH (a)-[rel]->(b) WHERE a IN reportes OR b IN reportes
+        """ + _PROYECCION,
+        limite=limite,
+    )
+    lugares = grafo.consultar_grafo(
+        """
+        MATCH (r:Reporte)-[:OCURRIO_EN]->(l)
+        WHERE r.fecha_creacion >= toString(localdatetime() - duration('P30D'))
+        RETURN l.nombre AS lugar, count(r) AS total ORDER BY total DESC LIMIT 3
+        """
+    )
+    hallazgos = [f"{l['lugar']}: {l['total']} reportes en los últimos 30 días" for l in lugares]
+    return _armar_grafo(filas, hallazgos)
+
+
+def _vista_votos(limite: int) -> dict:
+    # Une a quien vota con quien creó el reporte: muestra quién respalda a quién.
+    filas = grafo.consultar_grafo(
+        """
+        MATCH (a:Usuario)-[v:VOTO]->(:Reporte)<-[:CREO]-(b:Usuario) WHERE a <> b
+        WITH a, b, sum(CASE v.tipo WHEN 'CONFIRMA' THEN 1 ELSE 0 END) AS confirma,
+                   sum(CASE v.tipo WHEN 'DESMIENTE' THEN 1 ELSE 0 END) AS desmiente
+        ORDER BY confirma + desmiente DESC LIMIT $limite
+        RETURN 'Usuario' AS tipo_a, properties(a) AS a,
+               CASE WHEN confirma >= desmiente THEN 'CONFIRMA_A' ELSE 'DESMIENTE_A' END AS tipo_rel,
+               {confirma: confirma, desmiente: desmiente} AS rel,
+               'Usuario' AS tipo_b, properties(b) AS b
+        """,
+        limite=limite,
+    )
+    return _armar_grafo(filas, _hallazgos_mutuos())
+
+
+def _hallazgos_mutuos() -> list[str]:
+    pares = grafo.consultar_grafo(
+        """
+        MATCH (a:Usuario)-[:VOTO {tipo: 'CONFIRMA'}]->(:Reporte)<-[:CREO]-(b:Usuario),
+              (b)-[:VOTO {tipo: 'CONFIRMA'}]->(:Reporte)<-[:CREO]-(a)
+        WHERE a.id < b.id
+        RETURN DISTINCT a.alias AS a, b.alias AS b LIMIT 10
+        """
+    )
+    return [f"{p['a']} y {p['b']} se confirman los reportes mutuamente" for p in pares]
+
+
+def _vista_sospechosos(limite: int) -> dict:
+    # Pares que se confirman entre sí (con los votos y los reportes involucrados),
+    # y cuentas con 2 o más reportes descartados.
+    filas = grafo.consultar_grafo(
+        """
+        CALL () {
+            MATCH (a:Usuario)-[rel:VOTO {tipo: 'CONFIRMA'}]->(b:Reporte)<-[:CREO]-(o:Usuario),
+                  (o)-[:VOTO {tipo: 'CONFIRMA'}]->(:Reporte)<-[:CREO]-(a)
+            WHERE a <> o
+            RETURN a, rel, b
+            UNION
+            MATCH (a:Usuario)-[rel:CREO]->(b:Reporte)<-[:VOTO {tipo: 'CONFIRMA'}]-(o:Usuario),
+                  (o)-[:CREO]->(:Reporte)<-[:VOTO {tipo: 'CONFIRMA'}]-(a)
+            WHERE a <> o
+            RETURN a, rel, b
+            UNION
+            MATCH (a:Usuario)-[rel:CREO]->(b:Reporte {estado: 'DESCARTADO'})
+            WITH a, collect([rel, b]) AS descartados WHERE size(descartados) >= 2
+            UNWIND descartados AS par
+            RETURN a, par[0] AS rel, par[1] AS b
+        }
+        WITH a, rel, b LIMIT $limite
+        """ + _PROYECCION,
+        limite=limite * 3,
+    )
+    descartes = grafo.consultar_grafo(
+        """
+        MATCH (u:Usuario)-[:CREO]->(r:Reporte)
+        WITH u, count(r) AS total, sum(CASE r.estado WHEN 'DESCARTADO' THEN 1 ELSE 0 END) AS descartados
+        WHERE descartados >= 2
+        RETURN u.alias AS alias, descartados, total ORDER BY descartados DESC LIMIT 10
+        """
+    )
+    hallazgos = _hallazgos_mutuos() + [
+        f"{d['alias']} tiene {d['descartados']} de {d['total']} reportes descartados" for d in descartes
+    ]
+    return _armar_grafo(filas, hallazgos or ["No se encontraron patrones sospechosos."])
+
+
+_VISTAS = {"general": _vista_general, "votos": _vista_votos, "sospechosos": _vista_sospechosos}
+
+
+@router.get("/grafo/nodo/{tipo}/{id_nodo}")
+def vecindario(
+    tipo: Literal["Usuario", "Reporte", "Categoria", "Comuna", "Localidad", "ZonaSegura"],
+    id_nodo: int = PathParam(ge=1),
+    limite: int = Query(60, ge=5, le=200),
+):
+    """Todo lo conectado directamente con un nodo, para seguir explorando desde el panel."""
+    # Cypher no acepta la etiqueta como parámetro: va en el texto, y por eso
+    # solo se aceptan los valores fijos de TIPOS_NODO.
+    if tipo not in TIPOS_NODO:
+        raise HTTPException(status_code=422, detail="Tipo de nodo no válido")
+
+    def consultar_vecindario():
+        filas = grafo.consultar_grafo(
+            f"""
+            MATCH (n:{tipo} {{id: $id}})-[rel]-()
+            WITH rel LIMIT $limite
+            WITH rel, startNode(rel) AS a, endNode(rel) AS b
+            """ + _PROYECCION,
+            id=id_nodo,
+            limite=limite,
+        )
+        if not filas and not grafo.consultar_grafo(f"MATCH (n:{tipo} {{id: $id}}) RETURN n.id AS id", id=id_nodo):
+            raise HTTPException(status_code=404, detail="Ese elemento no está en el grafo")
+        return _armar_grafo(filas)
+
+    return _grafo_o_503(consultar_vecindario)
+
+
+@router.post("/grafo/sincronizar")
+def sincronizar_grafo():
+    """Rehace el grafo ahora, sin esperar la sincronización automática."""
+    return _grafo_o_503(lambda: {"totales": grafo.sincronizar(), "sincronizacion": grafo.ultima_sincronizacion})
