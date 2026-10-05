@@ -147,7 +147,8 @@ _CYPHER_RECONSTRUIR = [
        MATCH (cat:Categoria {id: r.id_categoria})
        CREATE (rep:Reporte {id: r.id_reporte, estado: r.estado, descripcion: r.descripcion,
                             fecha_creacion: r.fecha_creacion, vencido: r.vencido,
-                            confirmaciones: r.total_confirmaciones, desmentidos: r.total_desmentidos})
+                            confirmaciones: r.total_confirmaciones, desmentidos: r.total_desmentidos,
+                            categoria: cat.nombre, categoria_codigo: cat.codigo, color: cat.color})
        CREATE (u)-[:CREO]->(rep)
        CREATE (rep)-[:ES_DE]->(cat)
        WITH rep, r
