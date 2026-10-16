@@ -11,11 +11,16 @@ class EstadoAlertas {
   /// true cuando hay algo sin revisar, por cualquiera de los dos motivos.
   static final ValueNotifier<bool> hayNuevas = ValueNotifier(false);
 
+  /// Número que muestra la insignia de Alertas: las alertas de zona sin leer.
+  /// En 0 con [hayNuevas] encendido, la insignia se muestra como un punto.
+  static final ValueNotifier<int> cantidad = ValueNotifier(0);
+
   /// Alertas de zona sin leer
   static int get zonasSinLeer => _zonasSinLeer;
 
   static void _recalcular() {
     hayNuevas.value = _hayCercanasNuevas || _zonasSinLeer > 0;
+    cantidad.value = _zonasSinLeer;
   }
 
   static void marcarVistos(Iterable<int> ids) {

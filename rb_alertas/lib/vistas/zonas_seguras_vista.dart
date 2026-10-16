@@ -1,7 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:rb_alertas/servicios/sesion.dart';
 import 'package:rb_alertas/servicios/zonas_servicio.dart';
+import 'package:rb_alertas/tema/rb_tema.dart';
 import 'package:rb_alertas/vistas/zona_detalle_vista.dart';
+import 'package:rb_alertas/widgets/barra_navegacion_inferior.dart';
+import 'package:rb_alertas/widgets/rb_componentes.dart';
 
 /// Lista de zonas seguras del usuario. Se entra desde Perfil.
 class ZonasSegurasVista extends StatefulWidget {
@@ -12,11 +17,8 @@ class ZonasSegurasVista extends StatefulWidget {
 }
 
 class _ZonasSegurasVistaState extends State<ZonasSegurasVista> {
-  static const _colorAzul = Color(0xFF0056D2);
-  static const _colorFondo = Color(0xFFF7F8FC);
-  static const _colorTitulo = Color(0xFF111827);
-  static const _colorTextoGris = Color(0xFF6B7280);
-  static const _colorBorde = Color(0xFFE5E7EB);
+  /// Centro del mapa resumen cuando aún no hay zonas: Puerto Montt.
+  static const _centroPorDefecto = LatLng(-41.4717, -72.9369);
 
   final _servicio = ZonasServicio();
   ZonasUsuario? _datos;
@@ -64,19 +66,15 @@ class _ZonasSegurasVistaState extends State<ZonasSegurasVista> {
     }
   }
 
-  /// Abre el detalle. Con [zona] en null se crea una nueva.
-  /// Si la pantalla devuelve true, algo cambió y hay que recargar la lista.
+  /// Abre el editor. Con [zona] en null se crea una nueva.
+  /// Si el editor devuelve true, algo cambió y hay que recargar la lista.
   Future<void> _abrirDetalle({ZonaSegura? zona}) async {
     final datos = _datos;
     if (datos == null) return;
-    final cambio = await Navigator.push<bool>(
+    final cambio = await ZonaDetalleVista.abrir(
       context,
-      MaterialPageRoute(
-        builder: (_) => ZonaDetalleVista(
-          zona: zona,
-          radiosPermitidos: datos.radiosPermitidos,
-        ),
-      ),
+      zona: zona,
+      radiosPermitidos: datos.radiosPermitidos,
     );
     if (cambio == true) _cargar();
   }
@@ -97,117 +95,106 @@ class _ZonasSegurasVistaState extends State<ZonasSegurasVista> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _colorFondo,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
-        elevation: 0,
-        foregroundColor: _colorTitulo,
-        title: const Text(
-          'Zonas Seguras',
-          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-        ),
+      backgroundColor: RBColores.fondo,
+      body: SafeArea(bottom: false, child: _cuerpo()),
+      bottomNavigationBar: const BarraNavegacionInferior(
+        seccionActiva: SeccionApp.perfil,
       ),
-      body: SafeArea(child: _cuerpo()),
+    );
+  }
+
+  Widget _encabezado() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 20, 16, 0),
+      child: Row(
+        children: [
+          IconButton(
+            tooltip: 'Volver',
+            onPressed: () => Navigator.maybePop(context),
+            icon: const Icon(Icons.arrow_back_rounded, size: 30, color: RBColores.tinta),
+          ),
+          const SizedBox(width: 6),
+          const Expanded(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Zonas seguras',
+                style: TextStyle(
+                  fontFamily: RBFuentes.titulos,
+                  fontSize: 32,
+                  fontWeight: FontWeight.w800,
+                  color: RBColores.azul,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
   Widget _cuerpo() {
     if (_cargando) {
-      return const Center(child: CircularProgressIndicator());
+      return Column(
+        children: [
+          _encabezado(),
+          const Expanded(child: Center(child: CircularProgressIndicator())),
+        ],
+      );
     }
     if (_error != null) {
-      return _mensajeError(_error!);
+      return Column(
+        children: [
+          _encabezado(),
+          Expanded(
+            child: EstadoVacio(
+              icono: Icons.cloud_off_rounded,
+              titulo: 'No se pudieron cargar tus zonas',
+              detalle: _error!,
+              accion: 'Reintentar',
+              onAccion: _cargar,
+            ),
+          ),
+        ],
+      );
     }
 
     final datos = _datos!;
     return RefreshIndicator(
       onRefresh: _cargar,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
+        padding: const EdgeInsets.only(bottom: 32),
         children: [
-          const Text(
-            'Zonas Seguras',
-            style: TextStyle(
-              fontSize: 26,
-              fontWeight: FontWeight.w800,
-              color: _colorTitulo,
-            ),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            'Gestiona tus ubicaciones frecuentes y define el radio de alerta '
-            'para recibir notificaciones relevantes.',
-            style: TextStyle(fontSize: 14, height: 1.4, color: _colorTextoGris),
-          ),
-          const SizedBox(height: 20),
-          _tarjetaUbicaciones(datos),
-        ],
-      ),
-    );
-  }
-
-  Widget _tarjetaUbicaciones(ZonasUsuario datos) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _colorBorde),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _encabezado(datos),
-          if (datos.zonas.isEmpty)
-            _sinZonas()
-          else
-            for (var i = 0; i < datos.zonas.length; i++) ...[
-              if (i > 0) const Divider(height: 1, color: _colorBorde),
-              _filaZona(datos.zonas[i]),
-            ],
-        ],
-      ),
-    );
-  }
-
-  Widget _encabezado(ZonasUsuario datos) {
-    final puedeAgregar = datos.puedeAgregar;
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 14, 8, 14),
-      decoration: const BoxDecoration(
-        color: Color(0xFFF1F5FD),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(15)),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.location_on, color: _colorAzul, size: 20),
-          const SizedBox(width: 8),
-          const Expanded(
-            child: Text(
-              'Mis Ubicaciones',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-                color: _colorTitulo,
-              ),
-            ),
-          ),
-          TextButton.icon(
-            // El botón nunca se oculta: si se deshabilitara sin más, el usuario
-            // no sabría por qué. Al tocarlo en el tope, se explica el motivo.
-            onPressed: puedeAgregar ? () => _abrirDetalle() : _avisarTope,
-            icon: Icon(
-              Icons.add,
-              size: 18,
-              color: puedeAgregar ? _colorAzul : _colorTextoGris,
-            ),
-            label: Text(
-              'Añadir',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: puedeAgregar ? _colorAzul : _colorTextoGris,
-              ),
+          _encabezado(),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'Te avisaremos cuando alguien reporte un incidente dentro '
+                  'del radio de tus ubicaciones.',
+                  style: TextStyle(fontSize: 17, height: 1.45, color: RBColores.texto2),
+                ),
+                const SizedBox(height: 18),
+                _mapaResumen(datos.zonas),
+                const SizedBox(height: 26),
+                const EtiquetaSeccion('Mis ubicaciones'),
+                const SizedBox(height: 12),
+                for (final zona in datos.zonas) _filaZona(zona),
+                if (datos.zonas.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 12),
+                    child: Text(
+                      'Aún no tienes zonas seguras. Agrega tu casa o tu trabajo '
+                      'para recibir alertas de lo que pase cerca, aunque no estés ahí.',
+                      style: TextStyle(fontSize: 15, height: 1.45, color: RBColores.texto2),
+                    ),
+                  ),
+                const SizedBox(height: 4),
+                _botonAnadir(datos.puedeAgregar),
+              ],
             ),
           ),
         ],
@@ -215,132 +202,184 @@ class _ZonasSegurasVistaState extends State<ZonasSegurasVista> {
     );
   }
 
-  Widget _sinZonas() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 24, 16, 28),
-      child: Column(
-        children: [
-          const Icon(
-            Icons.add_location_alt_outlined,
-            size: 36,
-            color: _colorTextoGris,
-          ),
-          const SizedBox(height: 12),
-          const Text(
-            'Aún no tienes zonas seguras',
-            style: TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w600,
-              color: _colorTitulo,
+  /// Mapa de solo lectura con todas las zonas y sus radios.
+  Widget _mapaResumen(List<ZonaSegura> zonas) {
+    final puntos = [for (final z in zonas) LatLng(z.latitud, z.longitud)];
+    final MapOptions opciones;
+    if (puntos.length > 1) {
+      opciones = MapOptions(
+        initialCameraFit: CameraFit.coordinates(
+          coordinates: puntos,
+          padding: const EdgeInsets.all(60),
+          maxZoom: 15,
+        ),
+        interactionOptions: const InteractionOptions(flags: InteractiveFlag.none),
+      );
+    } else {
+      opciones = MapOptions(
+        initialCenter: puntos.isEmpty ? _centroPorDefecto : puntos.first,
+        initialZoom: 14,
+        interactionOptions: const InteractionOptions(flags: InteractiveFlag.none),
+      );
+    }
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(RBRadios.tarjeta + 4),
+      child: SizedBox(
+        height: context.altoRelativo(0.3, minimo: 170, maximo: 240),
+        child: Stack(
+          children: [
+            FlutterMap(
+              options: opciones,
+              children: [
+                capaMapaBase(),
+                CircleLayer(
+                  circles: [
+                    for (final z in zonas)
+                      CircleMarker(
+                        point: LatLng(z.latitud, z.longitud),
+                        radius: z.radioMetros.toDouble(),
+                        useRadiusInMeter: true,
+                        color: RBColores.verde.withValues(alpha: 0.15),
+                        borderColor: RBColores.verde,
+                        borderStrokeWidth: 2.5,
+                      ),
+                  ],
+                ),
+                MarkerLayer(
+                  markers: [
+                    for (final z in zonas)
+                      Marker(
+                        point: LatLng(z.latitud, z.longitud),
+                        width: 40,
+                        height: 40,
+                        child: MarcadorZona(icono: z.tipo.icono),
+                      ),
+                  ],
+                ),
+              ],
             ),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            'Agrega tu casa o tu trabajo para recibir alertas de lo que pase '
-            'cerca, aunque no estés ahí.',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 13.5,
-              height: 1.4,
-              color: _colorTextoGris,
-            ),
-          ),
-          const SizedBox(height: 16),
-          FilledButton.icon(
-            onPressed: () => _abrirDetalle(),
-            style: FilledButton.styleFrom(
-              backgroundColor: _colorAzul,
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-            icon: const Icon(Icons.add, size: 18),
-            label: const Text('Añadir una zona'),
-          ),
-        ],
+            const Positioned(left: 6, bottom: 2, child: AtribucionMapa()),
+          ],
+        ),
       ),
     );
   }
 
   Widget _filaZona(ZonaSegura zona) {
-    final esPredefinida = zona.tipo != TipoZona.otro;
-    return ListTile(
+    final direccion = zona.direccion?.trim();
+    return TarjetaRB(
       onTap: () => _abrirDetalle(zona: zona),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      leading: Container(
-        width: 42,
-        height: 42,
-        decoration: BoxDecoration(
-          color: esPredefinida ? _colorAzul : const Color(0xFFEFF1F5),
-          shape: BoxShape.circle,
-        ),
-        child: Icon(
-          zona.tipo.icono,
-          size: 21,
-          color: esPredefinida ? Colors.white : _colorTitulo,
-        ),
-      ),
-      title: Text(
-        zona.nombre,
-        style: const TextStyle(
-          fontSize: 15,
-          fontWeight: FontWeight.w700,
-          color: _colorTitulo,
-        ),
-      ),
-      subtitle: Text(
-        zona.direccion?.isNotEmpty == true
-            ? zona.direccion!
-            : 'Radio de ${zona.radioTexto}',
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontSize: 13, color: _colorTextoGris),
-      ),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.fromLTRB(18, 18, 14, 18),
+      child: Row(
         children: [
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+            width: context.escala(56),
+            height: context.escala(56),
             decoration: BoxDecoration(
-              color: const Color(0xFFF1F5FD),
-              borderRadius: BorderRadius.circular(8),
+              color: RBColores.verde50,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Icon(zona.tipo.icono, color: RBColores.verde, size: 28),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  zona.nombre,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 19,
+                    fontWeight: FontWeight.w700,
+                    color: RBColores.tinta,
+                  ),
+                ),
+                if (direccion != null && direccion.isNotEmpty)
+                  Text(
+                    direccion,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 15.5, color: RBColores.texto2),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: RBColores.verde50,
+              borderRadius: BorderRadius.circular(14),
             ),
             child: Text(
               zona.radioTexto,
               style: const TextStyle(
-                fontSize: 12,
+                fontSize: 15,
                 fontWeight: FontWeight.w700,
-                color: _colorAzul,
+                color: RBColores.verde,
               ),
             ),
           ),
-          const SizedBox(width: 4),
-          const Icon(Icons.chevron_right, color: _colorTextoGris, size: 20),
+          const SizedBox(width: 6),
+          const Icon(Icons.chevron_right_rounded, color: RBColores.placeholder, size: 26),
         ],
       ),
     );
   }
 
-  Widget _mensajeError(String mensaje) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.cloud_off, size: 40, color: _colorTextoGris),
-            const SizedBox(height: 12),
-            Text(
-              mensaje,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 14, color: _colorTextoGris),
+  Widget _botonAnadir(bool puedeAgregar) {
+    // El botón nunca se oculta: si se deshabilitara sin más, el usuario
+    // no sabría por qué. Al tocarlo en el tope, se explica el motivo.
+    final color = puedeAgregar ? RBColores.azul : RBColores.texto2;
+    return CustomPaint(
+      painter: const BordePunteado(color: RBColores.placeholder, radio: RBRadios.tarjeta + 4),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(RBRadios.tarjeta + 4),
+          onTap: puedeAgregar ? () => _abrirDetalle() : _avisarTope,
+          child: SizedBox(
+            height: 64,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.add_rounded, color: color, size: 28),
+                const SizedBox(width: 10),
+                Text(
+                  'Añadir ubicación',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: color),
+                ),
+              ],
             ),
-            const SizedBox(height: 16),
-            OutlinedButton(onPressed: _cargar, child: const Text('Reintentar')),
-          ],
+          ),
         ),
       ),
+    );
+  }
+}
+
+/// Círculo verde con el ícono blanco del tipo de zona.
+class MarcadorZona extends StatelessWidget {
+  final IconData icono;
+
+  const MarcadorZona({super.key, required this.icono});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: RBColores.verde,
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.white, width: 3),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withValues(alpha: 0.2), blurRadius: 6),
+        ],
+      ),
+      child: Icon(icono, color: Colors.white, size: 18),
     );
   }
 }

@@ -2,17 +2,20 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
-import 'package:latlong2/latlong.dart' show LatLng;
+import 'package:geolocator/geolocator.dart';
+import 'package:latlong2/latlong.dart' show Distance, LatLng, LengthUnit;
 import 'package:rb_alertas/config/api_config.dart';
 import 'package:rb_alertas/servicios/reporte_servicio.dart';
 import 'package:rb_alertas/servicios/sesion.dart';
-import 'package:rb_alertas/widgets/app_logo.dart';
+import 'package:rb_alertas/tema/rb_tema.dart';
+import 'package:rb_alertas/widgets/boton_voto.dart';
 import 'package:rb_alertas/widgets/categoria_visual.dart';
+import 'package:rb_alertas/widgets/rb_componentes.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-/// Detalle de un reporte, al tocar su pin en el mapa. Devuelve `true` al
-/// cerrarse si el reporte cambió (por ejemplo, se marcó como resuelto).
+/// Detalle de un reporte. Devuelve `true` al cerrarse si el reporte cambió
+/// (por ejemplo, se marcó como resuelto).
 class DetalleIncidenteVista extends StatefulWidget {
   final int idReporte;
 
@@ -23,14 +26,6 @@ class DetalleIncidenteVista extends StatefulWidget {
 }
 
 class _DetalleIncidenteVistaState extends State<DetalleIncidenteVista> {
-  static const _colorAzul = Color(0xFF0056D2);
-  static const _colorFondo = Color(0xFFF7F8FC);
-  static const _colorTitulo = Color(0xFF111827);
-  static const _colorTexto = Color(0xFF4B5563);
-  static const _colorBorde = Color(0xFFE5E7EB);
-  static const _colorRojo = Color(0xFFEF4444);
-  static const _colorVerde = Color(0xFF16A34A);
-
   final _reporteServicio = ReporteServicio();
 
   DetalleReporte? _detalle;
@@ -38,6 +33,8 @@ class _DetalleIncidenteVistaState extends State<DetalleIncidenteVista> {
   bool _resolviendo = false;
   bool _votando = false;
   bool _cambio = false;
+  // Distancia desde el usuario, solo si ya dio permiso de ubicación.
+  double? _distanciaMetros;
 
   @override
   void initState() {
@@ -54,6 +51,7 @@ class _DetalleIncidenteVistaState extends State<DetalleIncidenteVista> {
       );
       if (!mounted) return;
       setState(() => _detalle = detalle);
+      if (_distanciaMetros == null) _calcularDistancia(detalle);
     } on ReporteServicioException catch (e) {
       if (!mounted) return;
       setState(() => _error = e.mensaje);
@@ -63,31 +61,33 @@ class _DetalleIncidenteVistaState extends State<DetalleIncidenteVista> {
     }
   }
 
+  /// "A 350 m de ti". No pide permiso: si no lo hay, simplemente no se muestra.
+  Future<void> _calcularDistancia(DetalleReporte d) async {
+    try {
+      final permiso = await Geolocator.checkPermission();
+      if (permiso != LocationPermission.always &&
+          permiso != LocationPermission.whileInUse) {
+        return;
+      }
+      final posicion = await Geolocator.getLastKnownPosition() ??
+          await Geolocator.getCurrentPosition(
+            locationSettings: const LocationSettings(timeLimit: Duration(seconds: 8)),
+          );
+      final metros = const Distance().as(
+        LengthUnit.Meter,
+        LatLng(posicion.latitude, posicion.longitude),
+        LatLng(d.latitud, d.longitud),
+      );
+      if (mounted) setState(() => _distanciaMetros = metros);
+    } catch (_) {
+      // Sin ubicación se omite la distancia.
+    }
+  }
+
   void _mostrarMensaje(String mensaje) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(mensaje)));
-  }
-
-  // ---------------------------------------------------------------------------
-  // Textos derivados
-
-  // La BD no guarda un título: se arma con la categoría y la calle.
-  String _titulo(DetalleReporte d) {
-    final calle = d.direccion?.split(',').first.trim();
-    return (calle == null || calle.isEmpty) ? d.categoria : '${d.categoria} en $calle';
-  }
-
-  String _textoHora(DateTime fecha) {
-    String dos(int n) => n.toString().padLeft(2, '0');
-    final ahora = DateTime.now();
-    final dias = DateTime(ahora.year, ahora.month, ahora.day)
-        .difference(DateTime(fecha.year, fecha.month, fecha.day))
-        .inDays;
-    final hora = '${dos(fecha.hour)}:${dos(fecha.minute)} hrs';
-    if (dias == 0) return '$hora · Hoy';
-    if (dias == 1) return '$hora · Ayer';
-    return '$hora · ${dos(fecha.day)}-${dos(fecha.month)}-${fecha.year}';
   }
 
   bool _esVideo(String url) {
@@ -115,9 +115,9 @@ class _DetalleIncidenteVistaState extends State<DetalleIncidenteVista> {
             child: const Text('Cancelar'),
           ),
           FilledButton.icon(
-            style: FilledButton.styleFrom(backgroundColor: _colorRojo),
+            style: FilledButton.styleFrom(backgroundColor: RBColores.rojo),
             onPressed: () => Navigator.pop(context, true),
-            icon: const Icon(Icons.phone, size: 18),
+            icon: const Icon(Icons.call_rounded, size: 18),
             label: const Text('Llamar'),
           ),
         ],
@@ -133,9 +133,10 @@ class _DetalleIncidenteVistaState extends State<DetalleIncidenteVista> {
   }
 
   Future<void> _compartir(DetalleReporte d) async {
+    final titulo = tituloReporte(d.categoria, d.direccion);
     final lat = d.latitud.toStringAsFixed(5);
     final lon = d.longitud.toStringAsFixed(5);
-    final texto = '🚨 ${_titulo(d)}\n'
+    final texto = '🚨 $titulo\n'
         '${d.descripcion}\n'
         '${d.direccion != null ? '📍 ${d.direccion}\n' : ''}'
         'https://www.openstreetmap.org/?mlat=$lat&mlon=$lon#map=17/$lat/$lon\n'
@@ -144,7 +145,7 @@ class _DetalleIncidenteVistaState extends State<DetalleIncidenteVista> {
     // tiene hoja para compartir (casi todos los de escritorio): se copia el texto.
     if (!kIsWeb) {
       try {
-        await SharePlus.instance.share(ShareParams(text: texto, subject: _titulo(d)));
+        await SharePlus.instance.share(ShareParams(text: texto, subject: titulo));
         return;
       } catch (_) {
         // si falla, se copia al portapapeles
@@ -200,7 +201,7 @@ class _DetalleIncidenteVistaState extends State<DetalleIncidenteVista> {
             child: const Text('Cancelar'),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: _colorVerde),
+            style: FilledButton.styleFrom(backgroundColor: RBColores.verde),
             onPressed: () => Navigator.pop(context, true),
             child: const Text('Sí, está resuelto'),
           ),
@@ -237,27 +238,7 @@ class _DetalleIncidenteVistaState extends State<DetalleIncidenteVista> {
         if (!didPop) Navigator.pop(context, _cambio);
       },
       child: Scaffold(
-        backgroundColor: _colorFondo,
-        appBar: AppBar(
-          backgroundColor: _colorFondo,
-          surfaceTintColor: Colors.transparent,
-          elevation: 0,
-          centerTitle: true,
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back, color: _colorAzul),
-            onPressed: () => Navigator.pop(context, _cambio),
-          ),
-          title: const Text(
-            'Detalle de Incidente',
-            style: TextStyle(color: _colorAzul, fontWeight: FontWeight.w700, fontSize: 18),
-          ),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.settings_outlined, color: Color(0xFF374151)),
-              onPressed: () {},
-            ),
-          ],
-        ),
+        backgroundColor: Colors.white,
         body: _cuerpo(),
       ),
     );
@@ -265,414 +246,397 @@ class _DetalleIncidenteVistaState extends State<DetalleIncidenteVista> {
 
   Widget _cuerpo() {
     final detalle = _detalle;
-    if (_error != null && detalle == null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(_error!, textAlign: TextAlign.center, style: const TextStyle(color: _colorTexto)),
-              const SizedBox(height: 12),
-              OutlinedButton(onPressed: _cargar, child: const Text('Reintentar')),
-            ],
+    if (detalle == null) {
+      return Stack(
+        children: [
+          Center(
+            child: _error == null
+                ? const CircularProgressIndicator()
+                : EstadoVacio(
+                    icono: Icons.cloud_off_rounded,
+                    titulo: 'No se pudo cargar el reporte',
+                    detalle: _error!,
+                    accion: 'Reintentar',
+                    onAccion: _cargar,
+                  ),
           ),
-        ),
+          SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: BotonCircular(
+                icono: Icons.arrow_back_rounded,
+                tooltip: 'Volver',
+                onTap: () => Navigator.pop(context, _cambio),
+              ),
+            ),
+          ),
+        ],
       );
     }
-    if (detalle == null) {
-      return const Center(child: CircularProgressIndicator(color: _colorAzul));
-    }
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 480),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+    // El mapa ocupa cerca de un tercio de la pantalla, sin pasar de 300.
+    final altoMapa = context.altoRelativo(0.34, minimo: 190, maximo: 300);
+    final margen = context.pantallaAngosta ? 18.0 : 24.0;
+
+    return Stack(
+      children: [
+        SingleChildScrollView(
+          child: Stack(
             children: [
-              _imagen(detalle),
-              const SizedBox(height: 14),
-              _tarjetaInformacion(detalle),
-              const SizedBox(height: 14),
-              _tarjetaVotos(detalle),
-              const SizedBox(height: 14),
-              _tarjetaUbicacion(detalle),
-              const SizedBox(height: 18),
-              _botonEmergencias(detalle),
-              const SizedBox(height: 10),
-              _botonCompartir(detalle),
-              if (detalle.esAutor || !detalle.activo) ...[
-                const SizedBox(height: 22),
-                _botonResuelto(detalle),
-              ],
+              SizedBox(height: altoMapa, child: _mapa(detalle)),
+              Container(
+                margin: EdgeInsets.only(top: altoMapa - 28),
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(RBRadios.hoja)),
+                ),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 640),
+                    child: Padding(
+                      padding: EdgeInsets.fromLTRB(
+                        margen,
+                        24,
+                        margen,
+                        28 + MediaQuery.of(context).padding.bottom,
+                      ),
+                      child: _contenido(detalle),
+                    ),
+                  ),
+                ),
+              ),
             ],
           ),
         ),
-      ),
+        SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: Row(
+              children: [
+                BotonCircular(
+                  icono: Icons.arrow_back_rounded,
+                  tooltip: 'Volver',
+                  onTap: () => Navigator.pop(context, _cambio),
+                ),
+                const Spacer(),
+                BotonCircular(
+                  icono: Icons.call_rounded,
+                  fondo: RBColores.rojo,
+                  color: Colors.white,
+                  tooltip: 'Contactar emergencias',
+                  onTap: () => _contactarEmergencias(detalle),
+                ),
+                const SizedBox(width: 12),
+                BotonCircular(
+                  icono: Icons.share_outlined,
+                  tooltip: 'Compartir',
+                  onTap: () => _compartir(detalle),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 
-  Widget _imagen(DetalleReporte d) {
-    final color = colorCategoria(d.categoriaCodigo, colorHex: d.colorHex);
-    final icono = iconoCategoria(d.categoriaCodigo);
-    final url = d.imagenes.isNotEmpty ? d.imagenes.first : null;
-
-    Widget marcador({bool video = false}) => Container(
-          color: color.withValues(alpha: 0.12),
-          child: Center(
-            child: Icon(video ? Icons.play_circle_outline : icono, size: 56, color: color),
-          ),
-        );
-
-    final Widget fondo;
-    if (url == null) {
-      fondo = marcador();
-    } else if (_esVideo(url)) {
-      fondo = InkWell(
-        onTap: () => launchUrl(Uri.parse(ApiConfig.urlArchivo(url))),
-        child: marcador(video: true),
-      );
-    } else {
-      fondo = Image.network(
-        ApiConfig.urlArchivo(url),
-        fit: BoxFit.cover,
-        loadingBuilder: (context, hijo, progreso) => progreso == null
-            ? hijo
-            : Container(
-                color: color.withValues(alpha: 0.08),
-                child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
+  Widget _mapa(DetalleReporte d) {
+    final punto = LatLng(d.latitud, d.longitud);
+    return FlutterMap(
+      options: MapOptions(
+        initialCenter: punto,
+        initialZoom: 16.5,
+        interactionOptions: const InteractionOptions(flags: InteractiveFlag.none),
+      ),
+      children: [
+        capaMapaBase(),
+        MarkerLayer(
+          markers: [
+            Marker(
+              point: punto,
+              width: 90,
+              height: 90,
+              child: PinIncidente(
+                codigo: d.categoriaCodigo,
+                colorHex: d.colorHex,
+                seleccionado: true,
               ),
-        errorBuilder: (context, error, pila) => marcador(),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _contenido(DetalleReporte d) {
+    final color = colorCategoria(d.categoriaCodigo, colorHex: d.colorHex);
+    final estado = EstadoVisual.desdeApi(d.estado);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 10,
+          runSpacing: 8,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(iconoCategoria(d.categoriaCodigo), size: 17, color: color),
+                  const SizedBox(width: 6),
+                  Text(
+                    nombreCortoCategoria(d.categoriaCodigo, d.categoria),
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: color),
+                  ),
+                ],
+              ),
+            ),
+            ChipEstado(
+              estado: estado,
+              grande: true,
+              texto: estado == EstadoVisual.validada ? 'Validada por vecinos' : null,
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Text(
+          tituloReporte(d.categoria, d.direccion),
+          style: TextStyle(
+            fontFamily: RBFuentes.titulos,
+            fontSize: context.escala(30),
+            height: 1.15,
+            fontWeight: FontWeight.w800,
+            color: RBColores.azul,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 18,
+          runSpacing: 6,
+          children: [
+            if (d.fechaCreacion != null)
+              _meta(Icons.schedule_rounded, tiempoRelativoInicio(d.fechaCreacion)),
+            if (_distanciaMetros != null)
+              _meta(Icons.place_outlined, 'A ${distanciaLegible(_distanciaMetros!)} de ti'),
+          ],
+        ),
+        if (d.direccion != null && d.direccion!.trim().isNotEmpty) ...[
+          const SizedBox(height: 6),
+          _meta(Icons.signpost_outlined, d.direccion!),
+        ],
+        const SizedBox(height: 20),
+        _autor(d),
+        const SizedBox(height: 18),
+        Text(
+          d.descripcion,
+          style: const TextStyle(fontSize: 17, height: 1.5, color: RBColores.tinta),
+        ),
+        if (d.imagenes.isNotEmpty) ...[
+          const SizedBox(height: 20),
+          _media(d),
+        ],
+        const SizedBox(height: 22),
+        const Divider(height: 1),
+        const SizedBox(height: 16),
+        _votos(d),
+        const SizedBox(height: 16),
+        const Divider(height: 1),
+        if (d.esAutor || d.estado == 'RESUELTO') ...[
+          const SizedBox(height: 22),
+          _botonResuelto(d),
+        ],
+      ],
+    );
+  }
+
+  Widget _meta(IconData icono, String texto) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icono, size: 18, color: RBColores.texto2),
+        const SizedBox(width: 6),
+        Flexible(
+          child: Text(
+            texto,
+            style: const TextStyle(fontSize: 15.5, color: RBColores.texto2),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _autor(DetalleReporte d) {
+    // El autor aparece con un alias de suricata (lo arma la API):
+    // su nombre real no se muestra por seguridad.
+    return Row(
+      children: [
+        const AvatarSuricata(tamano: 54),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                d.autor,
+                style: const TextStyle(
+                  fontSize: 17.5,
+                  fontWeight: FontWeight.w700,
+                  color: RBColores.tinta,
+                ),
+              ),
+              Text(
+                d.esAutor
+                    ? 'Tú reportaste este incidente · perfil anónimo'
+                    : 'Autor del reporte · perfil anónimo',
+                style: const TextStyle(fontSize: 14, color: RBColores.texto2),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _media(DetalleReporte d) {
+    final url = d.imagenes.first;
+    final radio = BorderRadius.circular(RBRadios.tarjeta);
+
+    if (_esVideo(url)) {
+      return Material(
+        color: RBColores.azul50,
+        borderRadius: radio,
+        child: InkWell(
+          borderRadius: radio,
+          onTap: () => launchUrl(Uri.parse(ApiConfig.urlArchivo(url))),
+          child: const SizedBox(
+            height: 180,
+            width: double.infinity,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.play_circle_outline_rounded, size: 54, color: RBColores.azul),
+                SizedBox(height: 6),
+                Text(
+                  'Ver video adjunto',
+                  style: TextStyle(fontWeight: FontWeight.w700, color: RBColores.azul),
+                ),
+              ],
+            ),
+          ),
+        ),
       );
     }
 
     return ClipRRect(
-      borderRadius: BorderRadius.circular(14),
-      child: SizedBox(
-        height: 180,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            fondo,
-            Positioned(
-              top: 10,
-              left: 10,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(20)),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(icono, size: 14, color: Colors.white),
-                    const SizedBox(width: 5),
-                    Text(
-                      d.categoria,
-                      style: const TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w700),
-                    ),
-                  ],
-                ),
+      borderRadius: radio,
+      child: Image.network(
+        ApiConfig.urlArchivo(url),
+        width: double.infinity,
+        height: 220,
+        fit: BoxFit.cover,
+        loadingBuilder: (context, hijo, progreso) => progreso == null
+            ? hijo
+            : Container(
+                height: 220,
+                color: RBColores.azul50,
+                child: const Center(child: CircularProgressIndicator(strokeWidth: 2)),
               ),
-            ),
-            if (!d.activo)
-              Positioned(
-                top: 10,
-                right: 10,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(color: _colorVerde, borderRadius: BorderRadius.circular(20)),
-                  child: const Text(
-                    'Resuelto',
-                    style: TextStyle(color: Colors.white, fontSize: 12.5, fontWeight: FontWeight.w700),
-                  ),
-                ),
-              ),
-            if (d.fechaCreacion != null)
-              Positioned(
-                right: 10,
-                bottom: 10,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(8),
-                    boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 4)],
-                  ),
-                  child: Text(
-                    _textoHora(d.fechaCreacion!),
-                    style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: _colorTitulo),
-                  ),
-                ),
-              ),
-          ],
+        errorBuilder: (context, error, pila) => Container(
+          height: 160,
+          color: RBColores.azul50,
+          child: const Center(
+            child: Icon(Icons.broken_image_outlined, size: 40, color: RBColores.texto2),
+          ),
         ),
-      ),
-    );
-  }
-
-  BoxDecoration get _estiloTarjeta => BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _colorBorde),
-      );
-
-  Widget _tarjetaInformacion(DetalleReporte d) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: _estiloTarjeta,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            _titulo(d),
-            style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w800, color: _colorTitulo, height: 1.25),
-          ),
-          const SizedBox(height: 8),
-          Text(d.descripcion, style: const TextStyle(fontSize: 14, color: _colorTexto, height: 1.5)),
-          const SizedBox(height: 14),
-          const Divider(height: 1, color: _colorBorde),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              // El autor aparece con un alias de suricata (lo arma la API):
-              // su nombre real no se muestra por seguridad.
-              const CircleAvatar(
-                radius: 18,
-                backgroundColor: Color(0xFFE5EDFF),
-                child: ClipOval(child: AppLogo(size: 32)),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Reportado por: ${d.autor}',
-                      style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: _colorTitulo),
-                    ),
-                    Text(
-                      d.esAutor ? 'Tú reportaste este incidente' : 'Autor del reporte',
-                      style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ],
       ),
     );
   }
 
   /// Confirmar o desmentir (CU-16). El autor no vota su propio reporte: ve
   /// solo el recuento.
-  Widget _tarjetaVotos(DetalleReporte d) {
+  Widget _votos(DetalleReporte d) {
     final puedeVotar = d.esAutor == false && d.activo;
-
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: _estiloTarjeta,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            children: [
-              Icon(Icons.groups_outlined, color: _colorAzul, size: 20),
-              SizedBox(width: 6),
-              Text(
-                '¿Sigue ocurriendo?',
-                style: TextStyle(fontSize: 16.5, fontWeight: FontWeight.w800, color: _colorTitulo),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(
-            puedeVotar
-                ? 'Tu voto ayuda a la comunidad a saber si el reporte es confiable.'
-                : d.esAutor
-                    ? 'Así responde la comunidad a tu reporte.'
-                    : 'Este reporte ya no admite votos.',
-            style: const TextStyle(fontSize: 12.5, color: Color(0xFF6B7280)),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: _botonVoto(
-                  d: d,
-                  voto: TipoVoto.confirma,
-                  icono: Icons.thumb_up_alt_outlined,
-                  iconoActivo: Icons.thumb_up_alt_rounded,
-                  etiqueta: 'Confirmo',
-                  cantidad: d.confirmaciones,
-                  color: _colorVerde,
-                  habilitado: puedeVotar,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Expanded(
+              child: Text(
+                '¿Es confiable este reporte?',
+                style: TextStyle(
+                  fontSize: 16.5,
+                  fontWeight: FontWeight.w600,
+                  color: RBColores.tinta,
                 ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _botonVoto(
-                  d: d,
-                  voto: TipoVoto.desmiente,
-                  icono: Icons.thumb_down_alt_outlined,
-                  iconoActivo: Icons.thumb_down_alt_rounded,
-                  etiqueta: 'Desmiento',
-                  cantidad: d.desmentidos,
-                  color: _colorRojo,
-                  habilitado: puedeVotar,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _botonVoto({
-    required DetalleReporte d,
-    required TipoVoto voto,
-    required IconData icono,
-    required IconData iconoActivo,
-    required String etiqueta,
-    required int cantidad,
-    required Color color,
-    required bool habilitado,
-  }) {
-    final marcado = d.miVoto == voto;
-    return SizedBox(
-      height: 44,
-      child: OutlinedButton.icon(
-        onPressed: habilitado && !_votando ? () => _votar(d, voto) : null,
-        style: OutlinedButton.styleFrom(
-          foregroundColor: marcado ? Colors.white : color,
-          backgroundColor: marcado ? color : Colors.white,
-          disabledForegroundColor: marcado ? Colors.white : color.withValues(alpha: 0.55),
-          disabledBackgroundColor: marcado ? color.withValues(alpha: 0.75) : Colors.white,
-          side: BorderSide(color: color.withValues(alpha: habilitado ? 0.8 : 0.35), width: 1.3),
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        ),
-        icon: Icon(marcado ? iconoActivo : icono, size: 18),
-        label: Text(
-          '$etiqueta  $cantidad',
-          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
-        ),
-      ),
-    );
-  }
-
-  Widget _tarjetaUbicacion(DetalleReporte d) {
-    final punto = LatLng(d.latitud, d.longitud);
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: _estiloTarjeta,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            children: [
-              Icon(Icons.location_on_outlined, color: _colorAzul, size: 20),
-              SizedBox(width: 6),
-              Text('Ubicación', style: TextStyle(fontSize: 16.5, fontWeight: FontWeight.w800, color: _colorTitulo)),
-            ],
-          ),
-          const SizedBox(height: 12),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(10),
-            child: SizedBox(
-              height: 140,
-              child: FlutterMap(
-                options: MapOptions(
-                  initialCenter: punto,
-                  initialZoom: 16,
-                  interactionOptions: const InteractionOptions(flags: InteractiveFlag.none),
-                ),
-                children: [
-                  TileLayer(
-                    urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                    userAgentPackageName: 'com.rbalertas.rb_alertas',
-                  ),
-                  MarkerLayer(
-                    markers: [
-                      Marker(
-                        point: punto,
-                        width: 36,
-                        height: 36,
-                        alignment: Alignment.topCenter,
-                        child: const Icon(Icons.location_on, color: _colorRojo, size: 36),
-                      ),
-                    ],
-                  ),
-                ],
               ),
             ),
-          ),
-          const SizedBox(height: 10),
+            BotonVoto(
+              icono: Icons.thumb_up_outlined,
+              iconoActivo: Icons.thumb_up_rounded,
+              cantidad: d.confirmaciones,
+              marcado: d.miVoto == TipoVoto.confirma,
+              positivo: true,
+              onTap: puedeVotar && !_votando ? () => _votar(d, TipoVoto.confirma) : null,
+            ),
+            const SizedBox(width: 10),
+            BotonVoto(
+              icono: Icons.thumb_down_outlined,
+              iconoActivo: Icons.thumb_down_rounded,
+              cantidad: d.desmentidos,
+              marcado: d.miVoto == TipoVoto.desmiente,
+              positivo: false,
+              onTap: puedeVotar && !_votando ? () => _votar(d, TipoVoto.desmiente) : null,
+            ),
+          ],
+        ),
+        if (!puedeVotar) ...[
+          const SizedBox(height: 6),
           Text(
-            d.direccion ?? '${d.latitud.toStringAsFixed(5)}, ${d.longitud.toStringAsFixed(5)}',
-            style: const TextStyle(fontSize: 13, color: _colorTexto),
+            d.esAutor
+                ? 'Así responde la comunidad a tu reporte.'
+                : 'Este reporte ya no admite votos.',
+            style: const TextStyle(fontSize: 13.5, color: RBColores.texto2),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _botonEmergencias(DetalleReporte d) {
-    return SizedBox(
-      height: 46,
-      child: ElevatedButton.icon(
-        onPressed: () => _contactarEmergencias(d),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: _colorRojo,
-          foregroundColor: Colors.white,
-          elevation: 0,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        ),
-        icon: const Icon(Icons.phone, size: 20),
-        label: const Text('Contactar Emergencias', style: TextStyle(fontSize: 15.5, fontWeight: FontWeight.w700)),
-      ),
-    );
-  }
-
-  Widget _botonCompartir(DetalleReporte d) {
-    return SizedBox(
-      height: 46,
-      child: OutlinedButton.icon(
-        onPressed: () => _compartir(d),
-        style: OutlinedButton.styleFrom(
-          foregroundColor: _colorAzul,
-          backgroundColor: Colors.white,
-          side: const BorderSide(color: Color(0xFFBFD3F5), width: 1.3),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        ),
-        icon: const Icon(Icons.share_outlined, size: 20),
-        label: const Text('Compartir', style: TextStyle(fontSize: 15.5, fontWeight: FontWeight.w700)),
-      ),
+      ],
     );
   }
 
   Widget _botonResuelto(DetalleReporte d) {
     final resuelto = !d.activo;
     return SizedBox(
-      height: 46,
+      width: double.infinity,
+      height: 56,
       child: OutlinedButton.icon(
-        // Solo el autor puede marcarlo; si ya está resuelto se muestra deshabilitado.
+        // Solo el autor puede marcarlo; si ya no está vigente se muestra deshabilitado.
         onPressed: resuelto || _resolviendo ? null : () => _marcarResuelto(d),
         style: OutlinedButton.styleFrom(
-          foregroundColor: _colorVerde,
-          disabledForegroundColor: _colorVerde.withValues(alpha: 0.7),
-          backgroundColor: Colors.white,
-          side: BorderSide(color: _colorVerde.withValues(alpha: resuelto ? 0.4 : 0.8), width: 1.3),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          foregroundColor: RBColores.verde,
+          disabledForegroundColor: RBColores.verde.withValues(alpha: 0.75),
+          backgroundColor: RBColores.verde50,
+          disabledBackgroundColor: RBColores.verde50,
+          side: BorderSide(color: RBColores.verde.withValues(alpha: resuelto ? 0.35 : 0.7), width: 1.4),
         ),
         icon: _resolviendo
-            ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: _colorVerde))
-            : const Icon(Icons.check_circle_outline, size: 20),
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2, color: RBColores.verde),
+              )
+            : const Icon(Icons.check_circle_outline_rounded, size: 22),
         label: Text(
-          resuelto ? 'Incidente resuelto' : 'Marcar como resuelto',
-          style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w700),
+          d.estado == 'RESUELTO'
+              ? 'Incidente resuelto'
+              : resuelto
+                  ? 'Este reporte ya no está vigente'
+                  : 'Marcar como resuelto',
         ),
       ),
     );

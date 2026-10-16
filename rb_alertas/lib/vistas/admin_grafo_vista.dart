@@ -3,22 +3,18 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:rb_alertas/servicios/admin_servicio.dart';
 import 'package:rb_alertas/servicios/sesion.dart';
+import 'package:rb_alertas/tema/rb_tema.dart';
 import 'package:rb_alertas/widgets/categoria_visual.dart';
+import 'package:rb_alertas/widgets/rb_componentes.dart';
 
-const _colorAzul = Color(0xFF0056D2);
-const _colorFondo = Color(0xFFF7F8FC);
-const _colorTitulo = Color(0xFF111827);
-const _colorTextoGris = Color(0xFF6B7280);
-const _colorBorde = Color(0xFFE5E7EB);
-const _colorVerde = Color(0xFF16A34A);
-const _colorRojo = Color(0xFFDC2626);
-const _colorLinea = Color(0xFFCBD5E1);
+/// Color de las relaciones sin un significado propio.
+const _colorLinea = RBColores.bordeCampo;
 
 /// Nombre visible, ícono y color de cada tipo de elemento del grafo.
 (String, IconData, Color) _estilo(NodoGrafo nodo) {
   switch (nodo.tipo) {
     case 'Usuario':
-      return ('Vecino', Icons.person_rounded, _colorAzul);
+      return ('Vecino', Icons.person_rounded, RBColores.azul);
     case 'Reporte':
       final codigo = (nodo.datos['categoria_codigo'] ?? '').toString();
       return (
@@ -34,13 +30,13 @@ const _colorLinea = Color(0xFFCBD5E1);
         colorCategoria(codigo, colorHex: nodo.datos['color']?.toString()),
       );
     case 'Comuna':
-      return ('Comuna', Icons.location_city_rounded, const Color(0xFF0F766E));
+      return ('Comuna', Icons.location_city_rounded, RBColores.petroleo);
     case 'Localidad':
-      return ('Localidad', Icons.place_rounded, const Color(0xFF0D9488));
+      return ('Localidad', Icons.place_rounded, RBColores.texto2);
     case 'ZonaSegura':
-      return ('Zona segura', Icons.shield_rounded, const Color(0xFFDB2777));
+      return ('Zona segura', Icons.shield_rounded, RBColores.verde);
     default:
-      return (nodo.tipo, Icons.circle, _colorTextoGris);
+      return (nodo.tipo, Icons.circle, RBColores.placeholder);
   }
 }
 
@@ -69,14 +65,39 @@ String _textoRelacion(AristaGrafo arista) {
 Color _colorRelacion(AristaGrafo arista) {
   switch (arista.tipo) {
     case 'VOTO':
-      return arista.datos['tipo'] == 'DESMIENTE' ? _colorRojo : _colorVerde;
+      return arista.datos['tipo'] == 'DESMIENTE'
+          ? RBColores.rojo
+          : RBColores.verde;
     case 'CREO':
-      return _colorAzul;
+      return RBColores.azul;
     case 'ALERTO_A':
-      return const Color(0xFFDB2777);
+      return RBColores.petroleo;
     default:
       return _colorLinea;
   }
+}
+
+/// Ícono de un elemento como cuadrado redondeado de su color; las categorías
+/// usan el mismo ícono que en el resto de la app.
+Widget _iconoNodo(NodoGrafo nodo, double tamano) {
+  if (nodo.tipo == 'Reporte' || nodo.tipo == 'Categoria') {
+    final campo = nodo.tipo == 'Reporte' ? 'categoria_codigo' : 'codigo';
+    return IconoCategoria(
+      codigo: (nodo.datos[campo] ?? '').toString(),
+      colorHex: nodo.datos['color']?.toString(),
+      tamano: tamano,
+    );
+  }
+  final (_, icono, color) = _estilo(nodo);
+  return Container(
+    width: tamano,
+    height: tamano,
+    decoration: BoxDecoration(
+      color: color,
+      borderRadius: BorderRadius.circular(tamano * 0.28),
+    ),
+    child: Icon(icono, color: Colors.white, size: tamano * 0.46),
+  );
 }
 
 String _textoEstado(String? estado) => switch (estado) {
@@ -331,7 +352,7 @@ class _PestanaGrafoState extends State<PestanaGrafo>
                     const Icon(
                       Icons.chevron_right,
                       size: 18,
-                      color: _colorTextoGris,
+                      color: RBColores.placeholder,
                     ),
                     _miga(
                       n.etiqueta,
@@ -350,14 +371,17 @@ class _PestanaGrafoState extends State<PestanaGrafo>
               child: SizedBox(
                 width: 18,
                 height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: RBColores.azul,
+                ),
               ),
             )
           else
             IconButton(
               tooltip: 'Actualizar con los datos de ahora',
               onPressed: _sincronizar,
-              icon: const Icon(Icons.sync_rounded, color: _colorAzul),
+              icon: const Icon(Icons.sync_rounded, color: RBColores.azul),
             ),
         ],
       ),
@@ -371,26 +395,30 @@ class _PestanaGrafoState extends State<PestanaGrafo>
     required VoidCallback alTocar,
   }) {
     return Material(
-      color: activa ? _colorAzul : Colors.white,
+      color: activa ? RBColores.azul : Colors.white,
       shape: StadiumBorder(
-        side: BorderSide(color: activa ? _colorAzul : _colorBorde),
+        side: BorderSide(color: activa ? RBColores.azul : RBColores.linea),
       ),
       child: InkWell(
         customBorder: const StadiumBorder(),
         onTap: activa ? null : alTocar,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icono, size: 15, color: activa ? Colors.white : _colorAzul),
-              const SizedBox(width: 5),
+              Icon(
+                icono,
+                size: 16,
+                color: activa ? Colors.white : RBColores.azul,
+              ),
+              const SizedBox(width: 6),
               Text(
                 texto,
                 style: TextStyle(
-                  fontSize: 12.5,
+                  fontSize: 13.5,
                   fontWeight: FontWeight.w700,
-                  color: activa ? Colors.white : _colorTitulo,
+                  color: activa ? Colors.white : RBColores.tinta,
                 ),
               ),
             ],
@@ -407,14 +435,18 @@ class _PestanaGrafoState extends State<PestanaGrafo>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.hub_outlined, size: 44, color: Color(0xFF9CA3AF)),
+            const Icon(
+              Icons.hub_outlined,
+              size: 44,
+              color: RBColores.placeholder,
+            ),
             const SizedBox(height: 10),
             Text(
               _error!,
               textAlign: TextAlign.center,
-              style: const TextStyle(color: _colorTextoGris),
+              style: const TextStyle(fontSize: 15, color: RBColores.texto2),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 16),
             OutlinedButton(
               onPressed: () {
                 final foco = _foco;
@@ -424,10 +456,7 @@ class _PestanaGrafoState extends State<PestanaGrafo>
                   _enfocar(foco.nodoFoco, agregarAlRastro: false);
                 }
               },
-              child: const Text(
-                'Reintentar',
-                style: TextStyle(color: _colorAzul),
-              ),
+              child: const Text('Reintentar'),
             ),
           ],
         ),
@@ -441,7 +470,9 @@ class _PestanaGrafoState extends State<PestanaGrafo>
   Widget _vistaInicio() {
     final inicio = _inicio;
     if (inicio == null) {
-      return const Center(child: CircularProgressIndicator(color: _colorAzul));
+      return const Center(
+        child: CircularProgressIndicator(color: RBColores.azul),
+      );
     }
     final vacio =
         inicio.reportes.isEmpty &&
@@ -455,7 +486,11 @@ class _PestanaGrafoState extends State<PestanaGrafo>
           const Text(
             'Explora cómo se conectan vecinos, reportes y lugares. '
             'Toca cualquier elemento para ponerlo al centro.',
-            style: TextStyle(fontSize: 13, color: _colorTextoGris, height: 1.4),
+            style: TextStyle(
+              fontSize: 14.5,
+              color: RBColores.texto2,
+              height: 1.4,
+            ),
           ),
           const SizedBox(height: 16),
           if (vacio)
@@ -464,23 +499,23 @@ class _PestanaGrafoState extends State<PestanaGrafo>
               child: Text(
                 'El grafo todavía no tiene datos. Toca ⟳ para copiarlos ahora.',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: _colorTextoGris),
+                style: TextStyle(fontSize: 15, color: RBColores.texto2),
               ),
             ),
           if (inicio.hallazgos.isNotEmpty) ...[
             _tituloSeccion('Para revisar'),
             for (final h in inicio.hallazgos) _tarjetaHallazgo(h),
-            const SizedBox(height: 14),
+            const SizedBox(height: 20),
           ],
           if (inicio.reportes.isNotEmpty) ...[
             _tituloSeccion('Reportes recientes'),
             _filaNodos(inicio.reportes),
-            const SizedBox(height: 14),
+            const SizedBox(height: 20),
           ],
           if (inicio.vecinos.isNotEmpty) ...[
             _tituloSeccion('Vecinos más activos'),
             _filaNodos(inicio.vecinos),
-            const SizedBox(height: 14),
+            const SizedBox(height: 20),
           ],
           if (inicio.lugares.isNotEmpty) ...[
             _tituloSeccion('Lugares con más reportes'),
@@ -493,7 +528,7 @@ class _PestanaGrafoState extends State<PestanaGrafo>
                 'Datos copiados el '
                 '${inicio.sincronizadoEn!.replaceFirst('T', ' a las ').substring(0, 21)}',
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 11.5, color: _colorTextoGris),
+                style: const TextStyle(fontSize: 12.5, color: RBColores.texto2),
               ),
             ),
         ],
@@ -502,60 +537,53 @@ class _PestanaGrafoState extends State<PestanaGrafo>
   }
 
   Widget _tituloSeccion(String texto) => Padding(
-    padding: const EdgeInsets.only(bottom: 10),
-    child: Text(
-      texto,
-      style: const TextStyle(
-        fontSize: 16.5,
-        fontWeight: FontWeight.w800,
-        color: _colorTitulo,
-      ),
-    ),
+    padding: const EdgeInsets.only(bottom: 10, left: 4),
+    child: EtiquetaSeccion(texto),
   );
 
   Widget _tarjetaHallazgo(HallazgoGrafo h) {
-    final color = h.esAlerta ? _colorRojo : _colorAzul;
+    final color = h.esAlerta ? RBColores.rojo : RBColores.azul;
+    final fondo = h.esAlerta ? RBColores.rojo50 : RBColores.azul50;
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.only(bottom: 10),
       child: Material(
-        color: color.withValues(alpha: 0.06),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
-          side: BorderSide(color: color.withValues(alpha: 0.25)),
-        ),
+        color: fondo,
+        borderRadius: BorderRadius.circular(RBRadios.tarjeta),
         child: InkWell(
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(RBRadios.tarjeta),
           onTap: () => _enfocar(h.nodo),
           child: Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(14),
             child: Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.all(8),
+                  width: 38,
+                  height: 38,
                   decoration: BoxDecoration(
-                    color: color.withValues(alpha: 0.12),
-                    shape: BoxShape.circle,
+                    color: color,
+                    borderRadius: BorderRadius.circular(12),
                   ),
                   child: Icon(
                     h.esAlerta
                         ? Icons.warning_amber_rounded
                         : Icons.insights_rounded,
-                    size: 18,
-                    color: color,
+                    size: 20,
+                    color: Colors.white,
                   ),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Text(
                     h.texto,
                     style: const TextStyle(
-                      fontSize: 13.5,
+                      fontSize: 14.5,
+                      height: 1.3,
                       fontWeight: FontWeight.w600,
-                      color: _colorTitulo,
+                      color: RBColores.tinta,
                     ),
                   ),
                 ),
-                Icon(Icons.chevron_right, color: color),
+                Icon(Icons.chevron_right_rounded, color: color),
               ],
             ),
           ),
@@ -566,66 +594,50 @@ class _PestanaGrafoState extends State<PestanaGrafo>
 
   Widget _filaNodos(List<NodoGrafo> nodos) {
     return SizedBox(
-      height: 112,
+      height: 124,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.only(bottom: 6),
         itemCount: nodos.length,
         separatorBuilder: (_, _) => const SizedBox(width: 10),
         itemBuilder: (_, i) {
           final n = nodos[i];
-          final (tipo, icono, color) = _estilo(n);
+          final (tipo, _, _) = _estilo(n);
           final subtitulo =
               n.detalle ??
               (n.tipo == 'Reporte'
                   ? '${n.datos['categoria'] ?? ''}'
                   : _textoEstado(n.estado));
-          return Material(
-            color: Colors.white,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-              side: const BorderSide(color: _colorBorde),
-            ),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(14),
+          return SizedBox(
+            width: 128,
+            child: TarjetaRB(
               onTap: () => _enfocar(n),
-              child: SizedBox(
-                width: 120,
-                child: Padding(
-                  padding: const EdgeInsets.all(10),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(7),
-                        decoration: BoxDecoration(
-                          color: color.withValues(alpha: 0.12),
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(icono, size: 18, color: color),
-                      ),
-                      const Spacer(),
-                      Text(
-                        n.etiqueta,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.w700,
-                          color: _colorTitulo,
-                        ),
-                      ),
-                      Text(
-                        subtitulo.isEmpty ? tipo : subtitulo,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 11.5,
-                          color: _colorTextoGris,
-                        ),
-                      ),
-                    ],
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _iconoNodo(n, 36),
+                  const Spacer(),
+                  Text(
+                    n.etiqueta,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w700,
+                      color: RBColores.tinta,
+                    ),
                   ),
-                ),
+                  Text(
+                    subtitulo.isEmpty ? tipo : subtitulo,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      color: RBColores.texto2,
+                    ),
+                  ),
+                ],
               ),
             ),
           );
@@ -703,7 +715,7 @@ class _PestanaGrafoState extends State<PestanaGrafo>
             alignment: Alignment(0, 0.6),
             child: Text(
               'No tiene conexiones todavía.',
-              style: TextStyle(color: _colorTextoGris),
+              style: TextStyle(fontSize: 14.5, color: RBColores.texto2),
             ),
           ),
       ],
@@ -715,7 +727,9 @@ class _PestanaGrafoState extends State<PestanaGrafo>
     final esFoco = n.anillo == 0;
     final descartado = n.tipo == 'Reporte' && n.estado == 'DESCARTADO';
     final suspendido = n.tipo == 'Usuario' && n.estado == 'SUSPENDIDO';
-    final borde = descartado ? _colorRojo : (suspendido ? _colorTitulo : color);
+    final borde = descartado
+        ? RBColores.rojo
+        : (suspendido ? RBColores.tinta : color);
     // Lo que entra nuevo aparece suave; lo que ya estaba se mantiene visible.
     final opacidad = _desde[n.clave] == _hacia[n.clave] || esFoco
         ? 1.0
@@ -769,7 +783,7 @@ class _PestanaGrafoState extends State<PestanaGrafo>
                 style: TextStyle(
                   fontSize: esFoco ? 13 : (n.anillo == 1 ? 11.5 : 10),
                   fontWeight: n.anillo == 2 ? FontWeight.w500 : FontWeight.w700,
-                  color: n.anillo == 2 ? _colorTextoGris : _colorTitulo,
+                  color: n.anillo == 2 ? RBColores.texto2 : RBColores.tinta,
                 ),
               ),
             ),
@@ -799,16 +813,17 @@ class _PestanaGrafoState extends State<PestanaGrafo>
     ];
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
-      decoration: const BoxDecoration(
+      padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
+      decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        border: Border(top: BorderSide(color: _colorBorde)),
+        borderRadius: const BorderRadius.vertical(
+          top: Radius.circular(RBRadios.hoja),
+        ),
         boxShadow: [
           BoxShadow(
-            color: Color(0x14000000),
-            blurRadius: 12,
-            offset: Offset(0, -2),
+            color: RBColores.azul.withValues(alpha: 0.08),
+            blurRadius: 18,
+            offset: const Offset(0, -4),
           ),
         ],
       ),
@@ -818,48 +833,38 @@ class _PestanaGrafoState extends State<PestanaGrafo>
         children: [
           Row(
             children: [
-              Container(
-                padding: const EdgeInsets.all(9),
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.12),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(icono, color: color, size: 22),
-              ),
-              const SizedBox(width: 10),
+              _iconoNodo(n, 44),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      tipo,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: _colorTextoGris,
-                      ),
-                    ),
+                    Text(tipo.toUpperCase(), style: RBTexto.etiqueta),
+                    const SizedBox(height: 2),
                     Text(
                       n.etiqueta,
                       style: const TextStyle(
-                        fontSize: 18,
+                        fontFamily: RBFuentes.titulos,
+                        fontSize: 21,
+                        height: 1.15,
                         fontWeight: FontWeight.w800,
-                        color: _colorTitulo,
+                        color: RBColores.azul,
                       ),
                     ),
                   ],
                 ),
               ),
-              if (n.estado != null) _chipEstado(n.estado!),
+              if (n.estado != null) _chipEstado(n),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
           Text(
             lineas.join('\n'),
             maxLines: 4,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
-              fontSize: 13,
-              color: _colorTitulo,
+              fontSize: 14,
+              color: RBColores.tinta,
               height: 1.4,
             ),
           ),
@@ -869,24 +874,31 @@ class _PestanaGrafoState extends State<PestanaGrafo>
     );
   }
 
-  Widget _chipEstado(String estado) {
-    final color = switch (estado) {
-      'DESCARTADO' || 'SUSPENDIDO' => _colorRojo,
-      'RESUELTO' || 'ACTIVO' => _colorVerde,
-      'VALIDADO' => _colorAzul,
-      'PENDIENTE' => const Color(0xFFF59E0B),
-      _ => _colorTextoGris,
+  /// Reportes con la píldora del sistema; cuentas en verde, azul o rojo.
+  Widget _chipEstado(NodoGrafo n) {
+    final estado = n.estado!;
+    if (n.tipo == 'Reporte') {
+      return ChipEstado(
+        estado: EstadoVisual.desdeApi(estado),
+        texto: _textoEstado(estado),
+      );
+    }
+    final (fondo, color) = switch (estado) {
+      'ACTIVO' => (RBColores.verde50, RBColores.verde),
+      'PENDIENTE' => (RBColores.azul50, RBColores.azul),
+      'SUSPENDIDO' || 'DESCARTADO' => (RBColores.rojo50, RBColores.rojo),
+      _ => (RBColores.linea, RBColores.texto2),
     };
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
+        color: fondo,
         borderRadius: BorderRadius.circular(20),
       ),
       child: Text(
         _textoEstado(estado),
         style: TextStyle(
-          fontSize: 11.5,
+          fontSize: 12.5,
           fontWeight: FontWeight.w700,
           color: color,
         ),
@@ -898,11 +910,11 @@ class _PestanaGrafoState extends State<PestanaGrafo>
     final Widget boton;
     if (n.tipo == 'Usuario' && n.datos['es_admin'] != true) {
       final suspendido = n.estado == 'SUSPENDIDO';
-      final color = suspendido ? _colorVerde : _colorRojo;
+      final color = suspendido ? RBColores.verde : RBColores.rojo;
       boton = OutlinedButton.icon(
         style: OutlinedButton.styleFrom(
           foregroundColor: color,
-          side: BorderSide(color: color),
+          side: BorderSide(color: color, width: 1.4),
         ),
         onPressed: () => _cambiarCuenta(n),
         icon: Icon(
@@ -914,8 +926,8 @@ class _PestanaGrafoState extends State<PestanaGrafo>
     } else if (n.tipo == 'Reporte' && n.estado != 'DESCARTADO') {
       boton = OutlinedButton.icon(
         style: OutlinedButton.styleFrom(
-          foregroundColor: _colorRojo,
-          side: const BorderSide(color: _colorRojo),
+          foregroundColor: RBColores.rojo,
+          side: const BorderSide(color: RBColores.rojo, width: 1.4),
         ),
         onPressed: () => _descartar(n),
         icon: const Icon(Icons.block_rounded, size: 18),
@@ -925,7 +937,7 @@ class _PestanaGrafoState extends State<PestanaGrafo>
       return const [];
     }
     return [
-      const SizedBox(height: 10),
+      const SizedBox(height: 14),
       SizedBox(width: double.infinity, child: boton),
     ];
   }
@@ -937,6 +949,7 @@ class _PestanaGrafoState extends State<PestanaGrafo>
       suspender
           ? 'No podrá entrar a la app y se cerrarán sus sesiones.'
           : 'Podrá volver a entrar a la app.',
+      color: suspender ? RBColores.rojo : RBColores.verde,
     )) {
       return;
     }
@@ -982,7 +995,11 @@ class _PestanaGrafoState extends State<PestanaGrafo>
     }
   }
 
-  Future<bool> _confirmar(String titulo, String texto) async {
+  Future<bool> _confirmar(
+    String titulo,
+    String texto, {
+    Color color = RBColores.rojo,
+  }) async {
     final respuesta = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -994,7 +1011,7 @@ class _PestanaGrafoState extends State<PestanaGrafo>
             child: const Text('Cancelar'),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: _colorRojo),
+            style: FilledButton.styleFrom(backgroundColor: color),
             onPressed: () => Navigator.pop(context, true),
             child: const Text('Confirmar'),
           ),
@@ -1028,7 +1045,7 @@ class _PintorRelaciones extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final guia = Paint()
-      ..color = _colorAzul.withValues(alpha: 0.07)
+      ..color = RBColores.azul.withValues(alpha: 0.08)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.2;
     for (final factor in [0.58, 0.95]) {
@@ -1095,7 +1112,7 @@ class _PintorRelaciones extends CustomPainter {
         style: TextStyle(
           fontSize: 10,
           fontWeight: FontWeight.w700,
-          color: color == _colorLinea ? _colorTextoGris : color,
+          color: color == _colorLinea ? RBColores.texto2 : color,
         ),
       ),
       textDirection: TextDirection.ltr,
@@ -1107,7 +1124,7 @@ class _PintorRelaciones extends CustomPainter {
     );
     canvas.drawRRect(
       RRect.fromRectAndRadius(caja, const Radius.circular(8)),
-      Paint()..color = _colorFondo,
+      Paint()..color = RBColores.fondo,
     );
     pintor.paint(canvas, caja.topLeft + const Offset(5, 2));
   }

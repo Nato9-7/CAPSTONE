@@ -41,6 +41,7 @@ class ReporteMapa {
   final double longitud;
   final String? direccion;
   final String descripcion;
+  final String estado;
   final DateTime? fechaCreacion;
 
   ReporteMapa({
@@ -52,6 +53,7 @@ class ReporteMapa {
     required this.longitud,
     required this.direccion,
     required this.descripcion,
+    required this.estado,
     required this.fechaCreacion,
   });
 
@@ -65,6 +67,7 @@ class ReporteMapa {
       longitud: (json['longitud'] as num).toDouble(),
       direccion: json['direccion']?.toString(),
       descripcion: (json['descripcion'] ?? '').toString(),
+      estado: (json['estado'] ?? '').toString(),
       fechaCreacion: DateTime.tryParse((json['fecha_creacion'] ?? '').toString()),
     );
   }
@@ -80,6 +83,7 @@ class ReporteCercano {
   final double longitud;
   final String? direccion;
   final String descripcion;
+  final String estado;
   final DateTime? fechaCreacion;
   final double distanciaMetros;
   final int confirmaciones;
@@ -93,6 +97,7 @@ class ReporteCercano {
     required this.longitud,
     required this.direccion,
     required this.descripcion,
+    required this.estado,
     required this.fechaCreacion,
     required this.distanciaMetros,
     required this.confirmaciones,
@@ -114,6 +119,7 @@ class ReporteCercano {
       longitud: (json['longitud'] as num).toDouble(),
       direccion: json['direccion']?.toString(),
       descripcion: (json['descripcion'] ?? '').toString(),
+      estado: (json['estado'] ?? '').toString(),
       fechaCreacion: DateTime.tryParse((json['fecha_creacion'] ?? '').toString()),
       distanciaMetros: (json['distancia_metros'] as num?)?.toDouble() ?? 0,
       confirmaciones: (json['total_confirmaciones'] as num?)?.toInt() ?? 0,

@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:rb_alertas/config/app_info.dart';
 import 'package:rb_alertas/servicios/auth_servicio.dart';
 import 'package:rb_alertas/servicios/sesion.dart';
+import 'package:rb_alertas/tema/rb_tema.dart';
 import 'package:rb_alertas/vistas/mapa_vista.dart';
-import 'package:rb_alertas/widgets/app_logo.dart';
+import 'package:rb_alertas/widgets/rb_componentes.dart';
 
 class PantallaBienvenidaVista extends StatefulWidget {
   const PantallaBienvenidaVista({super.key});
@@ -43,26 +45,56 @@ class _PantallaBienvenidaVistaState extends State<PantallaBienvenidaVista> {
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
-    final double logoSize = size.width * 0.5;
-    final double fontDesc = size.width * 0.5 * 0.1;
+    final double logoSize = (size.width * 0.45).clamp(140, 220);
 
     return Scaffold(
-      backgroundColor: Colors.white,
-      body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            AppLogo(size: logoSize),
-            SizedBox(height: size.height * 0.04),
-            Text(
-              'Alpha v6.7',
-              style: TextStyle(
-                fontSize: fontDesc,
-                color: const Color(0xFF9CA3AF),
+      backgroundColor: RBColores.azul,
+      body: Stack(
+        children: [
+          Positioned(
+            bottom: -170,
+            left: -120,
+            child: Container(
+              width: 380,
+              height: 380,
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                color: RBColores.petroleo,
               ),
             ),
-          ],
-        ),
+          ),
+          Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                AvatarSuricata(tamano: logoSize, borde: 7, sombra: true),
+                const SizedBox(height: 28),
+                const MarcaRB(tamano: 46, colorRB: Colors.white),
+                const SizedBox(height: 8),
+                Text(
+                  'Alertas vecinales de Puerto Montt',
+                  style: TextStyle(
+                    fontSize: 16,
+                    color: Colors.white.withValues(alpha: 0.8),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 24 + MediaQuery.of(context).padding.bottom,
+            child: Text(
+              AppInfo.version,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.white.withValues(alpha: 0.6),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
