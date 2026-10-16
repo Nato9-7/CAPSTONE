@@ -1,15 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:rb_alertas/config/app_info.dart';
 import 'package:rb_alertas/servicios/estado_alertas_servicio.dart';
 import 'package:rb_alertas/servicios/perfil_servicio.dart';
-import 'package:rb_alertas/servicios/reporte_servicio.dart'
-    show EntidadEmergencia;
 import 'package:rb_alertas/servicios/sesion.dart';
+import 'package:rb_alertas/servicios/zonas_servicio.dart';
+import 'package:rb_alertas/tema/rb_tema.dart';
 import 'package:rb_alertas/vistas/inicio_sesion_vista.dart';
 import 'package:rb_alertas/vistas/mapa_vista.dart';
 import 'package:rb_alertas/vistas/zonas_seguras_vista.dart';
 import 'package:rb_alertas/widgets/barra_navegacion_inferior.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:rb_alertas/widgets/rb_componentes.dart';
 
+/// Perfil del usuario. Las estadísticas se ven en Alertas › Mis reportes y los
+/// teléfonos de emergencia en el botón "Emergencias" del mapa.
 class PerfilVista extends StatefulWidget {
   const PerfilVista({super.key});
 
@@ -18,17 +21,15 @@ class PerfilVista extends StatefulWidget {
 }
 
 class _PerfilVistaState extends State<PerfilVista> {
-  static const _colorAzul = Color(0xFF0056D2);
-  static const _colorFondo = Color(0xFFF7F8FC);
-  static const _colorTitulo = Color(0xFF111827);
-  static const _colorTextoGris = Color(0xFF6B7280);
-  static const _colorBorde = Color(0xFFE5E7EB);
-  static const _colorVerde = Color(0xFF16A34A);
-  static const _colorRojo = Color(0xFFDC2626);
+  // En pantallas bajas la franja azul y el avatar se achican.
+  double get _altoEncabezado => context.pantallaBaja ? 128 : 180;
+  double get _tamanoAvatar => context.escala(context.pantallaBaja ? 118 : 150);
 
   final _perfilServicio = PerfilServicio();
   PerfilUsuario? _perfil;
+  int? _cantidadZonas;
   String? _error;
+  bool _sinSesion = false;
 
   @override
   void initState() {
@@ -39,10 +40,17 @@ class _PerfilVistaState extends State<PerfilVista> {
   Future<void> _cargar() async {
     final token = Sesion.token;
     if (token == null || token.isEmpty) {
-      setState(() => _error = 'Inicia sesión para ver tu perfil');
+      setState(() {
+        _sinSesion = true;
+        _error = 'Inicia sesión para ver tu perfil';
+      });
       return;
     }
-    setState(() => _error = null);
+    setState(() {
+      _error = null;
+      _sinSesion = false;
+    });
+    _cargarZonas(token);
     try {
       final perfil = await _perfilServicio.obtenerPerfil(token);
       if (!mounted) return;
@@ -56,36 +64,19 @@ class _PerfilVistaState extends State<PerfilVista> {
     }
   }
 
+  Future<void> _cargarZonas(String token) async {
+    try {
+      final datos = await ZonasServicio().listar(token);
+      if (mounted) setState(() => _cantidadZonas = datos.zonas.length);
+    } catch (_) {
+      // Sin el dato, la fila de zonas se muestra sin contador.
+    }
+  }
+
   void _mostrarMensaje(String mensaje) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(mensaje)));
-  }
-
-  Future<void> _llamar(EntidadEmergencia entidad) async {
-    final llamar = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(entidad.nombre),
-        content: Text('¿Llamar al ${entidad.telefono}?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton.icon(
-            style: FilledButton.styleFrom(backgroundColor: _colorRojo),
-            onPressed: () => Navigator.pop(context, true),
-            icon: const Icon(Icons.phone, size: 18),
-            label: const Text('Llamar'),
-          ),
-        ],
-      ),
-    );
-    if (llamar != true) return;
-    final abierta = await launchUrl(Uri(scheme: 'tel', path: entidad.telefono))
-        .catchError((_) => false);
-    if (!abierta && mounted) _mostrarMensaje('Marca al ${entidad.telefono}');
   }
 
   Future<void> _cerrarSesion() async {
@@ -100,7 +91,7 @@ class _PerfilVistaState extends State<PerfilVista> {
             child: const Text('Cancelar'),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: _colorRojo),
+            style: FilledButton.styleFrom(backgroundColor: RBColores.rojo),
             onPressed: () => Navigator.pop(context, true),
             child: const Text('Cerrar sesión'),
           ),
@@ -123,12 +114,21 @@ class _PerfilVistaState extends State<PerfilVista> {
     );
   }
 
+  Future<void> _abrirZonas() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const ZonasSegurasVista()),
+    );
+    final token = Sesion.token;
+    if (mounted && token != null) _cargarZonas(token);
+  }
+
   // ---------------------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _colorFondo,
+      backgroundColor: RBColores.fondo,
       body: _cuerpo(),
       bottomNavigationBar: const BarraNavegacionInferior(
         seccionActiva: SeccionApp.perfil,
@@ -138,72 +138,22 @@ class _PerfilVistaState extends State<PerfilVista> {
 
   Widget _cuerpo() {
     final perfil = _perfil;
-    if (perfil == null) {
-      if (_error == null) {
-        return const Center(
-          child: CircularProgressIndicator(color: _colorAzul),
-        );
-      }
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                _error!,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Color.fromARGB(255, 105, 115, 136),
-                ),
-              ),
-              const SizedBox(height: 12),
-              OutlinedButton(
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const InicioSesionVista(),
-                    ),
-                  );
-                },
-                child: const Text(
-                  'Crear cuenta / Iniciar sesión',
-                  style: TextStyle(color: _colorAzul),
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
+    if (perfil == null && _error == null) {
+      return const Center(child: CircularProgressIndicator());
     }
 
     return RefreshIndicator(
       onRefresh: _cargar,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+        padding: EdgeInsets.zero,
         children: [
+          _encabezado(perfil),
           Center(
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 480),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _tarjetaUsuario(perfil),
-                  const SizedBox(height: 20),
-                  const Text(
-                    'Accesos Directos Emergencias',
-                    style: TextStyle(
-                      fontSize: 16.5,
-                      fontWeight: FontWeight.w800,
-                      color: _colorTitulo,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  _emergencias(perfil),
-                  const SizedBox(height: 20),
-                  _opciones(),
-                ],
+              constraints: const BoxConstraints(maxWidth: 560),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                child: perfil == null ? _sinPerfil() : _contenido(perfil),
               ),
             ),
           ),
@@ -212,270 +162,226 @@ class _PerfilVistaState extends State<PerfilVista> {
     );
   }
 
-  BoxDecoration get _estiloTarjeta => BoxDecoration(
-    color: Colors.white,
-    borderRadius: BorderRadius.circular(14),
-    border: Border.all(color: _colorBorde),
-  );
-
-  Widget _tarjetaUsuario(PerfilUsuario p) {
-    final iniciales = [
-      p.nombres,
-      p.apellidos,
-    ].where((x) => x.isNotEmpty).map((x) => x[0].toUpperCase()).join();
-
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
-      decoration: _estiloTarjeta,
-      child: Column(
+  /// Franja azul marino con el título, "Cerrar sesión" y el avatar montado
+  /// sobre el borde inferior.
+  Widget _encabezado(PerfilUsuario? perfil) {
+    final arriba = MediaQuery.of(context).padding.top;
+    return SizedBox(
+      height: _altoEncabezado + arriba + _tamanoAvatar / 2 + 6,
+      child: Stack(
+        alignment: Alignment.topCenter,
         children: [
-          Stack(
-            children: [
-              CircleAvatar(
-                radius: 42,
-                backgroundColor: const Color(0xFFE5EDFF),
-                backgroundImage: (p.urlFoto != null && p.urlFoto!.isNotEmpty)
-                    ? NetworkImage(p.urlFoto!)
-                    : null,
-                child: (p.urlFoto == null || p.urlFoto!.isEmpty)
-                    ? Text(
-                        iniciales.isEmpty ? '?' : iniciales,
-                        style: const TextStyle(
-                          fontSize: 26,
-                          fontWeight: FontWeight.w700,
-                          color: _colorAzul,
-                        ),
-                      )
-                    : null,
-              ),
-              // El visto verde indica que la cuenta tiene el correo verificado.
-              if (p.emailVerificado)
-                Positioned(
-                  right: 2,
-                  bottom: 2,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: _colorVerde,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 2),
-                    ),
-                    padding: const EdgeInsets.all(2),
-                    child: const Icon(
-                      Icons.check,
-                      size: 12,
+          Container(
+            height: _altoEncabezado + arriba,
+            decoration: const BoxDecoration(
+              color: RBColores.azul,
+              borderRadius: BorderRadius.vertical(bottom: Radius.circular(36)),
+            ),
+            padding: EdgeInsets.fromLTRB(24, arriba + 20, 16, 0),
+            alignment: Alignment.topCenter,
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Perfil',
+                    style: TextStyle(
+                      fontFamily: RBFuentes.titulos,
+                      fontSize: context.escala(34),
+                      fontWeight: FontWeight.w800,
                       color: Colors.white,
                     ),
                   ),
                 ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Text(
-            p.nombreCompleto.isEmpty ? p.email : p.nombreCompleto,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w800,
-              color: _colorTitulo,
+                if (perfil != null)
+                  OutlinedButton.icon(
+                    onPressed: _cerrarSesion,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      backgroundColor: Colors.white.withValues(alpha: 0.1),
+                      side: BorderSide(color: Colors.white.withValues(alpha: 0.35)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                      padding: const EdgeInsets.symmetric(horizontal: 18),
+                      minimumSize: const Size(0, 52),
+                      textStyle: const TextStyle(
+                        fontFamily: RBFuentes.interfaz,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    icon: const Icon(Icons.logout_rounded, size: 20),
+                    label: const Text('Cerrar sesión'),
+                  ),
+              ],
             ),
           ),
-          const SizedBox(height: 4),
-          Text(
-            p.lugar,
-            style: const TextStyle(fontSize: 13, color: _colorTextoGris),
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: _contador(
-                  '${p.totalReportes}',
-                  'Reportes\nRealizados',
-                  _colorAzul,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _contador(
-                  '${p.totalResueltos}',
-                  'Alertas\nResueltas',
-                  _colorVerde,
-                ),
-              ),
-            ],
+          Positioned(
+            bottom: 0,
+            child: _avatar(perfil),
           ),
         ],
       ),
     );
   }
 
-  Widget _contador(String valor, String etiqueta, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 14),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.07),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        children: [
-          Text(
-            valor,
-            style: TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.w800,
-              color: color,
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            etiqueta,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontSize: 11.5,
-              color: _colorTextoGris,
-              height: 1.3,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _emergencias(PerfilUsuario p) {
-    if (p.emergencias.isEmpty) {
-      return Container(
-        padding: const EdgeInsets.all(16),
-        decoration: _estiloTarjeta,
-        child: const Text(
-          'Todavía no hay teléfonos de emergencia cargados para tu comuna.',
-          style: TextStyle(fontSize: 13, color: _colorTextoGris),
-        ),
-      );
-    }
-    return GridView.count(
-      crossAxisCount: 2,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      mainAxisSpacing: 12,
-      crossAxisSpacing: 12,
-      childAspectRatio: 1.25,
-      children: [for (final e in p.emergencias) _tarjetaEmergencia(e)],
-    );
-  }
-
-  Widget _tarjetaEmergencia(EntidadEmergencia entidad) {
-    final (icono, color) = _estiloEntidad(entidad.tipo);
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: () => _llamar(entidad),
-        child: Container(
-          decoration: _estiloTarjeta,
-          padding: const EdgeInsets.all(10),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(9),
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.12),
-                  shape: BoxShape.circle,
+  Widget _avatar(PerfilUsuario? perfil) {
+    final foto = perfil?.urlFoto;
+    final tieneFoto = foto != null && foto.isNotEmpty;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        if (tieneFoto)
+          Container(
+            width: _tamanoAvatar,
+            height: _tamanoAvatar,
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.18),
+                  blurRadius: 18,
+                  offset: const Offset(0, 6),
                 ),
-                child: Icon(icono, color: color, size: 20),
+              ],
+            ),
+            child: CircleAvatar(
+              backgroundColor: RBColores.azul,
+              backgroundImage: NetworkImage(foto),
+            ),
+          )
+        else
+          AvatarSuricata(tamano: _tamanoAvatar, borde: 6, sombra: true),
+        if (perfil != null)
+          Positioned(
+            right: 2,
+            bottom: 6,
+            child: Material(
+              color: RBColores.verde,
+              shape: const CircleBorder(side: BorderSide(color: Colors.white, width: 3)),
+              child: InkWell(
+                customBorder: const CircleBorder(),
+                onTap: () => _mostrarMensaje('Cambiar la foto de perfil estará disponible pronto'),
+                child: const Padding(
+                  padding: EdgeInsets.all(11),
+                  child: Icon(Icons.photo_camera_outlined, color: Colors.white, size: 22),
+                ),
               ),
-              const SizedBox(height: 8),
-              Text(
-                _nombreCorto(entidad),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _sinPerfil() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 24),
+      child: EstadoVacio(
+        icono: _sinSesion ? Icons.person_outline_rounded : Icons.cloud_off_rounded,
+        titulo: _sinSesion ? 'Aún no inicias sesión' : 'No se pudo cargar tu perfil',
+        detalle: _error ?? '',
+        accion: _sinSesion ? 'Crear cuenta / Iniciar sesión' : 'Reintentar',
+        onAccion: _sinSesion
+            ? () async {
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const InicioSesionVista()),
+                );
+                if (mounted) _cargar();
+              }
+            : _cargar,
+      ),
+    );
+  }
+
+  Widget _contenido(PerfilUsuario p) {
+    final zonas = _cantidadZonas;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 14),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Flexible(
+              child: Text(
+                p.nombreCompleto.isEmpty ? p.email : p.nombreCompleto,
                 textAlign: TextAlign.center,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w700,
-                  color: _colorTitulo,
+                style: TextStyle(
+                  fontFamily: RBFuentes.titulos,
+                  fontSize: context.escala(32),
+                  height: 1.15,
+                  fontWeight: FontWeight.w800,
+                  color: RBColores.azul,
                 ),
               ),
-              const SizedBox(height: 2),
-              Text(
-                entidad.telefono,
-                style: const TextStyle(fontSize: 12.5, color: _colorTextoGris),
+            ),
+            // El visto verde indica que la cuenta tiene el correo verificado.
+            if (p.emailVerificado) ...[
+              const SizedBox(width: 8),
+              const Tooltip(
+                message: 'Correo verificado',
+                child: Icon(Icons.verified_rounded, color: RBColores.verde, size: 24),
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: 6),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.place_outlined, size: 20, color: RBColores.texto2),
+            const SizedBox(width: 6),
+            Text(p.lugar, style: const TextStyle(fontSize: 17, color: RBColores.texto2)),
+          ],
+        ),
+        const SizedBox(height: 36),
+        const Padding(
+          padding: EdgeInsets.only(left: 8),
+          child: EtiquetaSeccion('Cuenta'),
+        ),
+        const SizedBox(height: 12),
+        TarjetaRB(
+          padding: EdgeInsets.zero,
+          child: Column(
+            children: [
+              _opcion(
+                Icons.person_outline_rounded,
+                'Editar perfil',
+                () => _mostrarMensaje('Editar perfil estará disponible pronto'),
+              ),
+              const Divider(height: 1),
+              _opcion(
+                Icons.lock_outline_rounded,
+                'Privacidad y seguridad',
+                () => _mostrarMensaje('Privacidad y seguridad estará disponible pronto'),
+              ),
+              const Divider(height: 1),
+              _opcion(
+                Icons.description_outlined,
+                'Política de privacidad',
+                () => _mostrarMensaje('La política de privacidad estará disponible pronto'),
+              ),
+              const Divider(height: 1),
+              _opcion(
+                Icons.verified_user_outlined,
+                'Zonas seguras',
+                _abrirZonas,
+                verde: true,
+                detalle: zonas == null
+                    ? null
+                    : '$zonas ${zonas == 1 ? 'ubicación' : 'ubicaciones'}',
               ),
             ],
           ),
         ),
-      ),
-    );
-  }
-
-  String _nombreCorto(EntidadEmergencia entidad) {
-    switch (entidad.tipo) {
-      case 'CARABINEROS':
-        return 'Carabineros';
-      case 'BOMBEROS':
-        return 'Bomberos';
-      case 'SAMU':
-        return 'SAMU';
-      case 'SEGURIDAD_CIUDADANA':
-        return 'Seguridad Mun.';
-      default:
-        return entidad.nombre;
-    }
-  }
-
-  (IconData, Color) _estiloEntidad(String tipo) {
-    switch (tipo) {
-      case 'CARABINEROS':
-        return (Icons.shield_outlined, _colorVerde);
-      case 'BOMBEROS':
-        return (Icons.local_fire_department_outlined, _colorRojo);
-      case 'SAMU':
-        return (Icons.medical_services_outlined, _colorAzul);
-      case 'SEGURIDAD_CIUDADANA':
-        return (Icons.local_police_outlined, const Color(0xFFF59E0B));
-      default:
-        return (Icons.phone_outlined, _colorTextoGris);
-    }
-  }
-
-  Widget _opciones() {
-    return Container(
-      decoration: _estiloTarjeta,
-      child: Column(
-        children: [
-          _opcion(
-            Icons.person_outline,
-            'Editar Perfil',
-            () => _mostrarMensaje('Editar perfil estará disponible pronto'),
-          ),
-          const Divider(height: 1, color: _colorBorde),
-          _opcion(
-            Icons.shield_outlined,
-            'Zonas Seguras',
-            () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const ZonasSegurasVista()),
-            ),
-          ),
-          const Divider(height: 1, color: _colorBorde),
-          _opcion(
-            Icons.lock_outline,
-            'Privacidad y Seguridad',
-            () => _mostrarMensaje(
-              'Privacidad y seguridad estará disponible pronto',
-            ),
-          ),
-          const Divider(height: 1, color: _colorBorde),
-          _opcion(
-            Icons.logout,
-            'Cerrar Sesión',
-            _cerrarSesion,
-            color: _colorRojo,
-            flecha: false,
-          ),
-        ],
-      ),
+        const SizedBox(height: 18),
+        Text(
+          'RB Alertas · ${AppInfo.version}',
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 14, color: RBColores.texto2),
+        ),
+      ],
     );
   }
 
@@ -483,28 +389,47 @@ class _PerfilVistaState extends State<PerfilVista> {
     IconData icono,
     String texto,
     VoidCallback alTocar, {
-    Color color = _colorTitulo,
-    bool flecha = true,
+    bool verde = false,
+    String? detalle,
   }) {
-    return ListTile(
+    return InkWell(
       onTap: alTocar,
-      leading: Icon(
-        icono,
-        color: color == _colorTitulo ? _colorTextoGris : color,
-        size: 22,
-      ),
-      title: Text(
-        texto,
-        style: TextStyle(
-          fontSize: 14.5,
-          fontWeight: FontWeight.w600,
-          color: color,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 16, 16, 16),
+        child: Row(
+          children: [
+            Container(
+              width: 50,
+              height: 50,
+              decoration: BoxDecoration(
+                color: verde ? RBColores.verde50 : RBColores.azul50,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Icon(icono, color: verde ? RBColores.verde : RBColores.azul, size: 24),
+            ),
+            const SizedBox(width: 18),
+            Expanded(
+              child: Text(
+                texto,
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  color: RBColores.tinta,
+                ),
+              ),
+            ),
+            if (detalle != null)
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: Text(
+                  detalle,
+                  style: const TextStyle(fontSize: 15.5, color: RBColores.texto2),
+                ),
+              ),
+            const Icon(Icons.chevron_right_rounded, color: RBColores.placeholder, size: 26),
+          ],
         ),
       ),
-      trailing: flecha
-          ? const Icon(Icons.chevron_right, color: _colorTextoGris, size: 20)
-          : null,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
     );
   }
 }

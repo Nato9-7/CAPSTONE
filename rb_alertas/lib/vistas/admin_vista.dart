@@ -4,47 +4,33 @@ import 'package:rb_alertas/servicios/admin_servicio.dart';
 import 'package:rb_alertas/servicios/estado_alertas_servicio.dart';
 import 'package:rb_alertas/servicios/perfil_servicio.dart';
 import 'package:rb_alertas/servicios/sesion.dart';
+import 'package:rb_alertas/tema/rb_tema.dart';
 import 'package:rb_alertas/vistas/admin_grafo_vista.dart';
 import 'package:rb_alertas/vistas/mapa_vista.dart';
-import 'package:rb_alertas/widgets/app_logo.dart';
 import 'package:rb_alertas/widgets/categoria_visual.dart';
-
-const _colorAzul = Color(0xFF0056D2);
-const _colorFondo = Color(0xFFF7F8FC);
-const _colorTitulo = Color(0xFF111827);
-const _colorTextoGris = Color(0xFF6B7280);
-const _colorBorde = Color(0xFFE5E7EB);
-const _colorVerde = Color(0xFF16A34A);
-const _colorRojo = Color(0xFFDC2626);
-const _colorAmbar = Color(0xFFF59E0B);
-
-final _estiloTarjeta = BoxDecoration(
-  color: Colors.white,
-  borderRadius: BorderRadius.circular(14),
-  border: Border.all(color: _colorBorde),
-);
+import 'package:rb_alertas/widgets/rb_componentes.dart';
 
 /// Etiqueta y color de cada estado de reporte o de cuenta.
 (String, Color) _estiloEstado(String estado) {
   switch (estado) {
     case 'PENDIENTE':
-      return ('Pendiente', _colorAmbar);
+      return ('Pendiente', RBColores.azul);
     case 'VALIDADO':
-      return ('Validado', _colorAzul);
+      return ('Validado', RBColores.verde);
     case 'RESUELTO':
-      return ('Resuelto', _colorVerde);
+      return ('Resuelto', RBColores.verde);
     case 'DESCARTADO':
-      return ('Descartado', _colorRojo);
+      return ('Descartado', RBColores.rojo);
     case 'EXPIRADO':
-      return ('Expirado', _colorTextoGris);
+      return ('Expirado', RBColores.texto2);
     case 'ACTIVO':
-      return ('Activa', _colorVerde);
+      return ('Activa', RBColores.verde);
     case 'SUSPENDIDO':
-      return ('Suspendida', _colorRojo);
+      return ('Suspendida', RBColores.rojo);
     case 'ELIMINADO':
-      return ('Eliminada', _colorTextoGris);
+      return ('Eliminada', RBColores.texto2);
     default:
-      return (estado, _colorTextoGris);
+      return (estado, RBColores.texto2);
   }
 }
 
@@ -61,18 +47,30 @@ void _avisar(BuildContext context, String mensaje) {
     ..showSnackBar(SnackBar(content: Text(mensaje)));
 }
 
-Widget _chipEstado(String estado) {
-  final (texto, color) = _estiloEstado(estado);
+/// Estado de un reporte con la píldora del sistema visual.
+Widget _chipReporte(String estado) => ChipEstado(
+  estado: EstadoVisual.desdeApi(estado),
+  texto: _estiloEstado(estado).$1,
+);
+
+/// Estado de una cuenta: Activa en verde, Pendiente en azul y Suspendida en rojo.
+Widget _chipCuenta(String estado) {
+  final (fondo, color) = switch (estado) {
+    'ACTIVO' => (RBColores.verde50, RBColores.verde),
+    'PENDIENTE' => (RBColores.azul50, RBColores.azul),
+    'SUSPENDIDO' => (RBColores.rojo50, RBColores.rojo),
+    _ => (RBColores.linea, RBColores.texto2),
+  };
   return Container(
-    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
     decoration: BoxDecoration(
-      color: color.withValues(alpha: 0.12),
+      color: fondo,
       borderRadius: BorderRadius.circular(20),
     ),
     child: Text(
-      texto,
+      _estiloEstado(estado).$1,
       style: TextStyle(
-        fontSize: 11.5,
+        fontSize: 12.5,
         fontWeight: FontWeight.w700,
         color: color,
       ),
@@ -89,17 +87,14 @@ Widget _mensajeCentro(String texto, {VoidCallback? reintentar}) {
       Text(
         texto,
         textAlign: TextAlign.center,
-        style: const TextStyle(color: _colorTextoGris),
+        style: const TextStyle(fontSize: 15, color: RBColores.texto2),
       ),
       if (reintentar != null) ...[
-        const SizedBox(height: 12),
+        const SizedBox(height: 16),
         Center(
           child: OutlinedButton(
             onPressed: reintentar,
-            child: const Text(
-              'Reintentar',
-              style: TextStyle(color: _colorAzul),
-            ),
+            child: const Text('Reintentar'),
           ),
         ),
       ],
@@ -124,7 +119,7 @@ class AdminVista extends StatelessWidget {
             child: const Text('Cancelar'),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: _colorRojo),
+            style: FilledButton.styleFrom(backgroundColor: RBColores.rojo),
             onPressed: () => Navigator.pop(context, true),
             child: const Text('Cerrar sesión'),
           ),
@@ -152,13 +147,13 @@ class AdminVista extends StatelessWidget {
     return DefaultTabController(
       length: 4,
       child: Scaffold(
-        backgroundColor: _colorFondo,
+        backgroundColor: RBColores.fondo,
         body: SafeArea(
           child: Column(
             children: [
               _encabezado(context),
               const _SelectorPestanas(),
-              const SizedBox(height: 4),
+              const SizedBox(height: 8),
               const Expanded(
                 child: TabBarView(
                   children: [
@@ -176,37 +171,30 @@ class AdminVista extends StatelessWidget {
     );
   }
 
-  /// Logo y nombre de la app, como en el inicio de sesión.
+  /// Suricata y marca de la app, como en el inicio de sesión.
   Widget _encabezado(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+      padding: const EdgeInsets.fromLTRB(16, 12, 8, 14),
       child: Row(
         children: [
-          const ClipOval(child: AppLogo(size: 44)),
-          const SizedBox(width: 10),
+          const AvatarSuricata(tamano: 46),
+          const SizedBox(width: 12),
           const Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'RB Alertas',
-                  style: TextStyle(
-                    fontSize: 21,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -0.4,
-                    color: _colorAzul,
-                  ),
-                ),
+                MarcaRB(tamano: 23),
+                SizedBox(height: 2),
                 Text(
                   'Panel de Administración',
-                  style: TextStyle(fontSize: 12.5, color: _colorTextoGris),
+                  style: TextStyle(fontSize: 13.5, color: RBColores.texto2),
                 ),
               ],
             ),
           ),
           IconButton(
             tooltip: 'Cerrar sesión',
-            icon: const Icon(Icons.logout, color: _colorRojo),
+            icon: const Icon(Icons.logout_rounded, color: RBColores.rojo),
             onPressed: () => _cerrarSesion(context),
           ),
         ],
@@ -215,41 +203,17 @@ class AdminVista extends StatelessWidget {
   }
 }
 
-/// Pestañas tipo píldora, iguales a las de la pantalla Alertas.
+/// Pestañas segmentadas, iguales a las de la pantalla Alertas.
 class _SelectorPestanas extends StatelessWidget {
   const _SelectorPestanas();
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16),
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: _colorBorde),
-      ),
-      child: const TabBar(
-        dividerColor: Colors.transparent,
-        indicatorSize: TabBarIndicatorSize.tab,
-        indicator: BoxDecoration(
-          color: _colorAzul,
-          borderRadius: BorderRadius.all(Radius.circular(20)),
-        ),
-        labelColor: Colors.white,
-        unselectedLabelColor: _colorTextoGris,
-        labelStyle: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
-        unselectedLabelStyle: TextStyle(
-          fontSize: 13,
-          fontWeight: FontWeight.w600,
-        ),
-        labelPadding: EdgeInsets.symmetric(horizontal: 4),
-        tabs: [
-          Tab(height: 36, text: 'Resumen'),
-          Tab(height: 36, text: 'Reportes'),
-          Tab(height: 36, text: 'Usuarios'),
-          Tab(height: 36, text: 'Grafo'),
-        ],
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: SelectorSegmentado(
+        controlador: DefaultTabController.of(context),
+        opciones: const ['Resumen', 'Reportes', 'Usuarios', 'Grafo'],
       ),
     );
   }
@@ -301,7 +265,7 @@ class _PestanaResumenState extends State<_PestanaResumen>
     final r = _resumen;
     if (r == null) {
       return _error == null
-          ? const Center(child: CircularProgressIndicator(color: _colorAzul))
+          ? const Center(child: CircularProgressIndicator(color: RBColores.azul))
           : _mensajeCentro(_error!, reintentar: _cargar);
     }
 
@@ -317,31 +281,33 @@ class _PestanaResumenState extends State<_PestanaResumen>
         children: [
           _titulo('Reportes'),
           _filaCifras([
-            ('Vigentes', r.reportesVigentes, _colorAzul),
-            ('Últimas 24 h', r.reportes24h, _colorAmbar),
-            ('Últimos 7 días', r.reportes7d, _colorVerde),
+            ('Vigentes', r.reportesVigentes, RBColores.azul),
+            ('Últimas 24 h', r.reportes24h, RBColores.azul),
+            ('Últimos 7 días', r.reportes7d, RBColores.verde),
           ]),
-          const SizedBox(height: 10),
-          _desglose(r.reportesPorEstado),
-          const SizedBox(height: 24),
+          const SizedBox(height: 12),
+          _desglose(r.reportesPorEstado, _chipReporte),
+          const SizedBox(height: 28),
           _titulo('Usuarios'),
           _filaCifras([
-            ('Cuentas', r.totalUsuarios, _colorAzul),
-            ('Nuevas (7 días)', r.usuariosNuevos7d, _colorVerde),
-            ('Suspendidas', r.usuariosPorEstado['SUSPENDIDO'] ?? 0, _colorRojo),
+            ('Cuentas', r.totalUsuarios, RBColores.azul),
+            ('Nuevas (7 días)', r.usuariosNuevos7d, RBColores.verde),
+            (
+              'Suspendidas',
+              r.usuariosPorEstado['SUSPENDIDO'] ?? 0,
+              RBColores.rojo,
+            ),
           ]),
-          const SizedBox(height: 10),
-          _desglose(r.usuariosPorEstado),
-          const SizedBox(height: 24),
+          const SizedBox(height: 12),
+          _desglose(r.usuariosPorEstado, _chipCuenta),
+          const SizedBox(height: 28),
           _titulo('Reportes por categoría (30 días)'),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: _estiloTarjeta,
+          TarjetaRB(
             child: Column(
               children: [
                 for (final c in r.categorias30d)
                   Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    padding: const EdgeInsets.symmetric(vertical: 7),
                     child: Row(
                       children: [
                         SizedBox(
@@ -351,31 +317,31 @@ class _PestanaResumenState extends State<_PestanaResumen>
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
-                              fontSize: 13,
-                              color: _colorTitulo,
+                              fontSize: 14,
+                              color: RBColores.tinta,
                             ),
                           ),
                         ),
                         Expanded(
                           child: ClipRRect(
-                            borderRadius: BorderRadius.circular(4),
+                            borderRadius: BorderRadius.circular(6),
                             child: LinearProgressIndicator(
                               value: c.total / maximoCategoria,
-                              minHeight: 8,
-                              backgroundColor: const Color(0xFFF1F3F7),
+                              minHeight: 10,
+                              backgroundColor: RBColores.linea,
                               color: colorCategoria('', colorHex: c.colorHex),
                             ),
                           ),
                         ),
                         SizedBox(
-                          width: 36,
+                          width: 40,
                           child: Text(
                             '${c.total}',
                             textAlign: TextAlign.right,
                             style: const TextStyle(
-                              fontSize: 13,
+                              fontSize: 14,
                               fontWeight: FontWeight.w700,
-                              color: _colorTitulo,
+                              color: RBColores.tinta,
                             ),
                           ),
                         ),
@@ -391,15 +357,8 @@ class _PestanaResumenState extends State<_PestanaResumen>
   }
 
   Widget _titulo(String texto) => Padding(
-    padding: const EdgeInsets.only(bottom: 10),
-    child: Text(
-      texto,
-      style: const TextStyle(
-        fontSize: 16.5,
-        fontWeight: FontWeight.w800,
-        color: _colorTitulo,
-      ),
-    ),
+    padding: const EdgeInsets.only(bottom: 10, left: 4),
+    child: EtiquetaSeccion(texto),
   );
 
   Widget _filaCifras(List<(String, int, Color)> cifras) {
@@ -408,29 +367,27 @@ class _PestanaResumenState extends State<_PestanaResumen>
         for (final (i, (etiqueta, valor, color)) in cifras.indexed) ...[
           if (i > 0) const SizedBox(width: 10),
           Expanded(
-            child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 6),
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.07),
-                borderRadius: BorderRadius.circular(12),
-              ),
+            child: TarjetaRB(
+              padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 6),
               child: Column(
                 children: [
                   Text(
                     '$valor',
                     style: TextStyle(
-                      fontSize: 22,
+                      fontFamily: RBFuentes.titulos,
+                      fontSize: 28,
+                      height: 1.1,
                       fontWeight: FontWeight.w800,
                       color: color,
                     ),
                   ),
-                  const SizedBox(height: 2),
+                  const SizedBox(height: 4),
                   Text(
                     etiqueta,
                     textAlign: TextAlign.center,
                     style: const TextStyle(
-                      fontSize: 11.5,
-                      color: _colorTextoGris,
+                      fontSize: 12.5,
+                      color: RBColores.texto2,
                     ),
                   ),
                 ],
@@ -442,23 +399,26 @@ class _PestanaResumenState extends State<_PestanaResumen>
     );
   }
 
-  Widget _desglose(Map<String, int> conteo) {
+  Widget _desglose(
+    Map<String, int> conteo,
+    Widget Function(String estado) chip,
+  ) {
     return Wrap(
-      spacing: 8,
+      spacing: 10,
       runSpacing: 8,
       children: [
         for (final e in conteo.entries)
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _chipEstado(e.key),
-              const SizedBox(width: 4),
+              chip(e.key),
+              const SizedBox(width: 5),
               Text(
                 '${e.value}',
                 style: const TextStyle(
-                  fontSize: 12.5,
+                  fontSize: 13.5,
                   fontWeight: FontWeight.w700,
-                  color: _colorTitulo,
+                  color: RBColores.tinta,
                 ),
               ),
             ],
@@ -585,7 +545,7 @@ class _PestanaReportesState extends State<_PestanaReportes>
             child: const Text('Cancelar'),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: _colorRojo),
+            style: FilledButton.styleFrom(backgroundColor: RBColores.rojo),
             onPressed: () => Navigator.pop(context, true),
             child: const Text('Suspender'),
           ),
@@ -618,25 +578,18 @@ class _PestanaReportesState extends State<_PestanaReportes>
     return Column(
       children: [
         SizedBox(
-          height: 52,
+          height: 64,
           child: ListView(
             scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             children: [
               for (final (estado, etiqueta) in _filtros)
                 Padding(
                   padding: const EdgeInsets.only(right: 8),
-                  child: ChoiceChip(
-                    label: Text(etiqueta),
-                    selected: _filtro == estado,
-                    onSelected: (_) => _filtrar(estado),
-                    selectedColor: _colorAzul.withValues(alpha: 0.12),
-                    labelStyle: TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w600,
-                      color: _filtro == estado ? _colorAzul : _colorTextoGris,
-                    ),
-                    showCheckmark: false,
+                  child: ChipFiltro(
+                    etiqueta: etiqueta,
+                    activo: _filtro == estado,
+                    onTap: () => _filtrar(estado),
                   ),
                 ),
             ],
@@ -651,7 +604,7 @@ class _PestanaReportesState extends State<_PestanaReportes>
     final reportes = _reportes;
     if (reportes == null) {
       return _error == null
-          ? const Center(child: CircularProgressIndicator(color: _colorAzul))
+          ? const Center(child: CircularProgressIndicator(color: RBColores.azul))
           : _mensajeCentro(_error!, reintentar: _cargar);
     }
     return RefreshIndicator(
@@ -661,39 +614,42 @@ class _PestanaReportesState extends State<_PestanaReportes>
           : ListView.separated(
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
               itemCount: reportes.length,
-              separatorBuilder: (_, _) => const SizedBox(height: 10),
+              separatorBuilder: (_, _) => const SizedBox(height: 12),
               itemBuilder: (_, i) => _tarjeta(reportes[i]),
             ),
     );
   }
 
   Widget _tarjeta(ReporteAdmin r) {
-    final color = colorCategoria(r.categoriaCodigo, colorHex: r.colorHex);
+    final icono = IconoCategoria(
+      codigo: r.categoriaCodigo,
+      colorHex: r.colorHex,
+      tamano: 56,
+    );
     final lugar = [
       r.direccion,
       r.zona,
     ].whereType<String>().where((p) => p.isNotEmpty).join(' · ');
 
-    return Container(
-      decoration: _estiloTarjeta,
-      padding: const EdgeInsets.fromLTRB(14, 12, 6, 12),
+    return TarjetaRB(
+      padding: const EdgeInsets.fromLTRB(16, 14, 6, 14),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (r.imagen != null)
             ClipRRect(
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(16),
               child: Image.network(
                 ApiConfig.urlArchivo(r.imagen!),
                 width: 56,
                 height: 56,
                 fit: BoxFit.cover,
-                errorBuilder: (_, _, _) => _iconoCategoria(r, color),
+                errorBuilder: (_, _, _) => icono,
               ),
             )
           else
-            _iconoCategoria(r, color),
-          const SizedBox(width: 12),
+            icono,
+          const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -706,22 +662,26 @@ class _PestanaReportesState extends State<_PestanaReportes>
                     Text(
                       '#${r.id} ${r.categoria}',
                       style: const TextStyle(
-                        fontSize: 14,
+                        fontSize: 15.5,
                         fontWeight: FontWeight.w700,
-                        color: _colorTitulo,
+                        color: RBColores.tinta,
                       ),
                     ),
-                    _chipEstado(r.estado),
+                    _chipReporte(r.estado),
                     if (r.vencido && r.estado != 'EXPIRADO')
-                      _chipEstado('EXPIRADO'),
+                      _chipReporte('EXPIRADO'),
                   ],
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 6),
                 Text(
                   r.descripcion,
                   maxLines: 3,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 13, color: _colorTitulo),
+                  style: const TextStyle(
+                    fontSize: 14,
+                    height: 1.35,
+                    color: RBColores.tinta,
+                  ),
                 ),
                 const SizedBox(height: 6),
                 Text(
@@ -731,8 +691,8 @@ class _PestanaReportesState extends State<_PestanaReportes>
                     '${r.confirmaciones} confirman · ${r.desmentidos} desmienten',
                   ].join('\n'),
                   style: const TextStyle(
-                    fontSize: 11.5,
-                    color: _colorTextoGris,
+                    fontSize: 12.5,
+                    color: RBColores.texto2,
                     height: 1.4,
                   ),
                 ),
@@ -741,7 +701,12 @@ class _PestanaReportesState extends State<_PestanaReportes>
           ),
           PopupMenuButton<String>(
             tooltip: 'Acciones',
-            icon: const Icon(Icons.more_vert, color: _colorTextoGris),
+            color: Colors.white,
+            surfaceTintColor: Colors.transparent,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(RBRadios.campo),
+            ),
+            icon: const Icon(Icons.more_vert, color: RBColores.texto2),
             onSelected: (accion) => accion == 'SUSPENDER_AUTOR'
                 ? _suspenderAutor(r)
                 : _cambiarEstado(r, accion),
@@ -757,6 +722,12 @@ class _PestanaReportesState extends State<_PestanaReportes>
                     value: estado,
                     child: Text(
                       'Marcar ${_estiloEstado(estado).$1.toLowerCase()}',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        color: estado == 'DESCARTADO'
+                            ? RBColores.rojo
+                            : RBColores.tinta,
+                      ),
                     ),
                   ),
               const PopupMenuDivider(),
@@ -764,25 +735,16 @@ class _PestanaReportesState extends State<_PestanaReportes>
                 value: 'SUSPENDER_AUTOR',
                 child: Text(
                   'Suspender a quien reportó',
-                  style: TextStyle(color: _colorRojo),
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: RBColores.rojo,
+                  ),
                 ),
               ),
             ],
           ),
         ],
       ),
-    );
-  }
-
-  Widget _iconoCategoria(ReporteAdmin r, Color color) {
-    return Container(
-      width: 56,
-      height: 56,
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Icon(iconoCategoria(r.categoriaCodigo), color: color),
     );
   }
 }
@@ -858,7 +820,7 @@ class _PestanaUsuariosState extends State<_PestanaUsuarios>
           ),
           FilledButton(
             style: FilledButton.styleFrom(
-              backgroundColor: suspender ? _colorRojo : _colorVerde,
+              backgroundColor: suspender ? RBColores.rojo : RBColores.verde,
             ),
             onPressed: () => Navigator.pop(context, true),
             child: Text(suspender ? 'Suspender' : 'Reactivar'),
@@ -896,35 +858,33 @@ class _PestanaUsuariosState extends State<_PestanaUsuarios>
             onSubmitted: (_) => _cargar(),
             decoration: InputDecoration(
               hintText: 'Buscar por nombre, correo o RUT',
-              prefixIcon: const Icon(Icons.search, color: _colorTextoGris),
+              prefixIcon: const Icon(Icons.search_rounded),
               suffixIcon: IconButton(
                 tooltip: 'Buscar',
-                icon: const Icon(Icons.arrow_forward, color: _colorAzul),
+                icon: const Icon(
+                  Icons.arrow_forward_rounded,
+                  color: RBColores.azul,
+                ),
                 onPressed: _cargar,
               ),
-              filled: true,
-              fillColor: Colors.white,
-              contentPadding: const EdgeInsets.symmetric(vertical: 12),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: _colorBorde),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: _colorBorde),
-              ),
+              contentPadding: const EdgeInsets.symmetric(vertical: 14),
             ),
           ),
         ),
         SwitchListTile(
           dense: true,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 20),
           title: const Text(
             'Solo cuentas suspendidas',
-            style: TextStyle(fontSize: 13.5, color: _colorTitulo),
+            style: TextStyle(
+              fontSize: 14.5,
+              fontWeight: FontWeight.w600,
+              color: RBColores.tinta,
+            ),
           ),
           value: _soloSuspendidas,
-          activeThumbColor: _colorAzul,
+          activeThumbColor: Colors.white,
+          activeTrackColor: RBColores.azul,
           onChanged: (valor) {
             setState(() => _soloSuspendidas = valor);
             _cargar();
@@ -939,7 +899,7 @@ class _PestanaUsuariosState extends State<_PestanaUsuarios>
     final usuarios = _usuarios;
     if (usuarios == null) {
       return _error == null
-          ? const Center(child: CircularProgressIndicator(color: _colorAzul))
+          ? const Center(child: CircularProgressIndicator(color: RBColores.azul))
           : _mensajeCentro(_error!, reintentar: _cargar);
     }
     return RefreshIndicator(
@@ -949,7 +909,7 @@ class _PestanaUsuariosState extends State<_PestanaUsuarios>
           : ListView.separated(
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
               itemCount: usuarios.length,
-              separatorBuilder: (_, _) => const SizedBox(height: 10),
+              separatorBuilder: (_, _) => const SizedBox(height: 12),
               itemBuilder: (_, i) => _tarjeta(usuarios[i]),
             ),
     );
@@ -962,20 +922,20 @@ class _PestanaUsuariosState extends State<_PestanaUsuarios>
     ].where((x) => x.isNotEmpty).map((x) => x[0].toUpperCase()).join();
     final moderable = !u.esAdmin && u.estado != 'ELIMINADO';
 
-    return Container(
-      decoration: _estiloTarjeta,
-      padding: const EdgeInsets.all(14),
+    return TarjetaRB(
+      padding: const EdgeInsets.fromLTRB(16, 14, 8, 14),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           CircleAvatar(
-            radius: 22,
-            backgroundColor: const Color(0xFFE5EDFF),
+            radius: 23,
+            backgroundColor: RBColores.azul50,
             child: Text(
               iniciales.isEmpty ? '?' : iniciales,
               style: const TextStyle(
-                fontWeight: FontWeight.w700,
-                color: _colorAzul,
+                fontSize: 15,
+                fontWeight: FontWeight.w800,
+                color: RBColores.azul,
               ),
             ),
           ),
@@ -992,32 +952,32 @@ class _PestanaUsuariosState extends State<_PestanaUsuarios>
                     Text(
                       u.nombreCompleto.isEmpty ? u.email : u.nombreCompleto,
                       style: const TextStyle(
-                        fontSize: 14,
+                        fontSize: 15.5,
                         fontWeight: FontWeight.w700,
-                        color: _colorTitulo,
+                        color: RBColores.tinta,
                       ),
                     ),
                     if (u.esAdmin)
                       Container(
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 3,
+                          horizontal: 10,
+                          vertical: 4,
                         ),
                         decoration: BoxDecoration(
-                          color: _colorTitulo,
+                          color: RBColores.azul,
                           borderRadius: BorderRadius.circular(20),
                         ),
                         child: const Text(
                           'Admin',
                           style: TextStyle(
-                            fontSize: 11.5,
+                            fontSize: 12.5,
                             fontWeight: FontWeight.w700,
                             color: Colors.white,
                           ),
                         ),
                       )
                     else
-                      _chipEstado(u.estado),
+                      _chipCuenta(u.estado),
                   ],
                 ),
                 const SizedBox(height: 4),
@@ -1032,8 +992,8 @@ class _PestanaUsuariosState extends State<_PestanaUsuarios>
                         '${_fecha(u.fechaCreacion?.toLocal()).split(' ').first}',
                   ].where((l) => l.isNotEmpty).join('\n'),
                   style: const TextStyle(
-                    fontSize: 12,
-                    color: _colorTextoGris,
+                    fontSize: 13,
+                    color: RBColores.texto2,
                     height: 1.4,
                   ),
                 ),
@@ -1045,8 +1005,8 @@ class _PestanaUsuariosState extends State<_PestanaUsuarios>
               onPressed: () => _cambiarEstado(u),
               style: TextButton.styleFrom(
                 foregroundColor: u.estado == 'SUSPENDIDO'
-                    ? _colorVerde
-                    : _colorRojo,
+                    ? RBColores.verde
+                    : RBColores.rojo,
               ),
               child: Text(u.estado == 'SUSPENDIDO' ? 'Reactivar' : 'Suspender'),
             ),

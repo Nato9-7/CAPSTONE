@@ -4,8 +4,12 @@ import 'package:latlong2/latlong.dart';
 import 'package:rb_alertas/servicios/sesion.dart';
 import 'package:rb_alertas/servicios/ubicacion_servicio.dart';
 import 'package:rb_alertas/servicios/zonas_servicio.dart';
+import 'package:rb_alertas/tema/rb_tema.dart';
+import 'package:rb_alertas/widgets/fondo_acceso.dart' show CampoRotulado;
+import 'package:rb_alertas/widgets/rb_componentes.dart';
 
-/// Crea o edita una zona segura.
+/// Crea o edita una zona segura. Se muestra como panel inferior sobre la
+/// lista de zonas; devuelve `true` si se guardó o se eliminó algo.
 class ZonaDetalleVista extends StatefulWidget {
   final ZonaSegura? zona;
   final List<int> radiosPermitidos;
@@ -16,18 +20,25 @@ class ZonaDetalleVista extends StatefulWidget {
     required this.radiosPermitidos,
   });
 
+  static Future<bool?> abrir(
+    BuildContext context, {
+    ZonaSegura? zona,
+    required List<int> radiosPermitidos,
+  }) {
+    return showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: false,
+      builder: (_) => ZonaDetalleVista(zona: zona, radiosPermitidos: radiosPermitidos),
+    );
+  }
+
   @override
   State<ZonaDetalleVista> createState() => _ZonaDetalleVistaState();
 }
 
 class _ZonaDetalleVistaState extends State<ZonaDetalleVista> {
-  static const _colorAzul = Color(0xFF0056D2);
-  static const _colorFondo = Color(0xFFF7F8FC);
-  static const _colorTitulo = Color(0xFF111827);
-  static const _colorTextoGris = Color(0xFF6B7280);
-  static const _colorBorde = Color(0xFFE5E7EB);
-  static const _colorRojo = Color(0xFFDC2626);
-
   /// Centro del mapa cuando no hay zona ni GPS: plaza de armas de Puerto Montt.
   static const _centroPorDefecto = LatLng(-41.4717, -72.9369);
 
@@ -37,11 +48,7 @@ class _ZonaDetalleVistaState extends State<ZonaDetalleVista> {
   final _servicio = ZonasServicio();
   final _ubicacionServicio = UbicacionServicio();
   final _mapController = MapController();
-  /// La vista previa necesita su propio controlador: `initialCenter` solo se
-  /// aplica al crear el mapa, asi que sin esto el circulo quedaria congelado
-  /// en el primer punto y no seguiria al pin.
-  final _vistaPreviaController = MapController();
-  bool _vistaPreviaLista = false;
+  bool _mapaListo = false;
   final _nombreCtrl = TextEditingController();
   final _direccionCtrl = TextEditingController();
 
@@ -84,7 +91,6 @@ class _ZonaDetalleVistaState extends State<ZonaDetalleVista> {
     _nombreCtrl.dispose();
     _direccionCtrl.dispose();
     _mapController.dispose();
-    _vistaPreviaController.dispose();
     super.dispose();
   }
 
@@ -103,8 +109,7 @@ class _ZonaDetalleVistaState extends State<ZonaDetalleVista> {
       final punto = await _ubicacionServicio.obtenerUbicacionActual();
       if (!mounted) return;
       setState(() => _centro = punto);
-      _mapController.move(punto, 15);
-      _sincronizarVistaPrevia();
+      _ajustarMapa();
       _completarDireccion(punto);
     } on UbicacionServicioException catch (e) {
       if (!silencioso) _mostrarMensaje(e.mensaje);
@@ -126,22 +131,21 @@ class _ZonaDetalleVistaState extends State<ZonaDetalleVista> {
 
   String _radioTexto(int metros) => metros < 1000
       ? '$metros m'
-      : '${(metros / 1000).toStringAsFixed(metros % 1000 == 0 ? 0 : 1)} km';
+      : '${(metros / 1000).toStringAsFixed(metros % 1000 == 0 ? 0 : 1).replaceAll('.', ',')} km';
 
   int get _minutosCaminando => (_radio / _metrosPorMinutoCaminando).round();
 
-  /// Zoom al que el circulo entra completo en el recuadro de la vista previa.
+  /// Zoom al que el círculo entra completo en la vista previa.
   double get _zoomVistaPrevia =>
-      _radio >= 2000 ? 12.5 : (_radio >= 1000 ? 13.5 : 14.5);
+      _radio >= 2000 ? 13 : (_radio >= 1000 ? 14 : 15);
 
-  /// Lleva la vista previa al punto y al zoom actuales. Se llama al soltar el
-  /// mapa, al cambiar el radio y al usar el GPS; el move va despues del frame
-  /// porque el controlador no acepta ordenes mientras se esta construyendo.
-  void _sincronizarVistaPrevia() {
-    if (!_vistaPreviaLista) return;
+  /// Lleva el mapa al punto y al zoom actuales. El move va después del frame
+  /// porque el controlador no acepta órdenes mientras se está construyendo.
+  void _ajustarMapa() {
+    if (!_mapaListo) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_vistaPreviaLista) return;
-      _vistaPreviaController.move(_centro, _zoomVistaPrevia);
+      if (!mounted || !_mapaListo) return;
+      _mapController.move(_centro, _zoomVistaPrevia);
     });
   }
 
@@ -211,7 +215,7 @@ class _ZonaDetalleVistaState extends State<ZonaDetalleVista> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(contextoDialogo, true),
-            style: TextButton.styleFrom(foregroundColor: _colorRojo),
+            style: TextButton.styleFrom(foregroundColor: RBColores.rojo),
             child: const Text('Eliminar'),
           ),
         ],
@@ -233,495 +237,379 @@ class _ZonaDetalleVistaState extends State<ZonaDetalleVista> {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Interfaz
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: _colorFondo,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
-        elevation: 0,
-        foregroundColor: _colorTitulo,
-        title: Text(
-          _esNueva ? 'Nueva zona segura' : widget.zona!.nombre,
-          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
-        ),
-        actions: [
-          if (!_esNueva)
-            IconButton(
-              onPressed: _guardando ? null : _eliminar,
-              icon: const Icon(Icons.delete_outline, color: _colorRojo),
-              tooltip: 'Eliminar zona',
-            ),
-        ],
-      ),
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-          children: [
-            _tarjetaTipo(),
-            const SizedBox(height: 16),
-            _tarjetaUbicacion(),
-            const SizedBox(height: 16),
-            _tarjetaRadio(),
-            const SizedBox(height: 16),
-            _vistaPrevia(),
-          ],
-        ),
-      ),
-      bottomNavigationBar: _barraAcciones(),
-    );
-  }
-
-  Widget _tarjeta({required Widget hijo}) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _colorBorde),
-      ),
-      child: hijo,
-    );
-  }
-
-  Widget _titulo(IconData icono, String texto) {
-    return Row(
-      children: [
-        Icon(icono, size: 19, color: _colorAzul),
-        const SizedBox(width: 8),
-        Text(
-          texto,
-          style: const TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w700,
-            color: _colorTitulo,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _tarjetaTipo() {
-    return _tarjeta(
-      hijo: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _titulo(Icons.bookmark_outline, 'Tipo de lugar'),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
+    final alto = MediaQuery.of(context).size.height * 0.92;
+    // ScaffoldMessenger propio: los avisos se ven encima del panel.
+    return SizedBox(
+      height: alto,
+      child: ScaffoldMessenger(
+        child: Scaffold(
+          backgroundColor: Colors.transparent,
+          body: Column(
             children: [
-              for (final tipo in TipoZona.values)
-                ChoiceChip(
-                  selected: _tipo == tipo,
-                  onSelected: (_) => setState(() => _tipo = tipo),
-                  avatar: Icon(
-                    tipo.icono,
-                    size: 17,
-                    color: _tipo == tipo ? Colors.white : _colorTextoGris,
-                  ),
-                  label: Text(tipo.etiqueta),
-                  labelStyle: TextStyle(
-                    fontSize: 13.5,
-                    fontWeight: FontWeight.w600,
-                    color: _tipo == tipo ? Colors.white : _colorTitulo,
-                  ),
-                  selectedColor: _colorAzul,
-                  backgroundColor: const Color(0xFFF3F4F6),
-                  showCheckmark: false,
-                  side: BorderSide(
-                    color: _tipo == tipo ? _colorAzul : _colorBorde,
-                  ),
-                ),
-            ],
-          ),
-          // Solo "Otro lugar" lleva nombre propio: en los demás lo fija el
-          // servidor, y así el nombre guardado siempre corresponde al icono.
-          if (_tipo.nombreLibre) ...[
-            const SizedBox(height: 14),
-            TextField(
-              controller: _nombreCtrl,
-              maxLength: 60,
-              textCapitalization: TextCapitalization.sentences,
-              decoration: InputDecoration(
-                labelText: 'Nombre de la zona',
-                hintText: 'Colegio, casa de mis padres…',
-                counterText: '',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
+              const SizedBox(height: 10),
+              Container(
+                width: 44,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: RBColores.bordeCampo,
+                  borderRadius: BorderRadius.circular(3),
                 ),
               ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _tarjetaUbicacion() {
-    return _tarjeta(
-      hijo: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _titulo(Icons.location_on_outlined, 'Ubicación'),
-          const SizedBox(height: 6),
-          const Text(
-            'Mueve el mapa hasta dejar el punto sobre el lugar exacto.',
-            style: TextStyle(
-              fontSize: 13.5,
-              height: 1.4,
-              color: _colorTextoGris,
-            ),
-          ),
-          const SizedBox(height: 12),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: SizedBox(
-              height: 200,
-              child: Stack(
-                children: [
-                  FlutterMap(
-                    mapController: _mapController,
-                    options: MapOptions(
-                      initialCenter: _centro,
-                      initialZoom: 15,
-                      minZoom: 11,
-                      maxZoom: 18,
-                      interactionOptions: const InteractionOptions(
-                        flags: InteractiveFlag.drag | InteractiveFlag.pinchZoom,
-                      ),
-                      // El pin está fijo al centro: lo que se mueve es el mapa.
-                      onPositionChanged: (posicion, hayGesto) {
-                        if (!hayGesto) return;
-                        setState(() => _centro = posicion.center);
-                      },
-                      // Al soltar, se intenta rellenar la dirección del punto.
-                      onMapEvent: (evento) {
-                        if (evento is! MapEventMoveEnd) return;
-                        _sincronizarVistaPrevia();
-                        _completarDireccion(_centro);
-                      },
-                    ),
-                    children: [
-                      TileLayer(
-                        urlTemplate:
-                            'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                        userAgentPackageName: 'com.rbalertas.rb_alertas',
-                      ),
-                    ],
-                  ),
-                  const IgnorePointer(
-                    child: Center(
-                      child: Padding(
-                        // El icono apunta hacia abajo: se sube media altura
-                        // para que la punta quede justo en el centro del mapa.
-                        padding: EdgeInsets.only(bottom: 34),
-                        child: Icon(
-                          Icons.location_on,
-                          size: 34,
-                          color: _colorAzul,
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 14, 14, 4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _esNueva ? 'Nueva ubicación' : 'Editar ubicación',
+                        style: TextStyle(
+                          fontFamily: RBFuentes.titulos,
+                          fontSize: context.escala(28),
+                          fontWeight: FontWeight.w800,
+                          color: RBColores.azul,
                         ),
                       ),
                     ),
-                  ),
-                  Positioned(
-                    right: 8,
-                    bottom: 8,
-                    child: FloatingActionButton.small(
-                      heroTag: 'gps_zona',
-                      backgroundColor: Colors.white,
-                      foregroundColor: _colorAzul,
-                      onPressed: _buscandoUbicacion
-                          ? null
-                          : () => _usarUbicacionActual(),
-                      child: _buscandoUbicacion
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.my_location, size: 20),
+                    BotonCircular(
+                      icono: Icons.close_rounded,
+                      fondo: RBColores.fondo,
+                      tamano: 48,
+                      tooltip: 'Cerrar',
+                      onTap: _guardando ? null : () => Navigator.pop(context, false),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _direccionCtrl,
-            maxLength: 255,
-            textCapitalization: TextCapitalization.sentences,
-            onChanged: (_) => _direccionEditadaAMano = true,
-            decoration: InputDecoration(
-              labelText: 'Dirección de referencia',
-              hintText: 'Av. Presidente Ibáñez 1234',
-              counterText: '',
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
+              Expanded(
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),
+                  children: [
+                    _tipoDeLugar(),
+                    const SizedBox(height: 18),
+                    _campoNombre(),
+                    const SizedBox(height: 18),
+                    CampoRotulado(
+                      rotulo: 'Dirección de referencia',
+                      campo: TextField(
+                        controller: _direccionCtrl,
+                        maxLength: 255,
+                        textCapitalization: TextCapitalization.sentences,
+                        onChanged: (_) => _direccionEditadaAMano = true,
+                        decoration: const InputDecoration(
+                          hintText: 'Av. Presidente Ibáñez 1234',
+                          counterText: '',
+                          prefixIcon: Icon(Icons.place_outlined, color: RBColores.azul),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 22),
+                    _radioCobertura(),
+                    const SizedBox(height: 22),
+                    const Text('Vista previa', style: RBTexto.rotuloCampo),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Mueve el mapa hasta dejar el punto sobre el lugar exacto.',
+                      style: TextStyle(fontSize: 14, color: RBColores.texto2),
+                    ),
+                    const SizedBox(height: 10),
+                    _vistaPrevia(),
+                    if (!_esNueva) ...[
+                      const SizedBox(height: 14),
+                      Center(
+                        child: TextButton.icon(
+                          onPressed: _guardando ? null : _eliminar,
+                          style: TextButton.styleFrom(foregroundColor: RBColores.rojo),
+                          icon: const Icon(Icons.delete_outline_rounded),
+                          label: const Text('Eliminar ubicación'),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
               ),
-            ),
+              _barraAcciones(),
+            ],
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _tipoDeLugar() {
+    return CampoRotulado(
+      rotulo: 'Tipo de lugar',
+      campo: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (final tipo in TipoZona.values)
+            ChipFiltro(
+              etiqueta: tipo.etiqueta,
+              activo: _tipo == tipo,
+              icono: Icon(tipo.icono, size: 19, color: RBColores.verde),
+              onTap: () => setState(() => _tipo = tipo),
+            ),
         ],
       ),
     );
   }
 
-  Widget _tarjetaRadio() {
+  /// Solo "Otro lugar" lleva nombre propio: en los demás lo fija el servidor,
+  /// y así el nombre guardado siempre corresponde al ícono.
+  Widget _campoNombre() {
+    if (!_tipo.nombreLibre) {
+      return CampoRotulado(
+        rotulo: 'Nombre de la ubicación',
+        campo: InputDecorator(
+          decoration: const InputDecoration(
+            enabled: false,
+            helperText: 'El nombre lo define el tipo de lugar',
+            fillColor: RBColores.fondo,
+          ),
+          child: Text(
+            _tipo.etiqueta,
+            style: const TextStyle(fontSize: 16, color: RBColores.tinta),
+          ),
+        ),
+      );
+    }
+    return CampoRotulado(
+      rotulo: 'Nombre de la ubicación',
+      campo: TextField(
+        controller: _nombreCtrl,
+        maxLength: 60,
+        textCapitalization: TextCapitalization.sentences,
+        decoration: const InputDecoration(
+          hintText: 'Colegio, casa de mis padres…',
+          counterText: '',
+        ),
+      ),
+    );
+  }
+
+  Widget _radioCobertura() {
     final indice = _radios.indexOf(_radio).clamp(0, _radios.length - 1);
-    return _tarjeta(
-      hijo: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(child: _titulo(Icons.my_location, 'Radio de Cobertura')),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: _colorAzul,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(
-                  _radioTexto(_radio),
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.white,
-                  ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Expanded(child: Text('Radio de cobertura', style: RBTexto.rotuloCampo)),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              decoration: BoxDecoration(
+                color: RBColores.verde50,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Text(
+                _radioTexto(_radio),
+                style: const TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w800,
+                  color: RBColores.verde,
                 ),
               ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            'Define el área de monitoreo alrededor de esta zona segura.',
-            style: TextStyle(
-              fontSize: 13.5,
-              height: 1.4,
-              color: _colorTextoGris,
             ),
-          ),
-          const SizedBox(height: 8),
-          // El slider se mueve por posiciones, no por metros: así solo existen
-          // los valores que el servidor acepta y no hay estados intermedios.
-          Slider(
-            value: indice.toDouble(),
-            min: 0,
-            max: (_radios.length - 1).toDouble(),
-            divisions: _radios.length - 1,
-            activeColor: _colorAzul,
-            onChanged: (valor) {
-              setState(() => _radio = _radios[valor.round()]);
-              _sincronizarVistaPrevia();
-            },
-          ),
-          Row(
+          ],
+        ),
+        const SizedBox(height: 6),
+        // El slider se mueve por posiciones, no por metros: así solo existen
+        // los valores que el servidor acepta y no hay estados intermedios.
+        Slider(
+          value: indice.toDouble(),
+          min: 0,
+          max: (_radios.length - 1).toDouble(),
+          divisions: _radios.length - 1,
+          onChanged: (valor) {
+            setState(() => _radio = _radios[valor.round()]);
+            _ajustarMapa();
+          },
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               for (final metros in _radios)
                 Text(
                   _radioTexto(metros),
                   style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: metros == _radio
-                        ? FontWeight.w700
-                        : FontWeight.w500,
-                    color: metros == _radio ? _colorAzul : _colorTextoGris,
+                    fontSize: 14,
+                    fontWeight: metros == _radio ? FontWeight.w700 : FontWeight.w500,
+                    color: metros == _radio ? RBColores.verde : RBColores.texto2,
                   ),
                 ),
             ],
           ),
-          const SizedBox(height: 14),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF1F5FD),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Icon(Icons.info_outline, size: 18, color: _colorAzul),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    'Con ${_radioTexto(_radio)} de radio, recibirás alertas de '
-                    'incidentes reportados a menos de $_minutosCaminando minutos '
-                    'caminando desde esta zona.',
-                    style: const TextStyle(
-                      fontSize: 13,
-                      height: 1.4,
-                      color: _colorTitulo,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          'Recibirás alertas de incidentes a menos de $_minutosCaminando '
+          'minutos caminando desde esta ubicación.',
+          style: const TextStyle(fontSize: 14, height: 1.4, color: RBColores.texto2),
+        ),
+      ],
     );
   }
 
   Widget _vistaPrevia() {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _colorBorde),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 14, 16, 10),
-            child: Text(
-              'VISTA PREVIA DE COBERTURA',
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0.8,
-                color: _colorTextoGris,
-              ),
-            ),
-          ),
-          ClipRRect(
-            borderRadius: const BorderRadius.vertical(
-              bottom: Radius.circular(15),
-            ),
-            child: SizedBox(
-              height: 190,
-              child: FlutterMap(
-                mapController: _vistaPreviaController,
-                // Mapa solo de lectura: el círculo se ajusta al radio elegido.
-                options: MapOptions(
-                  initialCenter: _centro,
-                  // El zoom baja a medida que crece el radio para que el
-                  // círculo siempre entre completo en el recuadro.
-                  initialZoom: _zoomVistaPrevia,
-                  interactionOptions: const InteractionOptions(
-                    flags: InteractiveFlag.none,
-                  ),
-                  onMapReady: () {
-                    _vistaPreviaLista = true;
-                    _sincronizarVistaPrevia();
-                  },
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(RBRadios.tarjeta + 4),
+      child: SizedBox(
+        height: context.altoRelativo(0.32, minimo: 180, maximo: 260),
+        child: Stack(
+          children: [
+            FlutterMap(
+              mapController: _mapController,
+              options: MapOptions(
+                initialCenter: _centro,
+                initialZoom: _zoomVistaPrevia,
+                minZoom: 11,
+                maxZoom: 18,
+                interactionOptions: const InteractionOptions(
+                  flags: InteractiveFlag.drag | InteractiveFlag.pinchZoom,
                 ),
-                children: [
-                  TileLayer(
-                    urlTemplate:
-                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                    userAgentPackageName: 'com.rbalertas.rb_alertas',
-                  ),
-                  CircleLayer(
-                    circles: [
-                      CircleMarker(
-                        point: _centro,
-                        radius: _radio.toDouble(),
-                        useRadiusInMeter: true,
-                        color: _colorAzul.withValues(alpha: 0.15),
-                        borderColor: _colorAzul,
-                        borderStrokeWidth: 2,
-                      ),
-                    ],
-                  ),
-                  MarkerLayer(
-                    markers: [
-                      Marker(
-                        point: _centro,
-                        width: 18,
-                        height: 18,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: _colorAzul,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white, width: 3),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
+                onMapReady: () {
+                  _mapaListo = true;
+                  _ajustarMapa();
+                },
+                // El punto está fijo al centro: lo que se mueve es el mapa.
+                onPositionChanged: (posicion, hayGesto) {
+                  if (!hayGesto) return;
+                  setState(() => _centro = posicion.center);
+                },
+                // Al soltar, se intenta rellenar la dirección del punto.
+                onMapEvent: (evento) {
+                  if (evento is MapEventMoveEnd) _completarDireccion(_centro);
+                },
               ),
+              children: [
+                capaMapaBase(),
+                CircleLayer(
+                  circles: [
+                    CircleMarker(
+                      point: _centro,
+                      radius: _radio.toDouble(),
+                      useRadiusInMeter: true,
+                      color: RBColores.verde.withValues(alpha: 0.15),
+                      borderColor: RBColores.verde,
+                      borderStrokeWidth: 2.5,
+                    ),
+                  ],
+                ),
+                MarkerLayer(
+                  markers: [
+                    Marker(
+                      point: _centro,
+                      width: 44,
+                      height: 44,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: RBColores.verde,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.white, width: 3),
+                          boxShadow: [
+                            BoxShadow(color: Colors.black.withValues(alpha: 0.2), blurRadius: 6),
+                          ],
+                        ),
+                        child: Icon(_tipo.icono, color: Colors.white, size: 20),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
-          ),
-        ],
+            Positioned(
+              right: 10,
+              bottom: 10,
+              child: _buscandoUbicacion
+                  ? const BotonCircular(icono: Icons.more_horiz_rounded, onTap: null, tamano: 46)
+                  : BotonCircular(
+                      icono: Icons.my_location_rounded,
+                      color: RBColores.azul,
+                      tamano: 46,
+                      tooltip: 'Usar mi ubicación',
+                      onTap: () => _usarUbicacionActual(),
+                    ),
+            ),
+            const Positioned(left: 4, bottom: 2, child: AtribucionMapa()),
+          ],
+        ),
       ),
     );
   }
 
   Widget _barraAcciones() {
+    final altoBoton = context.pantallaBaja || context.pantallaAngosta ? 52.0 : 60.0;
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      padding: EdgeInsets.fromLTRB(
+        20,
+        14,
+        20,
+        14 + MediaQuery.of(context).viewPadding.bottom,
+      ),
       decoration: const BoxDecoration(
         color: Colors.white,
-        border: Border(top: BorderSide(color: _colorBorde)),
+        border: Border(top: BorderSide(color: RBColores.linea)),
       ),
-      child: SafeArea(
-        top: false,
-        child: Row(
-          children: [
-            Expanded(
+      child: Row(
+        children: [
+          Expanded(
+            child: SizedBox(
+              height: altoBoton,
               child: OutlinedButton(
-                onPressed: _guardando
-                    ? null
-                    : () => Navigator.pop(context, false),
+                onPressed: _guardando ? null : () => Navigator.pop(context, false),
                 style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  side: const BorderSide(color: _colorBorde),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  foregroundColor: RBColores.tinta,
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(RBRadios.tarjeta),
                   ),
                 ),
-                child: const Text(
-                  'Descartar',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    color: _colorTitulo,
-                  ),
+                child: const FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text('Descartar', style: TextStyle(fontSize: 18)),
                 ),
               ),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              flex: 2,
-              child: FilledButton.icon(
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: SizedBox(
+              height: altoBoton,
+              child: ElevatedButton(
                 onPressed: _guardando ? null : _guardar,
-                style: FilledButton.styleFrom(
-                  backgroundColor: _colorAzul,
-                  padding: const EdgeInsets.symmetric(vertical: 14),
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  backgroundColor: RBColores.verde,
+                  disabledBackgroundColor: RBColores.verde.withValues(alpha: 0.6),
+                  disabledForegroundColor: Colors.white,
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(RBRadios.tarjeta),
                   ),
                 ),
-                icon: _guardando
+                child: _guardando
                     ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2.4, color: Colors.white),
                       )
-                    : const Icon(Icons.save_outlined, size: 18),
-                label: Text(
-                  _esNueva ? 'Guardar zona' : 'Guardar Cambios',
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
+                    : FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          _esNueva ? 'Guardar zona' : 'Guardar cambios',
+                          style: const TextStyle(fontSize: 18),
+                        ),
+                      ),
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

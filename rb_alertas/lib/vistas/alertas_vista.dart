@@ -1,27 +1,19 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:rb_alertas/servicios/estado_alertas_servicio.dart';
 import 'package:rb_alertas/servicios/notificaciones_servicio.dart';
 import 'package:rb_alertas/servicios/reporte_servicio.dart';
 import 'package:rb_alertas/servicios/sesion.dart';
 import 'package:rb_alertas/servicios/ubicacion_servicio.dart';
+import 'package:rb_alertas/servicios/zonas_servicio.dart';
+import 'package:rb_alertas/tema/rb_tema.dart';
 import 'package:rb_alertas/vistas/detalle_incidente_vista.dart';
 import 'package:rb_alertas/vistas/inicio_sesion_vista.dart';
 import 'package:rb_alertas/vistas/zonas_seguras_vista.dart';
 import 'package:rb_alertas/widgets/barra_navegacion_inferior.dart';
-import 'package:rb_alertas/widgets/categoria_visual.dart';
+import 'package:rb_alertas/widgets/rb_componentes.dart';
 
-const _colorAzul = Color(0xFF0056D2);
-const _colorFondo = Color(0xFFF7F8FC);
-const _colorTitulo = Color(0xFF111827);
-const _colorTextoGris = Color(0xFF6B7280);
-const _colorBorde = Color(0xFFE5E7EB);
-const _colorVerde = Color(0xFF16A34A);
-const _colorRojo = Color(0xFFDC2626);
-const _colorAmbar = Color(0xFFD97706);
-
-/// Punto de referencia cuando todavía no se conoce la ubicación del
+/// Punto de referencia cuando todavía no se conoce la ubicación del usuario.
 const _centroPorDefecto = LatLng(-41.4693, -72.9424);
 
 /// Radio en kilómetros que se consulta a la API para las alertas cercanas.
@@ -30,19 +22,8 @@ const _radioKm = 2.0;
 /// Antigüedad hasta la que una alerta se muestra en la sección "Recientes".
 const _ventanaRecientes = Duration(hours: 2);
 
-String tiempoRelativo(DateTime? fecha) {
-  if (fecha == null) return '';
-  final diferencia = DateTime.now().difference(fecha);
-  if (diferencia.isNegative || diferencia.inMinutes < 1) return 'Recién';
-  if (diferencia.inMinutes < 60) return 'hace ${diferencia.inMinutes} min';
-  if (diferencia.inHours < 24) return 'hace ${diferencia.inHours} h';
-  if (diferencia.inDays == 1) return 'Ayer';
-  if (diferencia.inDays < 7) return 'hace ${diferencia.inDays} días';
-  return '${fecha.day.toString().padLeft(2, '0')}/'
-      '${fecha.month.toString().padLeft(2, '0')}/${fecha.year}';
-}
-
-/// Pantalla "Alertas": incidentes vigentes cerca del usuario e historial
+/// Pantalla "Alertas": incidentes vigentes cerca del usuario, alertas de sus
+/// zonas seguras e historial de sus reportes.
 class AlertasVista extends StatefulWidget {
   final int pestanaInicial;
 
@@ -75,34 +56,23 @@ class _AlertasVistaState extends State<AlertasVista>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _colorFondo,
+      backgroundColor: RBColores.fondo,
       body: SafeArea(
         bottom: false,
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-              child: Row(
-                children: [
-                  const Icon(
-                    Icons.notifications_rounded,
-                    color: _colorAzul,
-                    size: 26,
-                  ),
-                  const SizedBox(width: 8),
-                  const Text(
-                    'Alertas',
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                      color: _colorTitulo,
-                    ),
-                  ),
-                  const Spacer(),
-                ],
+              padding: EdgeInsets.fromLTRB(20, context.pantallaBaja ? 14 : 28, 20, 14),
+              child: const TituloPantalla('Alertas'),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: SelectorSegmentado(
+                controlador: _tabs,
+                opciones: const ['Cerca de ti', 'Mis zonas', 'Mis reportes'],
               ),
             ),
-            _SelectorPestanas(controlador: _tabs),
             Expanded(
               child: TabBarView(
                 controller: _tabs,
@@ -123,41 +93,64 @@ class _AlertasVistaState extends State<AlertasVista>
   }
 }
 
-class _SelectorPestanas extends StatelessWidget {
-  final TabController controlador;
+/// Número grande + texto, dentro de la tarjeta verde.
+class _Cifra extends StatelessWidget {
+  final String valor;
+  final String etiqueta;
 
-  const _SelectorPestanas({required this.controlador});
+  const _Cifra({required this.valor, required this.etiqueta});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16),
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: _colorBorde),
-      ),
-      child: TabBar(
-        controller: controlador,
-        dividerColor: Colors.transparent,
-        indicatorSize: TabBarIndicatorSize.tab,
-        indicator: BoxDecoration(
-          color: _colorAzul,
-          borderRadius: BorderRadius.circular(20),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          valor,
+          style: const TextStyle(
+            fontFamily: RBFuentes.titulos,
+            fontSize: 40,
+            height: 1.05,
+            fontWeight: FontWeight.w800,
+            color: Colors.white,
+          ),
         ),
-        labelColor: Colors.white,
-        unselectedLabelColor: _colorTextoGris,
-        labelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
-        unselectedLabelStyle: const TextStyle(
-          fontSize: 13,
-          fontWeight: FontWeight.w600,
+        Text(
+          etiqueta,
+          style: TextStyle(fontSize: 15, color: Colors.white.withValues(alpha: 0.9)),
         ),
-        labelPadding: const EdgeInsets.symmetric(horizontal: 4),
-        tabs: const [
-          Tab(height: 36, text: 'Cerca de ti'),
-          Tab(height: 36, text: 'Mis zonas'),
-          Tab(height: 36, text: 'Mis reportes'),
+      ],
+    );
+  }
+}
+
+/// Fila horizontal de filtros de estado.
+class _Filtros<T> extends StatelessWidget {
+  final List<(T, String)> opciones;
+  final T seleccionado;
+  final ValueChanged<T> onSeleccionar;
+
+  const _Filtros({
+    required this.opciones,
+    required this.seleccionado,
+    required this.onSeleccionar,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          for (final (valor, etiqueta) in opciones) ...[
+            ChipFiltro(
+              etiqueta: etiqueta,
+              activo: valor == seleccionado,
+              onTap: () => onSeleccionar(valor),
+            ),
+            const SizedBox(width: 10),
+          ],
         ],
       ),
     );
@@ -167,6 +160,8 @@ class _SelectorPestanas extends StatelessWidget {
 // ---------------------------------------------------------------------------
 // Pestaña 1: alertas activas cerca del usuario
 // ---------------------------------------------------------------------------
+
+enum _FiltroCercanas { todas, activas, validadas }
 
 class _PanelCercanas extends StatefulWidget {
   const _PanelCercanas();
@@ -180,12 +175,11 @@ class _PanelCercanasState extends State<_PanelCercanas>
   final _reporteServicio = ReporteServicio();
   final _ubicacionServicio = UbicacionServicio();
 
-  LatLng? _punto;
   List<ReporteCercano> _alertas = [];
-  List<CategoriaIncidente> _categorias = [];
-  String? _codigoFiltro;
+  _FiltroCercanas _filtro = _FiltroCercanas.todas;
   bool _cargando = true;
   String? _error;
+  DateTime? _actualizado;
   // Aviso cuando no se pudo leer el GPS y se usa el centro por defecto.
   String? _avisoUbicacion;
 
@@ -195,18 +189,7 @@ class _PanelCercanasState extends State<_PanelCercanas>
   @override
   void initState() {
     super.initState();
-    _cargarCategorias();
     _cargarTodo();
-  }
-
-  Future<void> _cargarCategorias() async {
-    try {
-      final categorias = await _reporteServicio.obtenerCategorias();
-      if (!mounted) return;
-      setState(() => _categorias = categorias);
-    } catch (_) {
-      // Sin categorías solo se pierden los filtros; la lista sigue sirviendo.
-    }
   }
 
   Future<void> _cargarTodo() async {
@@ -237,22 +220,20 @@ class _PanelCercanasState extends State<_PanelCercanas>
       EstadoAlertas.marcarVistos(cercanas.reportes.map((r) => r.id));
       if (!mounted) return;
       setState(() {
-        _punto = punto;
         _alertas = cercanas.reportes;
         _avisoUbicacion = aviso;
+        _actualizado = DateTime.now();
         _cargando = false;
       });
     } on ReporteServicioException catch (e) {
       if (!mounted) return;
       setState(() {
-        _punto = punto;
         _error = e.mensaje;
         _cargando = false;
       });
     } catch (_) {
       if (!mounted) return;
       setState(() {
-        _punto = punto;
         _error = 'No se pudo conectar con el servidor';
         _cargando = false;
       });
@@ -260,8 +241,13 @@ class _PanelCercanasState extends State<_PanelCercanas>
   }
 
   List<ReporteCercano> get _visibles {
-    if (_codigoFiltro == null) return _alertas;
-    return _alertas.where((a) => a.categoriaCodigo == _codigoFiltro).toList();
+    return switch (_filtro) {
+      _FiltroCercanas.todas => _alertas,
+      _FiltroCercanas.activas =>
+        _alertas.where((a) => EstadoVisual.desdeApi(a.estado) == EstadoVisual.activa).toList(),
+      _FiltroCercanas.validadas =>
+        _alertas.where((a) => EstadoVisual.desdeApi(a.estado) == EstadoVisual.validada).toList(),
+    };
   }
 
   Future<void> _abrirDetalle(int idReporte) async {
@@ -275,15 +261,30 @@ class _PanelCercanasState extends State<_PanelCercanas>
     if (cambio == true && mounted) _cargarTodo();
   }
 
+  Widget _fila(ReporteCercano alerta) {
+    final tiempo = tiempoRelativoInicio(alerta.fechaCreacion);
+    final distancia = 'a ${distanciaLegible(alerta.distanciaMetros)}';
+    return FilaIncidente(
+      codigoCategoria: alerta.categoriaCodigo,
+      colorHex: alerta.colorHex,
+      titulo: tituloReporte(alerta.categoria, alerta.direccion),
+      detalle: tiempo.isEmpty ? capitalizar(distancia) : '$tiempo · $distancia',
+      estado: EstadoVisual.desdeApi(alerta.estado),
+      contador: '${alerta.confirmaciones} '
+          '${alerta.confirmaciones == 1 ? 'confirma' : 'confirman'}',
+      onTap: () => _abrirDetalle(alerta.id),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
 
     if (_cargando) {
-      return const Center(child: CircularProgressIndicator(color: _colorAzul));
+      return const Center(child: CircularProgressIndicator());
     }
     if (_error != null) {
-      return _EstadoVacio(
+      return EstadoVacio(
         icono: Icons.cloud_off_rounded,
         titulo: 'No se pudieron cargar las alertas',
         detalle: _error!,
@@ -302,58 +303,90 @@ class _PanelCercanasState extends State<_PanelCercanas>
         )
         .toList();
     final anteriores = visibles.where((a) => !recientes.contains(a)).toList();
+    final total = _alertas.length;
 
     return RefreshIndicator(
-      color: _colorAzul,
       onRefresh: _cargarTodo,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+        padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
         children: [
-          _TarjetaImpactoLocal(
-            punto: _punto ?? _centroPorDefecto,
-            alertas: _alertas,
-            onRecargar: _cargarTodo,
+          TarjetaSuricata(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      '$total',
+                      style: const TextStyle(
+                        fontFamily: RBFuentes.titulos,
+                        fontSize: 52,
+                        height: 1,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Flexible(
+                      child: Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Text(
+                          total == 1 ? 'alerta activa' : 'alertas activas',
+                          style: const TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'En ${distanciaLegible(_radioKm * 1000)} a tu alrededor · '
+                  'actualizado ${tiempoRelativo(_actualizado)}',
+                  style: TextStyle(fontSize: 15, color: Colors.white.withValues(alpha: 0.92)),
+                ),
+              ],
+            ),
           ),
           if (_avisoUbicacion != null) ...[
-            const SizedBox(height: 10),
-            _Aviso(texto: _avisoUbicacion!),
+            const SizedBox(height: 12),
+            AvisoRB(texto: _avisoUbicacion!),
           ],
-          const SizedBox(height: 14),
-          _ChipsCategorias(
-            categorias: _categorias,
-            codigoSeleccionado: _codigoFiltro,
-            onSeleccionar: (codigo) => setState(() => _codigoFiltro = codigo),
+          const SizedBox(height: 20),
+          _Filtros<_FiltroCercanas>(
+            opciones: const [
+              (_FiltroCercanas.todas, 'Todas'),
+              (_FiltroCercanas.activas, 'Activas'),
+              (_FiltroCercanas.validadas, 'Validadas'),
+            ],
+            seleccionado: _filtro,
+            onSeleccionar: (f) => setState(() => _filtro = f),
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 20),
           if (visibles.isEmpty)
             const Padding(
-              padding: EdgeInsets.only(top: 40),
-              child: _EstadoVacio(
+              padding: EdgeInsets.only(top: 24),
+              child: EstadoVacio(
                 icono: Icons.notifications_off_outlined,
                 titulo: 'Sin alertas cerca de ti',
-                detalle: 'No hay incidentes vigentes en un radio de 2 km. Desliza hacia abajo para actualizar.',
+                detalle: 'No hay incidentes vigentes en un radio de 2 km. '
+                    'Desliza hacia abajo para actualizar.',
               ),
             ),
           if (recientes.isNotEmpty) ...[
-            const _TituloSeccion('RECIENTES'),
-            const SizedBox(height: 8),
-            for (final alerta in recientes)
-              _FilaAlerta(
-                alerta: alerta,
-                destacada: true,
-                onTap: () => _abrirDetalle(alerta.id),
-              ),
+            const EtiquetaSeccion('Recientes'),
+            const SizedBox(height: 12),
+            for (final alerta in recientes) _fila(alerta),
           ],
           if (anteriores.isNotEmpty) ...[
-            const SizedBox(height: 18),
-            const _TituloSeccion('ANTERIORES'),
-            const SizedBox(height: 8),
-            for (final alerta in anteriores)
-              _FilaAlerta(
-                alerta: alerta,
-                destacada: false,
-                onTap: () => _abrirDetalle(alerta.id),
-              ),
+            const SizedBox(height: 12),
+            const EtiquetaSeccion('Anteriores'),
+            const SizedBox(height: 12),
+            for (final alerta in anteriores) _fila(alerta),
           ],
         ],
       ),
@@ -361,135 +394,304 @@ class _PanelCercanasState extends State<_PanelCercanas>
   }
 }
 
-/// Encabezado con el mini mapa y el recuento de incidentes en el radio.
-class _TarjetaImpactoLocal extends StatelessWidget {
-  final LatLng punto;
-  final List<ReporteCercano> alertas;
-  final VoidCallback onRecargar;
+// ---------------------------------------------------------------------------
+// Pestaña 2: incidentes dentro de las zonas seguras del usuario
+// ---------------------------------------------------------------------------
 
-  const _TarjetaImpactoLocal({
-    required this.punto,
-    required this.alertas,
-    required this.onRecargar,
-  });
+/// A diferencia de "Cerca de ti", esto no depende de dónde esté el teléfono:
+/// son los incidentes que cayeron dentro de una zona segura configurada, esté
+/// el usuario ahí o no.
+class _PanelMisZonas extends StatefulWidget {
+  const _PanelMisZonas();
+
+  @override
+  State<_PanelMisZonas> createState() => _PanelMisZonasState();
+}
+
+class _PanelMisZonasState extends State<_PanelMisZonas>
+    with AutomaticKeepAliveClientMixin {
+  final _servicio = NotificacionesServicio();
+  final _zonasServicio = ZonasServicio();
+
+  List<AlertaDeZona> _alertas = const [];
+  // Las zonas solo alimentan las tarjetas de arriba: si fallan, la lista de
+  // alertas se muestra igual.
+  List<ZonaSegura>? _zonas;
+  bool _cargando = true;
+  String? _error;
+  bool _sinSesion = false;
+
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  void initState() {
+    super.initState();
+    _cargar();
+  }
+
+  Future<void> _cargar() async {
+    final token = Sesion.token;
+    if (token == null || token.isEmpty) {
+      setState(() {
+        _cargando = false;
+        _sinSesion = true;
+      });
+      return;
+    }
+    setState(() {
+      _cargando = true;
+      _error = null;
+      _sinSesion = false;
+    });
+    _cargarZonas(token);
+    try {
+      final datos = await _servicio.listar(token);
+      if (!mounted) return;
+      setState(() {
+        _alertas = datos.alertas;
+        _cargando = false;
+      });
+      EstadoAlertas.registrarZonasSinLeer(datos.noLeidas);
+    } on NotificacionesServicioException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _cargando = false;
+        _error = e.mensaje;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _cargando = false;
+        _error = 'No se pudo conectar con el servidor';
+      });
+    }
+  }
+
+  Future<void> _cargarZonas(String token) async {
+    try {
+      final datos = await _zonasServicio.listar(token);
+      if (mounted) setState(() => _zonas = datos.zonas);
+    } catch (_) {
+      // Sin zonas solo se ocultan las tarjetas.
+    }
+  }
+
+  /// Abre el incidente y marca la alerta como leída. El cambio se pinta de
+  /// inmediato en memoria para no esperar una recarga completa de la lista.
+  Future<void> _abrir(AlertaDeZona alerta) async {
+    final token = Sesion.token;
+    if (!alerta.leida && token != null) {
+      setState(() => alerta.leida = true);
+      _servicio.marcarLeida(token, alerta.id);
+      // El contador se recalcula sobre la lista ya pintada: la insignia se
+      // apaga en cuanto el usuario abre la ultima alerta sin leer.
+      EstadoAlertas.registrarZonasSinLeer(
+        _alertas.where((a) => !a.leida).length,
+      );
+    }
+    final cambio = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => DetalleIncidenteVista(idReporte: alerta.reporte.id),
+      ),
+    );
+    if (cambio == true && mounted) _cargar();
+  }
+
+  Future<void> _abrirZonas() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const ZonasSegurasVista()),
+    );
+    if (mounted) _cargar();
+  }
+
+  /// Alertas vigentes de cada zona, para la línea "1 alerta" de su tarjeta.
+  int _alertasVigentes(ZonaSegura zona) => _alertas
+      .where((a) => a.zona?.id == zona.id)
+      .where((a) {
+        final estado = EstadoVisual.desdeApi(a.reporte.estado);
+        return estado == EstadoVisual.activa || estado == EstadoVisual.validada;
+      })
+      .length;
+
+  Widget _fila(AlertaDeZona alerta) {
+    final reporte = alerta.reporte;
+    final tiempo = tiempoRelativo(alerta.fechaEnvio ?? reporte.fechaCreacion);
+    final distancia = alerta.distanciaMetros == null
+        ? null
+        : 'a ${distanciaLegible(alerta.distanciaMetros!)}';
+    final detalle = alerta.zona == null
+        ? '${capitalizar(alerta.referencia)} · $tiempo'
+        : [
+            'En ${alerta.zona!.nombre}',
+            if (tiempo.isNotEmpty) tiempo,
+            ?distancia,
+          ].join(' · ');
+    final confirmaciones = reporte.confirmaciones;
+
+    return FilaIncidente(
+      codigoCategoria: reporte.categoriaCodigo,
+      colorHex: reporte.colorHex,
+      titulo: tituloReporte(reporte.categoria, reporte.direccion),
+      detalle: detalle,
+      estado: EstadoVisual.desdeApi(reporte.estado),
+      contador: '$confirmaciones ${confirmaciones == 1 ? 'confirma' : 'confirman'}',
+      destacada: !alerta.leida,
+      onTap: () => _abrir(alerta),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    final total = alertas.length;
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(16),
-      child: SizedBox(
-        height: 150,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            FlutterMap(
-              options: MapOptions(
-                initialCenter: punto,
-                initialZoom: 13.5,
-                // Mapa decorativo: la interacción vive en la pestaña Mapa.
-                interactionOptions: const InteractionOptions(
-                  flags: InteractiveFlag.none,
+    super.build(context);
+
+    if (_cargando) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_sinSesion) {
+      return EstadoVacio(
+        icono: Icons.lock_outline_rounded,
+        titulo: 'Inicia sesión',
+        detalle: 'Necesitas una cuenta para configurar zonas seguras y recibir sus alertas.',
+        accion: 'Iniciar sesión',
+        onAccion: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const InicioSesionVista()),
+        ),
+      );
+    }
+    if (_error != null) {
+      return EstadoVacio(
+        icono: Icons.cloud_off_rounded,
+        titulo: 'No se pudieron cargar tus alertas',
+        detalle: _error!,
+        accion: 'Reintentar',
+        onAccion: _cargar,
+      );
+    }
+
+    final zonas = _zonas;
+    return RefreshIndicator(
+      onRefresh: _cargar,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 24, 16, 24),
+        children: [
+          EtiquetaSeccion(
+            'Tus zonas seguras',
+            accion: InkWell(
+              onTap: _abrirZonas,
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                child: Text(
+                  'Gestionar',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: RBColores.azul,
+                  ),
                 ),
               ),
-              children: [
-                TileLayer(
-                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  userAgentPackageName: 'com.rbalertas.rb_alertas',
-                ),
-                MarkerLayer(
-                  markers: [
-                    for (final alerta in alertas)
-                      Marker(
-                        point: LatLng(alerta.latitud, alerta.longitud),
-                        width: 16,
-                        height: 16,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: colorCategoria(
-                              alerta.categoriaCodigo,
-                              colorHex: alerta.colorHex,
-                            ).withValues(alpha: 0.85),
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white, width: 1.5),
-                          ),
-                        ),
-                      ),
-                    Marker(
-                      point: punto,
-                      width: 18,
-                      height: 18,
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: _colorAzul,
-                          shape: BoxShape.circle,
-                          border: Border.all(color: Colors.white, width: 3),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
             ),
-            // Degradado para que el texto se lea sobre cualquier zona del mapa.
-            const DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.bottomLeft,
-                  end: Alignment.topRight,
-                  colors: [Color(0xCC000000), Color(0x11000000)],
-                ),
-              ),
-              child: SizedBox.expand(),
-            ),
-            Positioned(
-              left: 16,
-              bottom: 16,
-              right: 70,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
+          ),
+          const SizedBox(height: 14),
+          if (zonas != null)
+            SizedBox(
+              height: 168,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                clipBehavior: Clip.none,
                 children: [
-                  const Text(
-                    'Impacto Local',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
+                  for (final zona in zonas) ...[
+                    _TarjetaZona(
+                      zona: zona,
+                      alertas: _alertasVigentes(zona),
+                      onTap: _abrirZonas,
                     ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    total == 1
-                        ? '1 incidente en tu radio (${_radioKm.toStringAsFixed(0)} km)'
-                        : '$total incidentes en tu radio (${_radioKm.toStringAsFixed(0)} km)',
-                    style: const TextStyle(
-                      color: Color(0xFFE5E7EB),
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
+                    const SizedBox(width: 12),
+                  ],
+                  if (zonas.isEmpty) _TarjetaAnadirZona(onTap: _abrirZonas),
                 ],
               ),
             ),
-            Positioned(
-              right: 14,
-              bottom: 14,
-              child: Material(
-                color: _colorAzul,
-                shape: const CircleBorder(),
-                child: InkWell(
-                  customBorder: const CircleBorder(),
-                  onTap: onRecargar,
-                  child: const Padding(
-                    padding: EdgeInsets.all(10),
-                    child: Icon(
-                      Icons.my_location_rounded,
-                      color: Colors.white,
-                      size: 22,
-                    ),
-                  ),
-                ),
+          const SizedBox(height: 26),
+          const EtiquetaSeccion('Alertas en tus zonas'),
+          const SizedBox(height: 12),
+          if (_alertas.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 12),
+              child: EstadoVacio(
+                icono: Icons.shield_outlined,
+                titulo: 'Sin alertas en tus zonas',
+                detalle: 'Tus zonas seguras están tranquilas por ahora.',
+              ),
+            )
+          else
+            for (final alerta in _alertas) _fila(alerta),
+          const SizedBox(height: 8),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 8),
+            child: Text(
+              'Te avisaremos con una notificación cuando alguien reporte un '
+              'incidente dentro de una de tus zonas.',
+              style: TextStyle(fontSize: 15, height: 1.45, color: RBColores.texto2),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TarjetaZona extends StatelessWidget {
+  final ZonaSegura zona;
+  final int alertas;
+  final VoidCallback onTap;
+
+  const _TarjetaZona({required this.zona, required this.alertas, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 168,
+      child: TarjetaRB(
+        onTap: onTap,
+        padding: const EdgeInsets.fromLTRB(18, 18, 14, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 50,
+              height: 50,
+              decoration: BoxDecoration(
+                color: RBColores.verde50,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Icon(zona.tipo.icono, color: RBColores.verde, size: 26),
+            ),
+            const Spacer(),
+            Text(
+              zona.nombre,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 17.5,
+                fontWeight: FontWeight.w700,
+                color: RBColores.tinta,
+              ),
+            ),
+            Text(
+              'Radio ${zona.radioTexto}',
+              style: const TextStyle(fontSize: 14, color: RBColores.texto2),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              alertas == 0 ? 'Sin alertas' : '$alertas ${alertas == 1 ? 'alerta' : 'alertas'}',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                color: alertas == 0 ? RBColores.verde : RBColores.rojo,
               ),
             ),
           ],
@@ -499,115 +701,32 @@ class _TarjetaImpactoLocal extends StatelessWidget {
   }
 }
 
-class _FilaAlerta extends StatelessWidget {
-  final ReporteCercano alerta;
-  // Las recientes llevan una franja lateral del color de su categoría.
-  final bool destacada;
+class _TarjetaAnadirZona extends StatelessWidget {
   final VoidCallback onTap;
 
-  const _FilaAlerta({
-    required this.alerta,
-    required this.destacada,
-    required this.onTap,
-  });
+  const _TarjetaAnadirZona({required this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    final color = colorCategoria(
-      alerta.categoriaCodigo,
-      colorHex: alerta.colorHex,
-    );
-    final referencia = alerta.direccion?.trim();
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _colorBorde),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: IntrinsicHeight(
-          child: Row(
-            children: [
-              if (destacada) Container(width: 4, color: color),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(
-                        width: 42,
-                        height: 42,
-                        decoration: BoxDecoration(
-                          color: color.withValues(alpha: destacada ? 1 : 0.12),
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          iconoCategoria(alerta.categoriaCodigo),
-                          size: 21,
-                          color: destacada ? Colors.white : color,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              alerta.categoria,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w700,
-                                color: _colorTitulo,
-                              ),
-                            ),
-                            const SizedBox(height: 3),
-                            Row(
-                              children: [
-                                const Icon(
-                                  Icons.near_me_outlined,
-                                  size: 13,
-                                  color: _colorTextoGris,
-                                ),
-                                const SizedBox(width: 4),
-                                Expanded(
-                                  child: Text(
-                                    referencia == null || referencia.isEmpty
-                                        ? 'A ${alerta.distanciaLegible} de ti'
-                                        : '$referencia · a ${alerta.distanciaLegible}',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontSize: 12.5,
-                                      color: _colorTextoGris,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        tiempoRelativo(alerta.fechaCreacion),
-                        style: TextStyle(
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w600,
-                          color: destacada ? _colorRojo : _colorTextoGris,
-                        ),
-                      ),
-                    ],
-                  ),
+    return SizedBox(
+      width: 168,
+      child: CustomPaint(
+        painter: const BordePunteado(color: RBColores.placeholder, radio: RBRadios.tarjeta),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(RBRadios.tarjeta),
+          child: const Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.add_rounded, color: RBColores.azul, size: 30),
+                SizedBox(height: 6),
+                Text(
+                  'Añadir zona',
+                  style: TextStyle(fontWeight: FontWeight.w700, color: RBColores.azul),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -616,7 +735,7 @@ class _FilaAlerta extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Pestaña 2: historial de reportes del usuario
+// Pestaña 3: historial de reportes del usuario
 // ---------------------------------------------------------------------------
 
 enum _FiltroHistorial { todos, activas, resueltas, vencidas }
@@ -706,12 +825,19 @@ class _PanelMisReportesState extends State<_PanelMisReportes>
     if (cambio == true && mounted) _cargar();
   }
 
+  EstadoVisual _estadoVisual(EstadoMiReporte estado) => switch (estado) {
+        EstadoMiReporte.activa => EstadoVisual.activa,
+        EstadoMiReporte.resuelta => EstadoVisual.resuelta,
+        EstadoMiReporte.vencida => EstadoVisual.vencida,
+        EstadoMiReporte.descartada => EstadoVisual.descartada,
+      };
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
 
     if (_sinSesion) {
-      return _EstadoVacio(
+      return EstadoVacio(
         icono: Icons.lock_outline_rounded,
         titulo: 'Inicia sesión',
         detalle:
@@ -727,10 +853,10 @@ class _PanelMisReportesState extends State<_PanelMisReportes>
       );
     }
     if (_cargando) {
-      return const Center(child: CircularProgressIndicator(color: _colorAzul));
+      return const Center(child: CircularProgressIndicator());
     }
     if (_error != null) {
-      return _EstadoVacio(
+      return EstadoVacio(
         icono: Icons.cloud_off_rounded,
         titulo: 'No se pudo cargar tu historial',
         detalle: _error!,
@@ -740,53 +866,61 @@ class _PanelMisReportesState extends State<_PanelMisReportes>
     }
 
     final visibles = _visibles;
+    final apoyos = _reportes.fold<int>(0, (suma, r) => suma + r.apoyos);
+    final resueltos = _reportes.where((r) => r.estado == EstadoMiReporte.resuelta).length;
 
     return RefreshIndicator(
-      color: _colorAzul,
       onRefresh: _cargar,
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+        padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
         children: [
-          const Text(
-            'Mis Reportes',
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: _colorTitulo,
-            ),
-          ),
-          const SizedBox(height: 4),
-          const Text(
-            'Historial de alertas reportadas en tu zona.',
-            style: TextStyle(fontSize: 13.5, color: _colorTextoGris),
-          ),
-          const SizedBox(height: 14),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
+          TarjetaSuricata(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                for (final opcion in _FiltroHistorial.values) ...[
-                  _Chip(
-                    etiqueta: switch (opcion) {
-                      _FiltroHistorial.todos => 'Todos',
-                      _FiltroHistorial.activas => 'Activas',
-                      _FiltroHistorial.resueltas => 'Resueltas',
-                      _FiltroHistorial.vencidas => 'Vencidas',
-                    },
-                    activo: _filtro == opcion,
-                    color: _colorAzul,
-                    onTap: () => setState(() => _filtro = opcion),
+                const Text(
+                  'Tu impacto en el barrio',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
                   ),
-                  const SizedBox(width: 8),
-                ],
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: context.pantallaAngosta ? 18 : 28,
+                  runSpacing: 8,
+                  children: [
+                    _Cifra(
+                      valor: '${_reportes.length}',
+                      etiqueta: _reportes.length == 1 ? 'reporte' : 'reportes',
+                    ),
+                    _Cifra(valor: '$apoyos', etiqueta: apoyos == 1 ? 'apoyo' : 'apoyos'),
+                    _Cifra(
+                      valor: '$resueltos',
+                      etiqueta: resueltos == 1 ? 'resuelto' : 'resueltos',
+                    ),
+                  ],
+                ),
               ],
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 20),
+          _Filtros<_FiltroHistorial>(
+            opciones: const [
+              (_FiltroHistorial.todos, 'Todos'),
+              (_FiltroHistorial.activas, 'Activas'),
+              (_FiltroHistorial.resueltas, 'Resueltas'),
+              (_FiltroHistorial.vencidas, 'Vencidas'),
+            ],
+            seleccionado: _filtro,
+            onSeleccionar: (f) => setState(() => _filtro = f),
+          ),
+          const SizedBox(height: 20),
           if (visibles.isEmpty)
             Padding(
-              padding: const EdgeInsets.only(top: 40),
-              child: _EstadoVacio(
+              padding: const EdgeInsets.only(top: 24),
+              child: EstadoVacio(
                 icono: Icons.inbox_outlined,
                 titulo: _reportes.isEmpty
                     ? 'Todavía no has reportado nada'
@@ -797,793 +931,16 @@ class _PanelMisReportesState extends State<_PanelMisReportes>
               ),
             ),
           for (final reporte in visibles)
-            _TarjetaMiReporte(
-              reporte: reporte,
+            FilaIncidente(
+              codigoCategoria: reporte.categoriaCodigo,
+              colorHex: reporte.colorHex,
+              titulo: tituloReporte(reporte.categoria, reporte.direccion),
+              detalle: tiempoRelativoInicio(reporte.fechaCreacion),
+              estado: _estadoVisual(reporte.estado),
+              contador: '${reporte.apoyos} ${reporte.apoyos == 1 ? 'apoyo' : 'apoyos'}',
               onTap: () => _abrirDetalle(reporte.id),
             ),
         ],
-      ),
-    );
-  }
-}
-
-class _TarjetaMiReporte extends StatelessWidget {
-  final MiReporte reporte;
-  final VoidCallback onTap;
-
-  const _TarjetaMiReporte({required this.reporte, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    final color = colorCategoria(
-      reporte.categoriaCodigo,
-      colorHex: reporte.colorHex,
-    );
-    final imagenUrl = reporte.imagenUrl;
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _colorBorde),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              height: 170,
-              width: double.infinity,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  if (imagenUrl != null)
-                    Image.network(
-                      imagenUrl,
-                      fit: BoxFit.cover,
-                      // Si la evidencia no carga, se muestra el marcador de
-                      // categoría en lugar de un recuadro roto.
-                      errorBuilder: (context, error, stack) =>
-                          _PortadaCategoria(color: color, reporte: reporte),
-                    )
-                  else
-                    _PortadaCategoria(color: color, reporte: reporte),
-                  Positioned(
-                    top: 12,
-                    right: 12,
-                    child: _InsigniaEstado(estado: reporte.estado),
-                  ),
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: Text(
-                          reporte.categoria,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 17,
-                            fontWeight: FontWeight.bold,
-                            color: _colorTitulo,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Padding(
-                        padding: const EdgeInsets.only(top: 3),
-                        child: Text(
-                          tiempoRelativo(reporte.fechaCreacion),
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: _colorTextoGris,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    reporte.descripcion,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 13.5,
-                      height: 1.35,
-                      color: _colorTextoGris,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  const Divider(height: 1, color: _colorBorde),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      const Icon(
-                        Icons.location_on_outlined,
-                        size: 15,
-                        color: _colorTextoGris,
-                      ),
-                      const SizedBox(width: 4),
-                      Expanded(
-                        child: Text(
-                          reporte.zona ??
-                              reporte.direccion ??
-                              'Ubicación registrada',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 12.5,
-                            color: _colorTextoGris,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      const Icon(
-                        Icons.thumb_up_alt_outlined,
-                        size: 15,
-                        color: _colorTextoGris,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        '${reporte.apoyos} '
-                        '${reporte.apoyos == 1 ? 'Apoyo' : 'Apoyos'}',
-                        style: const TextStyle(
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w600,
-                          color: _colorTextoGris,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// Portada de respaldo para los reportes sin foto.
-class _PortadaCategoria extends StatelessWidget {
-  final Color color;
-  final MiReporte reporte;
-
-  const _PortadaCategoria({required this.color, required this.reporte});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      color: color.withValues(alpha: 0.10),
-      child: Center(
-        child: Icon(
-          iconoCategoria(reporte.categoriaCodigo),
-          size: 46,
-          color: color.withValues(alpha: 0.65),
-        ),
-      ),
-    );
-  }
-}
-
-class _InsigniaEstado extends StatelessWidget {
-  final EstadoMiReporte estado;
-
-  const _InsigniaEstado({required this.estado});
-
-  @override
-  Widget build(BuildContext context) {
-    final (texto, color, icono) = switch (estado) {
-      EstadoMiReporte.activa => ('Activa', _colorRojo, Icons.error_outline),
-      EstadoMiReporte.resuelta => (
-        'Resuelta',
-        _colorVerde,
-        Icons.check_circle_outline,
-      ),
-      EstadoMiReporte.vencida => (
-        'Vencida',
-        _colorAmbar,
-        Icons.schedule_rounded,
-      ),
-      EstadoMiReporte.descartada => (
-        'Descartada',
-        _colorTextoGris,
-        Icons.block_rounded,
-      ),
-    };
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.15),
-            blurRadius: 6,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icono, size: 14, color: color),
-          const SizedBox(width: 5),
-          Text(
-            texto,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: color,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Piezas compartidas
-// ---------------------------------------------------------------------------
-
-class _ChipsCategorias extends StatelessWidget {
-  final List<CategoriaIncidente> categorias;
-  final String? codigoSeleccionado;
-  final ValueChanged<String?> onSeleccionar;
-
-  const _ChipsCategorias({
-    required this.categorias,
-    required this.codigoSeleccionado,
-    required this.onSeleccionar,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          _Chip(
-            etiqueta: 'Todos',
-            activo: codigoSeleccionado == null,
-            color: _colorAzul,
-            onTap: () => onSeleccionar(null),
-          ),
-          for (final categoria in categorias) ...[
-            const SizedBox(width: 8),
-            _Chip(
-              etiqueta: etiquetaCortaCategoria(
-                categoria.codigo,
-                categoria.nombre,
-              ),
-              activo: codigoSeleccionado == categoria.codigo,
-              color: colorCategoria(
-                categoria.codigo,
-                colorHex: categoria.colorHex,
-              ),
-              onTap: () => onSeleccionar(categoria.codigo),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _Chip extends StatelessWidget {
-  final String etiqueta;
-  final bool activo;
-  final Color color;
-  final VoidCallback onTap;
-
-  const _Chip({
-    required this.etiqueta,
-    required this.activo,
-    required this.color,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
-        decoration: BoxDecoration(
-          color: activo ? color : Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: activo ? color : _colorBorde),
-        ),
-        child: Text(
-          etiqueta,
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w600,
-            color: activo ? Colors.white : const Color(0xFF374151),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _TituloSeccion extends StatelessWidget {
-  final String texto;
-
-  const _TituloSeccion(this.texto);
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      texto,
-      style: const TextStyle(
-        fontSize: 11.5,
-        fontWeight: FontWeight.w700,
-        letterSpacing: 0.8,
-        color: _colorTextoGris,
-      ),
-    );
-  }
-}
-
-class _Aviso extends StatelessWidget {
-  final String texto;
-
-  const _Aviso({required this.texto});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFFF7ED),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFFED7AA)),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.info_outline_rounded, size: 17, color: _colorAmbar),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              texto,
-              style: const TextStyle(fontSize: 12.5, color: Color(0xFF92400E)),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _EstadoVacio extends StatelessWidget {
-  final IconData icono;
-  final String titulo;
-  final String detalle;
-  final String? accion;
-  final VoidCallback? onAccion;
-
-  const _EstadoVacio({
-    required this.icono,
-    required this.titulo,
-    required this.detalle,
-    this.accion,
-    this.onAccion,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icono, size: 44, color: const Color(0xFF9CA3AF)),
-            const SizedBox(height: 12),
-            Text(
-              titulo,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-                color: _colorTitulo,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              detalle,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 13,
-                height: 1.4,
-                color: _colorTextoGris,
-              ),
-            ),
-            if (accion != null && onAccion != null) ...[
-              const SizedBox(height: 16),
-              FilledButton(
-                style: FilledButton.styleFrom(backgroundColor: _colorAzul),
-                onPressed: onAccion,
-                child: Text(accion!),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Pestaña 3: incidentes dentro de las zonas seguras del usuario
-// ---------------------------------------------------------------------------
-
-/// A diferencia de "Cerca de ti", esto no depende de dónde esté el teléfono:
-/// son los incidentes que cayeron dentro de una zona segura configurada, esté
-/// el usuario ahí o no.
-class _PanelMisZonas extends StatefulWidget {
-  const _PanelMisZonas();
-
-  @override
-  State<_PanelMisZonas> createState() => _PanelMisZonasState();
-}
-
-class _PanelMisZonasState extends State<_PanelMisZonas>
-    with AutomaticKeepAliveClientMixin {
-  final _servicio = NotificacionesServicio();
-
-  List<AlertaDeZona> _alertas = const [];
-  bool _cargando = true;
-  String? _error;
-  bool _sinSesion = false;
-
-  @override
-  bool get wantKeepAlive => true;
-
-  @override
-  void initState() {
-    super.initState();
-    _cargar();
-  }
-
-  Future<void> _cargar() async {
-    final token = Sesion.token;
-    if (token == null || token.isEmpty) {
-      setState(() {
-        _cargando = false;
-        _sinSesion = true;
-      });
-      return;
-    }
-    setState(() {
-      _cargando = true;
-      _error = null;
-      _sinSesion = false;
-    });
-    try {
-      final datos = await _servicio.listar(token);
-      if (!mounted) return;
-      setState(() {
-        _alertas = datos.alertas;
-        _cargando = false;
-      });
-      EstadoAlertas.registrarZonasSinLeer(datos.noLeidas);
-    } on NotificacionesServicioException catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _cargando = false;
-        _error = e.mensaje;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _cargando = false;
-        _error = 'No se pudo conectar con el servidor';
-      });
-    }
-  }
-
-  /// Abre el incidente y marca la alerta como leída. El cambio se pinta de
-  /// inmediato en memoria para no esperar una recarga completa de la lista.
-  Future<void> _abrir(AlertaDeZona alerta) async {
-    final token = Sesion.token;
-    if (!alerta.leida && token != null) {
-      setState(() => alerta.leida = true);
-      _servicio.marcarLeida(token, alerta.id);
-      // El contador se recalcula sobre la lista ya pintada: la insignia se
-      // apaga en cuanto el usuario abre la ultima alerta sin leer.
-      EstadoAlertas.registrarZonasSinLeer(
-        _alertas.where((a) => !a.leida).length,
-      );
-    }
-    final cambio = await Navigator.push<bool>(
-      context,
-      MaterialPageRoute(
-        builder: (context) => DetalleIncidenteVista(idReporte: alerta.reporte.id),
-      ),
-    );
-    if (cambio == true && mounted) _cargar();
-  }
-
-  Future<void> _abrirZonas() async {
-    await Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => const ZonasSegurasVista()),
-    );
-    if (mounted) _cargar();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    super.build(context);
-
-    if (_cargando) {
-      return const Center(child: CircularProgressIndicator(color: _colorAzul));
-    }
-    if (_sinSesion) {
-      return _EstadoVacio(
-        icono: Icons.lock_outline,
-        titulo: 'Inicia sesión',
-        detalle: 'Necesitas una cuenta para configurar zonas seguras y recibir sus alertas.',
-        accion: 'Iniciar sesión',
-        onAccion: () => Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => const InicioSesionVista()),
-        ),
-      );
-    }
-    if (_error != null) {
-      return _EstadoVacio(
-        icono: Icons.cloud_off_rounded,
-        titulo: 'No se pudieron cargar tus alertas',
-        detalle: _error!,
-        accion: 'Reintentar',
-        onAccion: _cargar,
-      );
-    }
-    if (_alertas.isEmpty) {
-      // El mismo estado sirve para "no tienes zonas" y "tus zonas están
-      // tranquilas": en ambos casos la acción útil es revisar las zonas.
-      return RefreshIndicator(
-        color: _colorAzul,
-        onRefresh: _cargar,
-        child: ListView(
-          children: [
-            SizedBox(height: MediaQuery.of(context).size.height * 0.12),
-            _EstadoVacio(
-              icono: Icons.shield_outlined,
-              titulo: 'Sin alertas en tus zonas',
-              detalle: 'Cuando alguien reporte un incidente dentro de una de tus '
-                  'zonas seguras, aparecerá aquí aunque no estés en el lugar.',
-              accion: 'Ver mis zonas',
-              onAccion: _abrirZonas,
-            ),
-          ],
-        ),
-      );
-    }
-
-    final noLeidas = _alertas.where((a) => !a.leida).length;
-    return RefreshIndicator(
-      color: _colorAzul,
-      onRefresh: _cargar,
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-        children: [
-          _ResumenZonas(noLeidas: noLeidas, total: _alertas.length, onGestionar: _abrirZonas),
-          const SizedBox(height: 18),
-          const _TituloSeccion('ALERTAS EN TUS ZONAS'),
-          const SizedBox(height: 8),
-          for (final alerta in _alertas)
-            _FilaAlertaZona(alerta: alerta, onTap: () => _abrir(alerta)),
-        ],
-      ),
-    );
-  }
-}
-
-/// Encabezado de la pestaña: cuántas alertas sin leer y acceso a las zonas.
-class _ResumenZonas extends StatelessWidget {
-  final int noLeidas;
-  final int total;
-  final VoidCallback onGestionar;
-
-  const _ResumenZonas({
-    required this.noLeidas,
-    required this.total,
-    required this.onGestionar,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final hayNuevas = noLeidas > 0;
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _colorBorde),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 46,
-            height: 46,
-            decoration: BoxDecoration(
-              color: hayNuevas ? _colorAzul : const Color(0xFFEFF1F5),
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              Icons.shield_outlined,
-              size: 23,
-              color: hayNuevas ? Colors.white : _colorTitulo,
-            ),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  hayNuevas
-                      ? '$noLeidas sin leer'
-                      : 'Todo al día',
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    color: _colorTitulo,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  '$total ${total == 1 ? 'alerta recibida' : 'alertas recibidas'} en tus zonas seguras',
-                  style: const TextStyle(fontSize: 12.5, color: _colorTextoGris),
-                ),
-              ],
-            ),
-          ),
-          TextButton(
-            onPressed: onGestionar,
-            child: const Text(
-              'Gestionar',
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-                color: _colorAzul,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// Fila de la lista de alertas de zona. Las no leídas llevan franja lateral
-/// azul y el nombre de la zona en negrita.
-class _FilaAlertaZona extends StatelessWidget {
-  final AlertaDeZona alerta;
-  final VoidCallback onTap;
-
-  const _FilaAlertaZona({required this.alerta, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    final reporte = alerta.reporte;
-    final color = colorCategoria(
-      reporte.categoriaCodigo,
-      colorHex: reporte.colorHex,
-    );
-    final sinLeer = !alerta.leida;
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: sinLeer ? _colorAzul : _colorBorde),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: IntrinsicHeight(
-          child: Row(
-            children: [
-              if (sinLeer) Container(width: 4, color: _colorAzul),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(
-                        width: 42,
-                        height: 42,
-                        decoration: BoxDecoration(
-                          color: color.withValues(alpha: sinLeer ? 1 : 0.12),
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(
-                          iconoCategoria(reporte.categoriaCodigo),
-                          size: 21,
-                          color: sinLeer ? Colors.white : color,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              reporte.categoria,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w700,
-                                color: _colorTitulo,
-                              ),
-                            ),
-                            const SizedBox(height: 3),
-                            Row(
-                              children: [
-                                Icon(
-                                  alerta.zona?.tipo.icono ?? Icons.place_outlined,
-                                  size: 13,
-                                  color: sinLeer ? _colorAzul : _colorTextoGris,
-                                ),
-                                const SizedBox(width: 4),
-                                Expanded(
-                                  child: Text(
-                                    alerta.referencia,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontSize: 12.5,
-                                      fontWeight: sinLeer
-                                          ? FontWeight.w600
-                                          : FontWeight.w400,
-                                      color: sinLeer
-                                          ? _colorAzul
-                                          : _colorTextoGris,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        tiempoRelativo(alerta.fechaEnvio),
-                        style: TextStyle(
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w600,
-                          color: sinLeer ? _colorAzul : _colorTextoGris,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }

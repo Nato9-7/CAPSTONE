@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:rb_alertas/tema/rb_tema.dart';
 import '../servicios/auth_servicio.dart';
-import '../widgets/app_logo.dart';
+import '../widgets/fondo_acceso.dart';
+import '../widgets/rb_componentes.dart';
 
 class RegistroVista extends StatefulWidget {
   const RegistroVista({super.key});
@@ -50,24 +53,31 @@ class _RegistroVistaState extends State<RegistroVista> {
     return null;
   }
 
+  /// El RUT se puede escribir con puntos (12.345.678-9), pero se valida y se
+  /// envía sin ellos, igual que antes: 12345678-9.
+  String _rutSinPuntos(String valor) => valor.trim().replaceAll('.', '');
+
   String? _validarRut(String? valor) {
     if (valor == null || valor.trim().isEmpty) {
       return 'Ingresa tu RUT';
     }
     final regexRut = RegExp(r'^\d{7,8}-[\dkK]$');
-    if (!regexRut.hasMatch(valor.trim())) {
-      return 'Formato inválido (ej: 12345678-9)';
+    if (!regexRut.hasMatch(_rutSinPuntos(valor))) {
+      return 'Formato inválido (ej: 12.345.678-9)';
     }
     return null;
   }
+
+  /// El prefijo +56 9 va fijo en el campo: se escriben los 8 dígitos restantes.
+  static const _prefijoTelefono = '+569';
 
   String? _validarTelefono(String? valor) {
     if (valor == null || valor.trim().isEmpty) {
       return 'Ingresa tu teléfono móvil';
     }
-    final regexTelefono = RegExp(r'^\+?\d{8,15}$');
-    if (!regexTelefono.hasMatch(valor.trim())) {
-      return 'Ingresa un teléfono válido';
+    final digitos = valor.replaceAll(' ', '');
+    if (!RegExp(r'^\d{8}$').hasMatch(digitos)) {
+      return 'Ingresa los 8 dígitos de tu móvil';
     }
     return null;
   }
@@ -92,9 +102,9 @@ class _RegistroVistaState extends State<RegistroVista> {
       await _authServicio.registrar(
         nombres: _nombresController.text.trim(),
         apellidos: _apellidosController.text.trim(),
-        rut: _rutController.text.trim(),
+        rut: _rutSinPuntos(_rutController.text),
         email: email,
-        telefono: _telefonoController.text.trim(),
+        telefono: '$_prefijoTelefono${_telefonoController.text.replaceAll(' ', '')}',
         password: _passwordController.text,
       );
 
@@ -135,278 +145,164 @@ class _RegistroVistaState extends State<RegistroVista> {
 
   @override
   Widget build(BuildContext context) {
-    const colorAzul = Color(0xFF0056D2);
-    const colorBordeCampo = Color(0xFFE2E8F0);
-    const colorTextoGris = Color(0xFF6B7280);
-
-    return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 16.0),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 420),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 28.0, vertical: 32.0),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(24.0),
-                  border: Border.all(color: const Color(0xFFDCE4F2), width: 1.5),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.04),
-                      blurRadius: 16,
-                      offset: const Offset(0, 4),
-                    ),
+    return FondoAcceso(
+      tamanoSuricata: 120,
+      tarjeta: Form(
+        key: _formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            MarcaRB(tamano: context.escala(40)),
+            const SizedBox(height: 8),
+            const Text(
+              'Crea tu cuenta',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 26,
+                fontWeight: FontWeight.w800,
+                color: RBColores.tinta,
+              ),
+            ),
+            const SizedBox(height: 18),
+            // Lado a lado si hay espacio; en celulares angostos, uno bajo el otro.
+            LayoutBuilder(
+              builder: (context, limites) {
+                final nombres = CampoRotulado(
+                  rotulo: 'Nombres',
+                  campo: _campo(
+                    controller: _nombresController,
+                    hintText: 'Nombres',
+                    icon: Icons.person_outline_rounded,
+                    keyboardType: TextInputType.name,
+                    validator: (valor) => _validarRequerido(valor, 'nombres'),
+                  ),
+                );
+                final apellidos = CampoRotulado(
+                  rotulo: 'Apellidos',
+                  campo: _campo(
+                    controller: _apellidosController,
+                    hintText: 'Apellidos',
+                    icon: Icons.person_outline_rounded,
+                    keyboardType: TextInputType.name,
+                    validator: (valor) => _validarRequerido(valor, 'apellidos'),
+                  ),
+                );
+                if (limites.maxWidth < 320) {
+                  return Column(children: [nombres, const SizedBox(height: 14), apellidos]);
+                }
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: nombres),
+                    const SizedBox(width: 12),
+                    Expanded(child: apellidos),
                   ],
-                ),
-                child: Form(
-                  key: _formKey,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      // Encabezado con flecha atrás y título de la app
-                      Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: IconButton(
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(),
-                              icon: const Icon(
-                                Icons.arrow_back,
-                                color: Color(0xFF4B5563),
-                                size: 22,
-                              ),
-                              onPressed: () => Navigator.maybePop(context),
-                            ),
-                          ),
-                          const Center(
-                            child: Text(
-                              'RB Alertas',
-                              style: TextStyle(
-                                fontSize: 19,
-                                fontWeight: FontWeight.w800,
-                                color: colorAzul,
-                                letterSpacing: -0.3,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 28),
-
-                      // Logo consistente con las otras pantallas
-                      const AppLogo(size: 88),
-                      const SizedBox(height: 22),
-
-                      // Título Crear Cuenta
-                      const Text(
-                        'Crear Cuenta',
-                        style: TextStyle(
-                          fontSize: 26,
-                          fontWeight: FontWeight.w800,
-                          color: Color(0xFF111827),
-                          letterSpacing: -0.5,
-                        ),
-                      ),
-                      const SizedBox(height: 26),
-
-                      // Campo: Nombres
-                      _buildTextField(
-                        controller: _nombresController,
-                        hintText: 'Nombres',
-                        icon: Icons.person_outline_rounded,
-                        keyboardType: TextInputType.name,
-                        bordeColor: colorBordeCampo,
-                        azulColor: colorAzul,
-                        validator: (valor) => _validarRequerido(valor, 'nombres'),
-                      ),
-                      const SizedBox(height: 14),
-
-                      // Campo: Apellidos
-                      _buildTextField(
-                        controller: _apellidosController,
-                        hintText: 'Apellidos',
-                        icon: Icons.person_outline_rounded,
-                        keyboardType: TextInputType.name,
-                        bordeColor: colorBordeCampo,
-                        azulColor: colorAzul,
-                        validator: (valor) => _validarRequerido(valor, 'apellidos'),
-                      ),
-                      const SizedBox(height: 14),
-
-                      // Campo: RUT
-                      _buildTextField(
-                        controller: _rutController,
-                        hintText: 'RUT (ej: 12345678-9)',
-                        icon: Icons.badge_outlined,
-                        keyboardType: TextInputType.text,
-                        bordeColor: colorBordeCampo,
-                        azulColor: colorAzul,
-                        validator: _validarRut,
-                      ),
-                      const SizedBox(height: 14),
-
-                      // Campo: Correo electrónico
-                      _buildTextField(
-                        controller: _emailController,
-                        hintText: 'Correo electrónico',
-                        icon: Icons.mail_outline_rounded,
-                        keyboardType: TextInputType.emailAddress,
-                        bordeColor: colorBordeCampo,
-                        azulColor: colorAzul,
-                        validator: _validarEmail,
-                      ),
-                      const SizedBox(height: 14),
-
-                      // Campo: Teléfono móvil
-                      _buildTextField(
-                        controller: _telefonoController,
-                        hintText: 'Teléfono móvil',
-                        icon: Icons.phone_android_rounded,
-                        keyboardType: TextInputType.phone,
-                        bordeColor: colorBordeCampo,
-                        azulColor: colorAzul,
-                        validator: _validarTelefono,
-                      ),
-                      const SizedBox(height: 14),
-
-                      // Campo: Contraseña
-                      TextFormField(
-                        controller: _passwordController,
-                        obscureText: _obscurePassword,
-                        validator: _validarPassword,
-                        decoration: InputDecoration(
-                          hintText: 'Contraseña',
-                          hintStyle: const TextStyle(
-                            color: Color(0xFF9CA3AF),
-                            fontSize: 14,
-                          ),
-                          prefixIcon: const Icon(
-                            Icons.lock_outline_rounded,
-                            color: Color(0xFF6B7280),
-                            size: 20,
-                          ),
-                          suffixIcon: IconButton(
-                            icon: Icon(
-                              _obscurePassword
-                                  ? Icons.visibility_off_outlined
-                                  : Icons.visibility_outlined,
-                              color: const Color(0xFF9CA3AF),
-                              size: 20,
-                            ),
-                            onPressed: () {
-                              setState(() {
-                                _obscurePassword = !_obscurePassword;
-                              });
-                            },
-                          ),
-                          filled: true,
-                          fillColor: Colors.white,
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 14,
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: const BorderSide(
-                              color: colorBordeCampo,
-                              width: 1.2,
-                            ),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            borderSide: const BorderSide(
-                              color: colorAzul,
-                              width: 1.8,
-                            ),
+                );
+              },
+            ),
+            const SizedBox(height: 14),
+            CampoRotulado(
+              rotulo: 'RUT',
+              campo: _campo(
+                controller: _rutController,
+                hintText: '12.345.678-9',
+                icon: Icons.badge_outlined,
+                keyboardType: TextInputType.text,
+                validator: _validarRut,
+              ),
+            ),
+            const SizedBox(height: 14),
+            CampoRotulado(
+              rotulo: 'Correo electrónico',
+              campo: _campo(
+                controller: _emailController,
+                hintText: 'tu@correo.com',
+                icon: Icons.mail_outline_rounded,
+                keyboardType: TextInputType.emailAddress,
+                validator: _validarEmail,
+              ),
+            ),
+            const SizedBox(height: 14),
+            CampoRotulado(
+              rotulo: 'Teléfono móvil',
+              campo: TextFormField(
+                controller: _telefonoController,
+                keyboardType: TextInputType.phone,
+                validator: _validarTelefono,
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[0-9 ]')),
+                  LengthLimitingTextInputFormatter(9),
+                ],
+                decoration: const InputDecoration(
+                  hintText: '1234 5678',
+                  prefixIcon: Padding(
+                    padding: EdgeInsets.only(left: 14, right: 10),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.phone_android_rounded, color: RBColores.texto2),
+                        SizedBox(width: 10),
+                        Text(
+                          '+56 9',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                            color: RBColores.tinta,
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 24),
-
-                      // Botón Registrarse
-                      SizedBox(
-                        width: double.infinity,
-                        height: 48,
-                        child: ElevatedButton(
-                          onPressed: _cargando ? null : _registrar,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: colorAzul,
-                            foregroundColor: Colors.white,
-                            elevation: 0,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                          child: _cargando
-                              ? const SizedBox(
-                                  width: 22,
-                                  height: 22,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2.5,
-                                    color: Colors.white,
-                                  ),
-                                )
-                              : const Text(
-                                  'Registrarse',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                        ),
-                      ),
-                      const SizedBox(height: 24),
-
-                      // Footer: ¿Ya tienes una cuenta? Inicia sesión
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Text(
-                            '¿Ya tienes una cuenta? ',
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: colorTextoGris,
-                            ),
-                          ),
-                          InkWell(
-                            onTap: () {
-                              Navigator.maybePop(context);
-                            },
-                            child: const Text(
-                              'Inicia sesión',
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: colorAzul,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
+            const SizedBox(height: 14),
+            CampoRotulado(
+              rotulo: 'Contraseña',
+              campo: TextFormField(
+                controller: _passwordController,
+                obscureText: _obscurePassword,
+                validator: _validarPassword,
+                decoration: InputDecoration(
+                  hintText: 'Mínimo 8 caracteres',
+                  prefixIcon: const Icon(Icons.lock_outline_rounded),
+                  suffixIcon: IconButton(
+                    tooltip: _obscurePassword ? 'Mostrar contraseña' : 'Ocultar contraseña',
+                    icon: Icon(
+                      _obscurePassword
+                          ? Icons.visibility_outlined
+                          : Icons.visibility_off_outlined,
+                    ),
+                    onPressed: () {
+                      setState(() => _obscurePassword = !_obscurePassword);
+                    },
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 22),
+            BotonPrincipal(
+              texto: 'Crear cuenta',
+              onPressed: _registrar,
+              cargando: _cargando,
+            ),
+          ],
         ),
+      ),
+      pie: EnlaceAcceso(
+        texto: '¿Ya tienes cuenta?',
+        enlace: 'Inicia sesión',
+        onTap: () => Navigator.maybePop(context),
       ),
     );
   }
 
-  Widget _buildTextField({
+  Widget _campo({
     required TextEditingController controller,
     required String hintText,
     required IconData icon,
     required TextInputType keyboardType,
-    required Color bordeColor,
-    required Color azulColor,
     String? Function(String?)? validator,
   }) {
     return TextFormField(
@@ -415,35 +311,7 @@ class _RegistroVistaState extends State<RegistroVista> {
       validator: validator,
       decoration: InputDecoration(
         hintText: hintText,
-        hintStyle: const TextStyle(
-          color: Color(0xFF9CA3AF),
-          fontSize: 14,
-        ),
-        prefixIcon: Icon(
-          icon,
-          color: const Color(0xFF6B7280),
-          size: 20,
-        ),
-        filled: true,
-        fillColor: Colors.white,
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: 14,
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(
-            color: bordeColor,
-            width: 1.2,
-          ),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: BorderSide(
-            color: azulColor,
-            width: 1.8,
-          ),
-        ),
+        prefixIcon: Icon(icon),
       ),
     );
   }

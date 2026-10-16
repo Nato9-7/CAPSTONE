@@ -14,7 +14,7 @@ enum TipoZona {
   casa('CASA', 'Casa', Icons.home_outlined),
   trabajo('TRABAJO', 'Trabajo', Icons.work_outline),
   estudio('ESTUDIO', 'Estudio', Icons.school_outlined),
-  otro('OTRO', 'Otro lugar', Icons.place_outlined);
+  otro('OTRO', 'Otro lugar', Icons.favorite_border_rounded);
 
   const TipoZona(this.codigo, this.etiqueta, this.icono);
 

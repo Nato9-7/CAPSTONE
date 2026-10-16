@@ -1,15 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:rb_alertas/servicios/estado_alertas_servicio.dart';
+import 'package:rb_alertas/tema/rb_tema.dart';
 import 'package:rb_alertas/vistas/alertas_vista.dart';
+import 'package:rb_alertas/vistas/grupos_vista.dart';
 import 'package:rb_alertas/vistas/mapa_vista.dart';
 import 'package:rb_alertas/vistas/perfil_vista.dart';
-import 'package:rb_alertas/vistas/reportar_incidente_vista.dart';
 
-enum SeccionApp { mapa, reportar, alertas, perfil }
+/// Secciones de la barra inferior. Reportar ya no es una pestaña: se abre con
+/// el botón verde del mapa.
+enum SeccionApp { mapa, grupos, alertas, perfil }
 
 class BarraNavegacionInferior extends StatelessWidget {
   final SeccionApp seccionActiva;
-  // En false los botones no responden (por ejemplo, mientras se envía un reporte).
+  // En false los botones no responden (por ejemplo, mientras se envía algo).
   final bool habilitada;
 
   const BarraNavegacionInferior({
@@ -18,44 +21,42 @@ class BarraNavegacionInferior extends StatelessWidget {
     this.habilitada = true,
   });
 
-  static const _colorAzul = Color(0xFF0056D2);
-  static const _colorInactivo = Color(0xFF6B7280);
-
   void _irA(BuildContext context, SeccionApp seccion) {
     if (!habilitada || seccion == seccionActiva) return;
 
     final Widget destino = switch (seccion) {
       SeccionApp.mapa => const MapaVista(),
-      SeccionApp.reportar => const ReportarIncidenteVista(),
-      SeccionApp.perfil => const PerfilVista(),
+      SeccionApp.grupos => const GruposVista(),
       SeccionApp.alertas => const AlertasVista(),
+      SeccionApp.perfil => const PerfilVista(),
     };
 
-    Navigator.pushReplacement(
+    // Se limpia la pila: la barra también aparece en pantallas apiladas
+    // (por ejemplo Zonas seguras sobre Perfil) y no deben quedar debajo.
+    Navigator.pushAndRemoveUntil(
       context,
       PageRouteBuilder(
         pageBuilder: (context, animacion, animacionSecundaria) => destino,
         transitionDuration: Duration.zero,
         reverseTransitionDuration: Duration.zero,
       ),
+      (ruta) => false,
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final vertical = context.pantallaBaja ? 6.0 : 10.0;
     return Container(
       padding: EdgeInsets.only(
-        top: 8,
-        bottom: 8 + MediaQuery.of(context).padding.bottom,
+        top: vertical,
+        bottom: vertical + MediaQuery.of(context).padding.bottom,
       ),
       decoration: const BoxDecoration(
         color: Colors.white,
-        boxShadow: [
-          BoxShadow(color: Color(0x14000000), blurRadius: 8, offset: Offset(0, -2)),
-        ],
+        border: Border(top: BorderSide(color: RBColores.linea)),
       ),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
           _item(
             context,
@@ -66,10 +67,10 @@ class BarraNavegacionInferior extends StatelessWidget {
           ),
           _item(
             context,
-            seccion: SeccionApp.reportar,
-            icono: Icons.add_circle_outline_rounded,
-            iconoActivo: Icons.add_circle_rounded,
-            etiqueta: 'Reportar',
+            seccion: SeccionApp.grupos,
+            icono: Icons.people_outline_rounded,
+            iconoActivo: Icons.people_rounded,
+            etiqueta: 'Grupos',
           ),
           _item(
             context,
@@ -100,83 +101,93 @@ class BarraNavegacionInferior extends StatelessWidget {
     bool conInsignia = false,
   }) {
     final activo = seccion == seccionActiva;
+    final color = activo ? RBColores.azul : RBColores.texto2;
 
-    // "Reportar" activo va como botón azul relleno, igual que en el diseño.
-    if (activo && seccion == SeccionApp.reportar) {
-      return InkWell(
+    return Expanded(
+      child: InkWell(
         onTap: () => _irA(context, seccion),
-        borderRadius: BorderRadius.circular(28),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-          decoration: BoxDecoration(
-            color: _colorAzul,
-            borderRadius: BorderRadius.circular(28),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(iconoActivo, color: Colors.white, size: 24),
-              const SizedBox(height: 2),
-              Text(
-                etiqueta,
-                style: const TextStyle(
-                  fontSize: 11,
-                  color: Colors.white,
-                  fontWeight: FontWeight.w600,
-                ),
+        borderRadius: BorderRadius.circular(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              width: context.pantallaAngosta ? 60 : 72,
+              height: context.pantallaBaja ? 32 : 36,
+              decoration: BoxDecoration(
+                color: activo ? RBColores.azul50 : Colors.transparent,
+                borderRadius: BorderRadius.circular(18),
               ),
-            ],
-          ),
+              child: Stack(
+                clipBehavior: Clip.none,
+                alignment: Alignment.center,
+                children: [
+                  Icon(activo ? iconoActivo : icono, color: color, size: 26),
+                  if (conInsignia)
+                    const Positioned(left: 38, top: -4, child: _InsigniaAlertas()),
+                ],
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              etiqueta,
+              style: TextStyle(
+                fontSize: 13,
+                color: color,
+                fontWeight: activo ? FontWeight.w700 : FontWeight.w500,
+              ),
+            ),
+          ],
         ),
-      );
-    }
-
-    final color = activo ? _colorAzul : _colorInactivo;
-    return InkWell(
-      onTap: () => _irA(context, seccion),
-      borderRadius: BorderRadius.circular(16),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-            decoration: BoxDecoration(
-              color: activo ? _colorAzul.withValues(alpha: 0.12) : Colors.transparent,
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                Icon(activo ? iconoActivo : icono, color: color, size: 24),
-                if (conInsignia)
-                  Positioned(
-                    right: -2,
-                    top: -2,
-                    child: ValueListenableBuilder<bool>(
-                      valueListenable: EstadoAlertas.hayNuevas,
-                      builder: (context, hayNuevas, _) {
-                        if (!hayNuevas) return const SizedBox.shrink();
-                        return Container(
-                          width: 8,
-                          height: 8,
-                          decoration: const BoxDecoration(
-                            color: Color(0xFFE53935),
-                            shape: BoxShape.circle,
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            etiqueta,
-            style: TextStyle(fontSize: 11, color: color, fontWeight: FontWeight.w600),
-          ),
-        ],
       ),
+    );
+  }
+}
+
+/// Contador rojo de alertas de zona sin leer. Si solo hay incidentes nuevos
+/// cerca (sin número que mostrar), se ve como un punto.
+class _InsigniaAlertas extends StatelessWidget {
+  const _InsigniaAlertas();
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: Listenable.merge([EstadoAlertas.hayNuevas, EstadoAlertas.cantidad]),
+      builder: (context, _) {
+        final cantidad = EstadoAlertas.cantidad.value;
+        if (cantidad <= 0) {
+          if (!EstadoAlertas.hayNuevas.value) return const SizedBox.shrink();
+          return Container(
+            width: 11,
+            height: 11,
+            decoration: BoxDecoration(
+              color: RBColores.rojo,
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 2),
+            ),
+          );
+        }
+        return Container(
+          constraints: const BoxConstraints(minWidth: 22),
+          height: 22,
+          padding: const EdgeInsets.symmetric(horizontal: 5),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: RBColores.rojo,
+            borderRadius: BorderRadius.circular(11),
+            border: Border.all(color: Colors.white, width: 2),
+          ),
+          child: Text(
+            cantidad > 99 ? '99+' : '$cantidad',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              height: 1,
+            ),
+          ),
+        );
+      },
     );
   }
 }
