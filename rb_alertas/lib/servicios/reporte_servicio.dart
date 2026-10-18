@@ -291,6 +291,8 @@ class DetalleReporte {
   final int confirmaciones;
   final int desmentidos;
   final TipoVoto? miVoto;
+  // Comentarios publicados (el número del botón de la tarjeta del mapa).
+  final int totalComentarios;
 
   DetalleReporte({
     required this.id,
@@ -310,6 +312,7 @@ class DetalleReporte {
     required this.confirmaciones,
     required this.desmentidos,
     required this.miVoto,
+    required this.totalComentarios,
   });
 
   bool get activo => estado == 'PENDIENTE' || estado == 'VALIDADO';
@@ -336,6 +339,7 @@ class DetalleReporte {
       confirmaciones: (json['total_confirmaciones'] as num?)?.toInt() ?? 0,
       desmentidos: (json['total_desmentidos'] as num?)?.toInt() ?? 0,
       miVoto: TipoVoto.desdeApi(json['mi_voto']),
+      totalComentarios: (json['total_comentarios'] as num?)?.toInt() ?? 0,
     );
   }
 }

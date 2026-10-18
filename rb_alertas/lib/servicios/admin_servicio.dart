@@ -109,6 +109,42 @@ class ReporteAdmin {
   }
 }
 
+/// Comentario de un reporte tal como lo ve el panel: en cualquier estado.
+class ComentarioAdmin {
+  final int id;
+  final int? idPadre;
+  final String? autor;
+  final String contenido;
+  final String? imagen;
+  // PUBLICADO, OCULTO o ELIMINADO.
+  final String estado;
+  final DateTime? fechaCreacion;
+
+  ComentarioAdmin({
+    required this.id,
+    required this.idPadre,
+    required this.autor,
+    required this.contenido,
+    required this.imagen,
+    required this.estado,
+    required this.fechaCreacion,
+  });
+
+  factory ComentarioAdmin.desdeJson(Map<String, dynamic> json) {
+    return ComentarioAdmin(
+      id: (json['id_comentario'] as num).toInt(),
+      idPadre: (json['id_comentario_padre'] as num?)?.toInt(),
+      autor: json['autor']?.toString(),
+      contenido: (json['contenido'] ?? '').toString(),
+      imagen: json['imagen']?.toString(),
+      estado: (json['estado'] ?? '').toString(),
+      fechaCreacion: DateTime.tryParse(
+        json['fecha_creacion']?.toString() ?? '',
+      ),
+    );
+  }
+}
+
 class UsuarioAdmin {
   final int id;
   final String nombres;
@@ -303,6 +339,25 @@ class AdminServicio {
       for (final r in cuerpo as List)
         ReporteAdmin.desdeJson(r as Map<String, dynamic>),
     ];
+  }
+
+  Future<List<ComentarioAdmin>> comentarios(String token, int idReporte) async {
+    final cuerpo = await _get(token, '/api/admin/reportes/$idReporte/comentarios');
+    return [
+      for (final c in cuerpo as List)
+        ComentarioAdmin.desdeJson(c as Map<String, dynamic>),
+    ];
+  }
+
+  /// [estado] es OCULTO para esconderlo de la app o PUBLICADO para restaurarlo.
+  Future<void> cambiarEstadoComentario(
+    String token,
+    int idComentario,
+    String estado,
+  ) async {
+    await _enviar('PATCH', token, '/api/admin/comentarios/$idComentario/estado', {
+      'estado': estado,
+    });
   }
 
   Future<List<UsuarioAdmin>> usuarios(

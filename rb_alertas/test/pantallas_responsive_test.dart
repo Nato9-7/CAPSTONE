@@ -82,6 +82,9 @@ final _casos = <_Caso>[
   }),
   _Caso('07_reportar', () => const ReportarIncidenteVista(), conSesion: true),
   _Caso('08_detalle', () => const DetalleIncidenteVista(idReporte: 1), conSesion: true),
+  // Baja hasta los comentarios y abre "Responder" para ver la barra con la respuesta.
+  _Caso('08b_detalle_comentarios', () => const DetalleIncidenteVista(idReporte: 1), conSesion: true,
+      preparar: (t) async => _tocar(t, find.text('Responder'))),
   _Caso('09_cerca', () => const AlertasVista(), conSesion: true),
   _Caso('10_mis_zonas', () => const AlertasVista(pestanaInicial: 1), conSesion: true),
   _Caso('11_mis_reportes', () => const AlertasVista(pestanaInicial: 2), conSesion: true),

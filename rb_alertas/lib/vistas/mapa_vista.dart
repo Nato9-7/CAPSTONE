@@ -192,11 +192,14 @@ class _MapaVistaState extends State<MapaVista> {
     }
   }
 
-  Future<void> _abrirDetalle(int idReporte) async {
+  Future<void> _abrirDetalle(int idReporte, {bool irAComentarios = false}) async {
     final cambio = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
-        builder: (context) => DetalleIncidenteVista(idReporte: idReporte),
+        builder: (context) => DetalleIncidenteVista(
+          idReporte: idReporte,
+          irAComentarios: irAComentarios,
+        ),
       ),
     );
     if (!mounted) return;
@@ -409,6 +412,7 @@ class _MapaVistaState extends State<MapaVista> {
                 votando: _votando,
                 onCerrar: () => setState(_cerrarVistaPrevia),
                 onAbrir: () => _abrirDetalle(seleccionado.id),
+                onComentarios: () => _abrirDetalle(seleccionado.id, irAComentarios: true),
                 onVotar: _votar,
               ),
             ),
@@ -815,6 +819,7 @@ class _TarjetaVistaPrevia extends StatelessWidget {
   final bool votando;
   final VoidCallback onCerrar;
   final VoidCallback onAbrir;
+  final VoidCallback onComentarios;
   final void Function(DetalleReporte, TipoVoto) onVotar;
 
   const _TarjetaVistaPrevia({
@@ -823,6 +828,7 @@ class _TarjetaVistaPrevia extends StatelessWidget {
     required this.votando,
     required this.onCerrar,
     required this.onAbrir,
+    required this.onComentarios,
     required this.onVotar,
   });
 
@@ -994,35 +1000,38 @@ class _TarjetaVistaPrevia extends StatelessWidget {
                       ),
                     ],
                     const Spacer(),
+                    // Comentarios del reporte: abre el detalle ya en la conversación.
+                    // El resto de la tarjeta abre el detalle desde arriba.
                     Material(
                       color: RBColores.azul,
                       borderRadius: BorderRadius.circular(24),
                       child: InkWell(
-                        onTap: onAbrir,
+                        onTap: onComentarios,
                         borderRadius: BorderRadius.circular(24),
-                        // En pantallas angostas queda solo la flecha.
                         child: Padding(
-                          padding: EdgeInsets.symmetric(horizontal: angosta ? 13 : 18, vertical: 13),
+                          padding: EdgeInsets.symmetric(horizontal: angosta ? 14 : 20, vertical: 13),
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              if (!angosta) ...[
-                                const Text(
-                                  'Ver detalle',
-                                  style: TextStyle(
+                              Icon(
+                                Icons.chat_bubble_outline_rounded,
+                                color: Colors.white,
+                                size: 20,
+                                semanticLabel: d == null
+                                    ? 'Ver comentarios'
+                                    : '${d.totalComentarios} comentarios',
+                              ),
+                              if (d != null) ...[
+                                const SizedBox(width: 8),
+                                Text(
+                                  '${d.totalComentarios}',
+                                  style: const TextStyle(
                                     color: Colors.white,
-                                    fontSize: 15.5,
+                                    fontSize: 16,
                                     fontWeight: FontWeight.w700,
                                   ),
                                 ),
-                                const SizedBox(width: 6),
                               ],
-                              Icon(
-                                Icons.arrow_forward_rounded,
-                                color: Colors.white,
-                                size: angosta ? 22 : 19,
-                                semanticLabel: 'Ver detalle',
-                              ),
                             ],
                           ),
                         ),

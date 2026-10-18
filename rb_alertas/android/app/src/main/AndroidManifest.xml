@@ -11,6 +11,9 @@
     <!-- Evidencia fotografica de los reportes (image_picker) -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+
+    <!-- Avisos push de alertas en zonas seguras (Android 13 o superior lo pide en tiempo de ejecucion) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <application
         android:label="RB Alertas"
         android:name="${applicationName}"
@@ -38,6 +41,10 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- Canal de los avisos push; la app lo crea al arrancar (PushServicio) -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="alertas_zona" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

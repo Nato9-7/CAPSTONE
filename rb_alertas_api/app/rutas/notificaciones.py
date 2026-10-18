@@ -53,6 +53,9 @@ def listar_notificaciones(
     solo_no_leidas: bool = Query(False),
 ):
     """Alertas recibidas por el usuario, de la mas reciente a la mas antigua.
+
+    Los avisos de comentarios (COMENTARIO, RESPUESTA) no van aqui: se marcan
+    leidos al abrir los comentarios del reporte.
     """
     condicion_leidas = "AND n.fecha_lectura IS NULL" if solo_no_leidas else ""
     filas = consultar(
@@ -79,6 +82,7 @@ def listar_notificaciones(
         LEFT JOIN comuna cm ON cm.id_comuna = r.id_comuna
         LEFT JOIN localidad l ON l.id_localidad = r.id_localidad
         WHERE n.id_usuario = %s
+          AND n.motivo NOT IN ('COMENTARIO', 'RESPUESTA')
           AND r.estado <> 'DESCARTADO'
           {condicion_leidas}
         ORDER BY n.fecha_envio DESC
@@ -93,6 +97,7 @@ def listar_notificaciones(
         FROM notificacion n
         JOIN reporte r ON r.id_reporte = n.id_reporte
         WHERE n.id_usuario = %s AND n.fecha_lectura IS NULL AND r.estado <> 'DESCARTADO'
+          AND n.motivo NOT IN ('COMENTARIO', 'RESPUESTA')
         """,
         (usuario["id_usuario"],),
     )
@@ -130,7 +135,11 @@ def marcar_leida(
 def marcar_todas_leidas(usuario: dict = Depends(usuario_actual)):
     """Para el gesto de "marcar todo como leido" al abrir la pestana Alertas."""
     ejecutar(
-        "UPDATE notificacion SET fecha_lectura = NOW() WHERE id_usuario = %s AND fecha_lectura IS NULL",
+        """
+        UPDATE notificacion SET fecha_lectura = NOW()
+        WHERE id_usuario = %s AND fecha_lectura IS NULL
+          AND motivo NOT IN ('COMENTARIO', 'RESPUESTA')
+        """,
         (usuario["id_usuario"],),
     )
     return None

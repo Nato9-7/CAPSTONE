@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1009611291205",
+    "project_id": "rb-alertas",
+    "storage_bucket": "rb-alertas.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1009611291205:android:18ec78897942f65b8d012c",
+        "android_client_info": {
+          "package_name": "cl.rbalertas.rb_alertas"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAhl3_PKmjmCrj1H7Mqxvzr55d1IqswwEg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
