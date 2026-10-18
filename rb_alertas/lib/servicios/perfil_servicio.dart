@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 import 'package:rb_alertas/config/api_config.dart';
+import 'package:rb_alertas/servicios/push_servicio.dart';
 import 'package:rb_alertas/servicios/reporte_servicio.dart' show EntidadEmergencia;
 
 class PerfilServicioException implements Exception {
@@ -79,6 +80,8 @@ class PerfilServicio {
 
   /// Cierra la sesión en el servidor (revoca el token). No falla si ya venció.
   Future<void> cerrarSesion(String token) async {
+    // Primero el teléfono deja de recibir avisos: después el token ya no sirve.
+    await PushServicio.darDeBaja(token);
     try {
       await http.post(
         Uri.parse('$baseUrl/api/usuarios/logout'),

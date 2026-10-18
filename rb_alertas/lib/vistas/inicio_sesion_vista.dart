@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:rb_alertas/servicios/auth_servicio.dart';
+import 'package:rb_alertas/servicios/push_servicio.dart';
 import 'package:rb_alertas/servicios/sesion.dart';
 import 'package:rb_alertas/vistas/admin_vista.dart';
 import 'package:rb_alertas/vistas/mapa_vista.dart';
@@ -42,6 +43,7 @@ class _InicioSesionVistaState extends State<InicioSesionVista> {
         password: _passwordController.text,
       );
       await Sesion.iniciar(resultado);
+      PushServicio.registrar();
 
       if (!mounted) return;
       if (Sesion.esAdmin) {

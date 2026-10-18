@@ -6,10 +6,11 @@ from uuid import uuid4
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Path as PathParam, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Path as PathParam, Query, UploadFile
 from pydantic import BaseModel
 import mysql.connector
 
+from app import push
 from app.db import consultar, ejecutar, transaccion
 from app.seguridad import usuario_actual, usuario_opcional
 
@@ -258,6 +259,7 @@ def listar_mis_reportes(
 
 @router.post("/", status_code=201)
 def crear_reporte(
+    tareas: BackgroundTasks,
     usuario: dict = Depends(usuario_actual),
     id_categoria: int = Form(ge=1),
     descripcion: str = Form(min_length=1, max_length=500),
@@ -351,6 +353,9 @@ def crear_reporte(
 
     # El aviso a las zonas seguras va aqui, con el reporte ya confirmado en la BD.
     avisos = _notificar_zonas_seguras(id_reporte, punto_wkt, usuario["id_usuario"])
+    # El push sale después de responder, igual que los correos: no demora el reporte.
+    if avisos:
+        tareas.add_task(push.enviar_alertas_de_reporte, id_reporte)
 
     return {
         "id_reporte": id_reporte,
