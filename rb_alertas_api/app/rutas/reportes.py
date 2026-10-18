@@ -477,6 +477,11 @@ def detalle_reporte(
         "SELECT url_archivo FROM reporte_imagen WHERE id_reporte = %s ORDER BY orden",
         (id_reporte,),
     )
+    # Mismo total que muestra la conversación: los comentarios publicados.
+    comentarios = consultar(
+        "SELECT COUNT(*) AS total FROM comentario WHERE id_reporte = %s AND estado = 'PUBLICADO'",
+        (id_reporte,),
+    )
 
     # Voto propio, para que la app muestre cuál de los dos botones está marcado.
     mi_voto = None
@@ -506,6 +511,7 @@ def detalle_reporte(
         "total_desmentidos": r["total_desmentidos"],
         "mi_voto": mi_voto,
         "imagenes": [fila["url_archivo"] for fila in imagenes],
+        "total_comentarios": int(comentarios[0]["total"]) if comentarios else 0,
         "emergencia": _entidad_emergencia(r["id_entidad"], r["id_comuna"]),
     }
 

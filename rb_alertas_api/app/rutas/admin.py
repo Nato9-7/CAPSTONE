@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 from app import grafo
 from app.db import consultar, transaccion
+from app.rutas.comentarios import comentarios_de_reporte, mapa_alias
 from app.rutas.reportes import alias_autor
 from app.seguridad import CORREOS_ADMIN, revocar_sesiones_usuario, usuario_admin
 
@@ -22,6 +23,10 @@ class CambioEstadoReporte(BaseModel):
 
 class CambioEstadoUsuario(BaseModel):
     estado: Literal["ACTIVO", "SUSPENDIDO"]
+
+
+class CambioEstadoComentario(BaseModel):
+    estado: Literal["PUBLICADO", "OCULTO"]
 
 
 def _conteo_por_estado(tabla: str, estados: tuple) -> dict:
@@ -168,6 +173,44 @@ def suspender_autor(id_reporte: int = PathParam(ge=1)):
             raise HTTPException(status_code=409, detail="Quien creó este reporte ya está suspendido")
         _suspender(cursor, usuario["id_usuario"])
     return {"id_reporte": id_reporte, "autor": alias_autor(id_reporte), "estado_autor": "SUSPENDIDO"}
+
+
+@router.get("/reportes/{id_reporte}/comentarios")
+def listar_comentarios_reporte(id_reporte: int = PathParam(ge=1)):
+    """Todos los comentarios del reporte (también ocultos y eliminados), con alias como en la app."""
+    reporte = consultar("SELECT id_usuario FROM reporte WHERE id_reporte = %s", (id_reporte,))
+    if not reporte:
+        raise HTTPException(status_code=404, detail="Reporte no encontrado")
+    filas = comentarios_de_reporte(id_reporte)
+    alias = mapa_alias(id_reporte, reporte[0]["id_usuario"], filas)
+    return [
+        {
+            "id_comentario": f["id_comentario"],
+            "id_comentario_padre": f["id_comentario_padre"],
+            "autor": alias.get(f["id_usuario"]),
+            "contenido": f["contenido"],
+            "imagen": f["imagen"],
+            "estado": f["estado"],
+            "fecha_creacion": f["fecha_creacion"],
+        }
+        for f in filas
+    ]
+
+
+@router.patch("/comentarios/{id_comentario}/estado")
+def cambiar_estado_comentario(datos: CambioEstadoComentario, id_comentario: int = PathParam(ge=1)):
+    """Oculta un comentario (deja de verse en la app) o lo vuelve a publicar."""
+    with transaccion() as cursor:
+        cursor.execute("SELECT estado FROM comentario WHERE id_comentario = %s FOR UPDATE", (id_comentario,))
+        fila = cursor.fetchone()
+        if fila is None:
+            raise HTTPException(status_code=404, detail="Comentario no encontrado")
+        if fila["estado"] == "ELIMINADO":
+            raise HTTPException(status_code=409, detail="Quien lo escribió eliminó este comentario")
+        if fila["estado"] == datos.estado:
+            raise HTTPException(status_code=409, detail=f"El comentario ya está {datos.estado.lower()}")
+        cursor.execute("UPDATE comentario SET estado = %s WHERE id_comentario = %s", (datos.estado, id_comentario))
+    return {"id_comentario": id_comentario, "estado": datos.estado}
 
 
 @router.get("/usuarios")

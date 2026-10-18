@@ -33,9 +33,14 @@ class _PantallaBienvenidaVistaState extends State<PantallaBienvenidaVista> {
     PushServicio.registrar();
     await espera;
     if (!mounted) return;
-    // Si se abrió tocando un aviso de zona segura, entra directo a Alertas.
-    final irAAlertas =
+    // Si se abrió tocando un aviso, entra directo a lo que avisa: un aviso de
+    // comentario abre su reporte sobre el mapa; uno de zona segura, Alertas.
+    final desdeAviso =
         abiertaDesdeAviso && Sesion.token != null && !Sesion.esAdmin;
+    final idReporte = desdeAviso
+        ? PushServicio.reporteDeAviso(PushServicio.avisoInicial)
+        : null;
+    final irAAlertas = desdeAviso && idReporte == null;
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
@@ -43,6 +48,7 @@ class _PantallaBienvenidaVistaState extends State<PantallaBienvenidaVista> {
             irAAlertas ? const AlertasVista() : const MapaVista(),
       ),
     );
+    if (idReporte != null) PushServicio.abrirReporte(idReporte);
   }
 
   Future<void> _recuperarSesion() async {

@@ -39,6 +39,7 @@ Object? _responder(String metodo, String ruta) {
   }
   if (ruta == '/api/reportes/mios') return _misReportes;
   if (RegExp(r'^/api/reportes/\d+$').hasMatch(ruta)) return _detalle;
+  if (RegExp(r'^/api/reportes/\d+/comentarios$').hasMatch(ruta)) return _comentarios;
   if (ruta == '/api/usuarios/perfil') return _perfil;
   if (ruta == '/api/usuarios/zonas/') return _zonas;
   if (ruta == '/api/usuarios/notificaciones/') return _notificaciones;
@@ -107,6 +108,54 @@ final _misReportes = [
   {..._reporte(6, 'SOSPECHOSO', 'Actividad sospechosa', 'Avenida Angelmó', 'DESCARTADO', const Duration(days: 15)), 'estado_visual': 'DESCARTADA', 'zona': null},
 ];
 
+Map<String, Object?> _comentario(
+  int id,
+  String autor,
+  String contenido,
+  Duration hace, {
+  int? padre,
+  String estado = 'PUBLICADO',
+  bool esMio = false,
+  bool esAutorReporte = false,
+  List<Object?> respuestas = const [],
+}) =>
+    {
+      'id_comentario': id,
+      'id_comentario_padre': padre,
+      'estado': estado,
+      'autor': estado == 'PUBLICADO' ? autor : null,
+      'es_autor_reporte': esAutorReporte,
+      'es_mio': esMio,
+      'contenido': estado == 'PUBLICADO' ? contenido : null,
+      'imagen': null,
+      'fecha_creacion': _hace(hace),
+      if (padre == null) 'respuestas': respuestas,
+    };
+
+final _comentarios = {
+  'total': 4,
+  'puede_comentar': true,
+  'comentarios': [
+    _comentario(
+      1,
+      'Suricata Alerta 07',
+      'Pasé por ahí recién: ya llegó Carabineros y están desviando el tránsito por Urmeneta '
+          'y por la costanera hacia el sector de Angelmó.',
+      const Duration(minutes: 8),
+      respuestas: [
+        _comentario(2, 'Suricata Centinela 42', 'Gracias por avisar, voy por otra ruta.',
+            const Duration(minutes: 6), padre: 1, esAutorReporte: true),
+      ],
+    ),
+    _comentario(3, '', '', const Duration(minutes: 5), estado: 'ELIMINADO', respuestas: [
+      _comentario(4, 'Suricata Exploradora Intrépida 58', 'Ojo con el taco hacia Angelmó, mejor tomar otra ruta.',
+          const Duration(minutes: 2), padre: 3, esMio: true),
+    ]),
+    _comentario(5, 'Suricata Atenta 34', 'Se ve una ambulancia en el lugar, al parecer no hay heridos graves.',
+        const Duration(minutes: 1)),
+  ],
+};
+
 final _detalle = {
   ..._reporte(1, 'ACCIDENTE', 'Accidente de tránsito', 'Avenida Diego Portales 1150, Puerto Montt',
       'VALIDADO', const Duration(minutes: 12)),
@@ -115,6 +164,7 @@ final _detalle = {
   'imagenes': <String>[],
   'emergencia': {'nombre': 'SAMU Puerto Montt', 'tipo': 'SAMU', 'telefono': '131'},
   'mi_voto': 'CONFIRMA',
+  'total_comentarios': 4,
 };
 
 const _perfil = {

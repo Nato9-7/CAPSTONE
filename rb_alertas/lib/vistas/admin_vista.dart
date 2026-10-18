@@ -559,6 +559,15 @@ class _PestanaReportesState extends State<_PestanaReportes>
     );
   }
 
+  Future<void> _verComentarios(ReporteAdmin reporte) {
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: RBColores.fondo,
+      builder: (_) => _HojaComentarios(reporte: reporte),
+    );
+  }
+
   Future<void> _ejecutar(Future<void> Function() accion, String exito) async {
     try {
       await accion();
@@ -707,9 +716,11 @@ class _PestanaReportesState extends State<_PestanaReportes>
               borderRadius: BorderRadius.circular(RBRadios.campo),
             ),
             icon: const Icon(Icons.more_vert, color: RBColores.texto2),
-            onSelected: (accion) => accion == 'SUSPENDER_AUTOR'
-                ? _suspenderAutor(r)
-                : _cambiarEstado(r, accion),
+            onSelected: (accion) => switch (accion) {
+              'SUSPENDER_AUTOR' => _suspenderAutor(r),
+              'COMENTARIOS' => _verComentarios(r),
+              _ => _cambiarEstado(r, accion),
+            },
             itemBuilder: (_) => [
               for (final estado in const [
                 'VALIDADO',
@@ -732,6 +743,16 @@ class _PestanaReportesState extends State<_PestanaReportes>
                   ),
               const PopupMenuDivider(),
               const PopupMenuItem(
+                value: 'COMENTARIOS',
+                child: Text(
+                  'Ver comentarios',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: RBColores.tinta,
+                  ),
+                ),
+              ),
+              const PopupMenuItem(
                 value: 'SUSPENDER_AUTOR',
                 child: Text(
                   'Suspender a quien reportó',
@@ -743,6 +764,204 @@ class _PestanaReportesState extends State<_PestanaReportes>
               ),
             ],
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Comentarios de un reporte para moderar: ocultar o volver a publicar.
+class _HojaComentarios extends StatefulWidget {
+  final ReporteAdmin reporte;
+
+  const _HojaComentarios({required this.reporte});
+
+  @override
+  State<_HojaComentarios> createState() => _HojaComentariosState();
+}
+
+class _HojaComentariosState extends State<_HojaComentarios> {
+  final _servicio = AdminServicio();
+  List<ComentarioAdmin>? _comentarios;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _cargar();
+  }
+
+  Future<void> _cargar() async {
+    setState(() => _error = null);
+    try {
+      final comentarios = await _servicio.comentarios(
+        Sesion.token ?? '',
+        widget.reporte.id,
+      );
+      if (mounted) setState(() => _comentarios = comentarios);
+    } on AdminServicioException catch (e) {
+      if (mounted) setState(() => _error = e.mensaje);
+    } catch (_) {
+      if (mounted) {
+        setState(() => _error = 'No se pudo conectar con el servidor');
+      }
+    }
+  }
+
+  Future<void> _cambiarEstado(ComentarioAdmin c, String estado) async {
+    try {
+      await _servicio.cambiarEstadoComentario(Sesion.token ?? '', c.id, estado);
+      if (!mounted) return;
+      _avisar(
+        context,
+        estado == 'OCULTO' ? 'Comentario oculto' : 'Comentario publicado de nuevo',
+      );
+      _cargar();
+    } on AdminServicioException catch (e) {
+      if (mounted) _avisar(context, e.mensaje);
+    } catch (_) {
+      if (mounted) _avisar(context, 'No se pudo conectar con el servidor');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final comentarios = _comentarios;
+    final Widget cuerpo;
+    if (comentarios == null) {
+      cuerpo = _error == null
+          ? const Center(child: CircularProgressIndicator(color: RBColores.azul))
+          : _mensajeCentro(_error!, reintentar: _cargar);
+    } else if (comentarios.isEmpty) {
+      cuerpo = _mensajeCentro('Este reporte no tiene comentarios.');
+    } else {
+      cuerpo = ListView.separated(
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
+        itemCount: comentarios.length,
+        separatorBuilder: (_, _) => const SizedBox(height: 10),
+        itemBuilder: (_, i) => _tarjeta(comentarios[i]),
+      );
+    }
+
+    return SizedBox(
+      height: MediaQuery.sizeOf(context).height * 0.8,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 18, 8, 10),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Comentarios del reporte #${widget.reporte.id}',
+                    style: const TextStyle(
+                      fontFamily: RBFuentes.titulos,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
+                      color: RBColores.azul,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Cerrar',
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close_rounded, color: RBColores.texto2),
+                ),
+              ],
+            ),
+          ),
+          Expanded(child: cuerpo),
+        ],
+      ),
+    );
+  }
+
+  Widget _tarjeta(ComentarioAdmin c) {
+    final (texto, fondo, color) = switch (c.estado) {
+      'PUBLICADO' => ('Publicado', RBColores.verde50, RBColores.verde),
+      'OCULTO' => ('Oculto', RBColores.rojo50, RBColores.rojo),
+      _ => ('Eliminado por su autor', RBColores.linea, RBColores.texto2),
+    };
+    return TarjetaRB(
+      padding: EdgeInsets.fromLTRB(c.idPadre == null ? 16 : 32, 12, 6, 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    if (c.idPadre != null)
+                      const Icon(Icons.subdirectory_arrow_right_rounded,
+                          size: 16, color: RBColores.texto2),
+                    Text(
+                      c.autor ?? 'Vecino',
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: RBColores.tinta,
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: fondo,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        texto,
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: color),
+                      ),
+                    ),
+                  ],
+                ),
+                if (c.contenido.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    c.contenido,
+                    style: const TextStyle(fontSize: 14, height: 1.35, color: RBColores.tinta),
+                  ),
+                ],
+                if (c.imagen != null) ...[
+                  const SizedBox(height: 8),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.network(
+                      ApiConfig.urlArchivo(c.imagen!),
+                      height: 110,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) => const Icon(
+                        Icons.broken_image_outlined,
+                        color: RBColores.texto2,
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 4),
+                Text(
+                  _fecha(c.fechaCreacion?.toLocal()),
+                  style: const TextStyle(fontSize: 12.5, color: RBColores.texto2),
+                ),
+              ],
+            ),
+          ),
+          if (c.estado == 'PUBLICADO')
+            IconButton(
+              tooltip: 'Ocultar comentario',
+              onPressed: () => _cambiarEstado(c, 'OCULTO'),
+              icon: const Icon(Icons.visibility_off_outlined, color: RBColores.rojo),
+            )
+          else if (c.estado == 'OCULTO')
+            IconButton(
+              tooltip: 'Publicar de nuevo',
+              onPressed: () => _cambiarEstado(c, 'PUBLICADO'),
+              icon: const Icon(Icons.visibility_outlined, color: RBColores.verde),
+            ),
         ],
       ),
     );

@@ -13,8 +13,10 @@ import 'package:rb_alertas/config/api_config.dart';
 import 'package:rb_alertas/servicios/estado_alertas_servicio.dart';
 import 'package:rb_alertas/servicios/sesion.dart';
 import 'package:rb_alertas/vistas/alertas_vista.dart';
+import 'package:rb_alertas/vistas/detalle_incidente_vista.dart';
 
-/// Avisos push (Firebase Cloud Messaging) de las alertas de zona segura.
+/// Avisos push (Firebase Cloud Messaging): alertas de zona segura y
+/// comentarios nuevos en los reportes propios o respuestas a un comentario.
 ///
 /// Por ahora solo en Android. Si falta android/app/google-services.json,
 /// Firebase no arranca y la app sigue igual, solo que sin avisos push:
@@ -31,12 +33,23 @@ class PushServicio {
     importance: Importance.high,
   );
 
+  /// Mismo id que CANAL_COMENTARIOS en la API (app/push.py).
+  static const _canalComentarios = AndroidNotificationChannel(
+    'comentarios',
+    'Comentarios',
+    description: 'Comentarios en tus reportes y respuestas a tus comentarios',
+    importance: Importance.high,
+  );
+
   /// Lo usa MaterialApp: permite abrir Alertas al tocar un aviso desde
   /// cualquier pantalla.
   static final navegador = GlobalKey<NavigatorState>();
 
   static final _locales = FlutterLocalNotificationsPlugin();
   static bool _disponible = false;
+
+  /// Datos del aviso con que se abrió la app (si se abrió tocando uno).
+  static Map<String, dynamic>? avisoInicial;
   static String? _tokenRegistrado;
 
   // El identificador del teléfono en FCM (FID) solo llega por onRegistered, y
@@ -63,21 +76,26 @@ class PushServicio {
       settings: const InitializationSettings(
         android: AndroidInitializationSettings('@mipmap/ic_launcher'),
       ),
-      onDidReceiveNotificationResponse: (_) => abrirAlertas(),
+      onDidReceiveNotificationResponse: (respuesta) =>
+          abrirDesdeAviso(_datosDeCarga(respuesta.payload)),
     );
-    await _locales
+    final android = _locales
         .resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin
-        >()
-        ?.createNotificationChannel(_canal);
+        >();
+    await android?.createNotificationChannel(_canal);
+    await android?.createNotificationChannel(_canalComentarios);
 
     // Con la app cerrada o en segundo plano, Android muestra el aviso solo.
     // Con la app abierta FCM no lo muestra, así que se muestra aquí.
     FirebaseMessaging.onMessage.listen(_mostrarEnPrimerPlano);
-    FirebaseMessaging.onMessageOpenedApp.listen((_) => abrirAlertas());
+    FirebaseMessaging.onMessageOpenedApp.listen(
+      (mensaje) => abrirDesdeAviso(mensaje.data),
+    );
     FirebaseMessaging.instance.onRegistered.listen(_recibirFid);
 
-    return await FirebaseMessaging.instance.getInitialMessage() != null;
+    avisoInicial = (await FirebaseMessaging.instance.getInitialMessage())?.data;
+    return avisoInicial != null;
   }
 
   /// Pide permiso y registra el teléfono en la API para la cuenta actual.
@@ -115,6 +133,38 @@ class PushServicio {
       );
     } catch (_) {
       // aunque falle, la sesión se cierra igual en la app
+    }
+  }
+
+  /// Id del reporte si el aviso es de un comentario; null si es una alerta de zona.
+  static int? reporteDeAviso(Map<String, dynamic>? datos) {
+    if (datos == null || datos['tipo'] != 'COMENTARIO') return null;
+    return int.tryParse('${datos['id_reporte'] ?? ''}');
+  }
+
+  /// Un aviso de comentario abre su reporte; el resto, la pestaña Alertas.
+  static void abrirDesdeAviso(Map<String, dynamic>? datos) {
+    final idReporte = reporteDeAviso(datos);
+    idReporte != null ? abrirReporte(idReporte) : abrirAlertas();
+  }
+
+  /// Abre el detalle encima de la pantalla actual, para volver a ella con «atrás».
+  static void abrirReporte(int idReporte) {
+    if (Sesion.token == null || Sesion.esAdmin) return;
+    navegador.currentState?.push(
+      MaterialPageRoute(
+        builder: (context) =>
+            DetalleIncidenteVista(idReporte: idReporte, irAComentarios: true),
+      ),
+    );
+  }
+
+  static Map<String, dynamic>? _datosDeCarga(String? carga) {
+    if (carga == null || carga.isEmpty) return null;
+    try {
+      return jsonDecode(carga) as Map<String, dynamic>;
+    } catch (_) {
+      return null;
     }
   }
 
@@ -170,19 +220,23 @@ class PushServicio {
   }
 
   static Future<void> _mostrarEnPrimerPlano(RemoteMessage mensaje) async {
-    EstadoAlertas.refrescarZonasSinLeer();
+    final esComentario = reporteDeAviso(mensaje.data) != null;
+    if (!esComentario) EstadoAlertas.refrescarZonasSinLeer();
     final aviso = mensaje.notification;
     if (aviso == null) return;
+    final canal = esComentario ? _canalComentarios : _canal;
     await _locales.show(
       id: int.tryParse(mensaje.data['id_notificacion'] ?? '') ??
           mensaje.hashCode,
       title: aviso.title,
       body: aviso.body,
+      // Al tocarlo, abrirDesdeAviso recibe estos mismos datos.
+      payload: jsonEncode(mensaje.data),
       notificationDetails: NotificationDetails(
         android: AndroidNotificationDetails(
-          _canal.id,
-          _canal.name,
-          channelDescription: _canal.description,
+          canal.id,
+          canal.name,
+          channelDescription: canal.description,
           importance: Importance.high,
           priority: Priority.high,
         ),
