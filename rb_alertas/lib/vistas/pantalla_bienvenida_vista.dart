@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:rb_alertas/config/app_info.dart';
 import 'package:rb_alertas/servicios/auth_servicio.dart';
+import 'package:rb_alertas/servicios/push_servicio.dart';
 import 'package:rb_alertas/servicios/sesion.dart';
 import 'package:rb_alertas/tema/rb_tema.dart';
+import 'package:rb_alertas/vistas/alertas_vista.dart';
 import 'package:rb_alertas/vistas/mapa_vista.dart';
 import 'package:rb_alertas/widgets/rb_componentes.dart';
 
@@ -25,12 +27,21 @@ class _PantallaBienvenidaVistaState extends State<PantallaBienvenidaVista> {
   /// usuario entra directo sin volver a escribir su correo y contraseña.
   Future<void> _arrancar() async {
     final espera = Future.delayed(const Duration(seconds: 5));
+    final abiertaDesdeAviso = await PushServicio.inicializar();
     await _recuperarSesion();
+    // Sin await: el permiso de notificaciones no debe atrasar la entrada.
+    PushServicio.registrar();
     await espera;
     if (!mounted) return;
+    // Si se abrió tocando un aviso de zona segura, entra directo a Alertas.
+    final irAAlertas =
+        abiertaDesdeAviso && Sesion.token != null && !Sesion.esAdmin;
     Navigator.pushReplacement(
       context,
-      MaterialPageRoute(builder: (context) => const MapaVista()),
+      MaterialPageRoute(
+        builder: (context) =>
+            irAAlertas ? const AlertasVista() : const MapaVista(),
+      ),
     );
   }
 
