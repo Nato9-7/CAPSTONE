@@ -1,0 +1,384 @@
+@startuml rb_alertas_modelo_datos
+
+' =============================================================================
+' Proyecto APT: RB Alertas
+' Diagrama de clases persistentes (modelo de datos)
+' Autores: Renato Diaz - Barbara Palma
+' Motor destino: MySQL 8.0 / InnoDB
+'
+' Version 5 - correcciones y reordenamiento
+'   [FIX] Cardinalidad comuna-usuario: id_comuna es opcional (|o--o{)
+'   [FIX] Faltaba la relacion usuario_rol.asignado_por -> usuario
+'   [FIX] notificacion.motivo no contemplaba el valor SEGUIMIENTO
+'   [DOC] Dominios de todos los ENUM documentados al pie
+'   [DOC] Contadores denormalizados identificados como tales
+' =============================================================================
+
+!theme plain
+hide circle
+hide empty methods
+
+' --- Control de disposicion -------------------------------------------------
+' Las notas se agruparon al pie: al adjuntarlas a cada entidad, PlantUML las
+' trata como nodos del grafo y desordena la disposicion automatica.
+skinparam linetype ortho
+skinparam nodesep 30
+skinparam ranksep 65
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 12
+skinparam padding 2
+skinparam roundCorner 6
+
+skinparam class {
+    BackgroundColor #FFFFFF
+    BorderColor #5F5E5A
+    ArrowColor #6E6D68
+    FontColor #2C2C2A
+    AttributeFontSize 11
+}
+skinparam package {
+    BackgroundColor #F7F6F2
+    BorderColor #B4B2A9
+    FontStyle bold
+    FontSize 13
+}
+skinparam legend {
+    BackgroundColor #FFFFFF
+    BorderColor #B4B2A9
+    FontSize 11
+}
+
+title RB Alertas - Modelo de datos (prototipo v5)
+
+' =============================================================================
+' NIVEL 1 - Territorio (catalogo base, se carga una vez)
+' =============================================================================
+package "1. Territorio" as P1 {
+
+    entity "region" as region {
+        * id_region : SMALLINT UNSIGNED <<PK>>
+        --
+        * codigo_cut : CHAR(2) <<UK>>
+        * nombre : VARCHAR(80)
+        numero_romano : VARCHAR(6)
+        * orden : SMALLINT UNSIGNED
+        * activa : BOOLEAN
+    }
+
+    entity "comuna" as comuna {
+        * id_comuna : INT UNSIGNED <<PK>>
+        --
+        * id_region : SMALLINT UNSIGNED <<FK>>
+        * codigo_cut : CHAR(5) <<UK>>
+        * nombre : VARCHAR(80)
+        centroide : POINT (SRID 4326)
+        limite : POLYGON (SRID 4326)
+        * operativa : BOOLEAN
+    }
+
+    entity "localidad" as localidad {
+        * id_localidad : INT UNSIGNED <<PK>>
+        --
+        * id_comuna : INT UNSIGNED <<FK>>
+        * nombre : VARCHAR(100)
+        * tipo : ENUM
+        centroide : POINT (SRID 4326)
+        limite : POLYGON (SRID 4326)
+        * activa : BOOLEAN
+    }
+}
+
+' =============================================================================
+' NIVEL 2 - Cuenta de usuario y su configuracion
+' =============================================================================
+package "2. Usuarios" as P2 {
+
+    entity "rol" as rol {
+        * id_rol : TINYINT UNSIGNED <<PK>>
+        --
+        * codigo : VARCHAR(30) <<UK>>
+        * nombre : VARCHAR(60)
+        descripcion : VARCHAR(255)
+        * activo : BOOLEAN
+    }
+
+    entity "usuario_rol" as usuario_rol {
+        * id_usuario : BIGINT UNSIGNED <<PK,FK>>
+        * id_rol : TINYINT UNSIGNED <<PK,FK>>
+        --
+        * fecha_asignacion : TIMESTAMP
+        asignado_por : BIGINT UNSIGNED <<FK>>
+    }
+
+    entity "usuario" as usuario {
+        * id_usuario : BIGINT UNSIGNED <<PK>>
+        --
+        * uuid_publico : CHAR(36) <<UK>>
+        id_comuna : INT UNSIGNED <<FK>>
+        * email : VARCHAR(160) <<UK>>
+        * password_hash : VARCHAR(255)
+        * nombres : VARCHAR(80)
+        * apellidos : VARCHAR(80)
+        telefono : VARCHAR(20)
+        url_foto_perfil : VARCHAR(500)
+        * estado : ENUM
+        * email_verificado : BOOLEAN
+        ultimo_acceso : DATETIME
+        ..  reputacion (calculada)  ..
+        * puntaje_reputacion : SMALLINT
+        * total_reportes_confirmados : INT UNSIGNED
+        * total_reportes_desmentidos : INT UNSIGNED
+        --
+        * fecha_creacion : TIMESTAMP
+    }
+
+    entity "usuario_preferencia" as preferencia {
+        * id_usuario : BIGINT UNSIGNED <<PK,FK>>
+        --
+        * radio_alerta_metros : SMALLINT UNSIGNED
+        * notif_proximidad_activa : BOOLEAN
+        * notif_zona_activa : BOOLEAN
+        silencio_desde : TIME
+        silencio_hasta : TIME
+        * reportes_anonimos : BOOLEAN
+        * idioma : CHAR(5)
+    }
+
+    entity "zona_segura" as zona_segura {
+        * id_zona_segura : BIGINT UNSIGNED <<PK>>
+        --
+        * id_usuario : BIGINT UNSIGNED <<FK>>
+        * nombre : VARCHAR(60)
+        * centro : POINT (SRID 4326)
+        * radio_metros : SMALLINT UNSIGNED
+        direccion_referencia : VARCHAR(255)
+        * notif_activa : BOOLEAN
+        * activa : BOOLEAN
+        * fecha_creacion : TIMESTAMP
+    }
+
+    entity "usuario_dispositivo" as dispositivo {
+        * id_dispositivo : BIGINT UNSIGNED <<PK>>
+        --
+        * id_usuario : BIGINT UNSIGNED <<FK>>
+        * token_push : VARCHAR(255) <<UK>>
+        * plataforma : ENUM
+        modelo : VARCHAR(100)
+        version_app : VARCHAR(20)
+        * activo : BOOLEAN
+        ultima_actividad : DATETIME
+    }
+
+    entity "usuario_consentimiento" as consentimiento {
+        * id_consentimiento : BIGINT UNSIGNED <<PK>>
+        --
+        * id_usuario : BIGINT UNSIGNED <<FK>>
+        * tipo : ENUM
+        * version_documento : VARCHAR(20)
+        * aceptado : BOOLEAN
+        * ip_registro : VARBINARY(16)
+        * fecha_registro : TIMESTAMP
+    }
+}
+
+' =============================================================================
+' NIVEL 3 - Reportes de incidentes e interaccion de la comunidad
+' =============================================================================
+package "3. Reportes" as P3 {
+
+    entity "categoria_incidente" as categoria {
+        * id_categoria : SMALLINT UNSIGNED <<PK>>
+        --
+        * codigo : VARCHAR(30) <<UK>>
+        * nombre : VARCHAR(60)
+        icono : VARCHAR(60)
+        color_hex : CHAR(7)
+        * nivel_gravedad : TINYINT UNSIGNED
+        * radio_difusion_metros : SMALLINT UNSIGNED
+        id_entidad : SMALLINT UNSIGNED <<FK>>
+        * activa : BOOLEAN
+    }
+
+    entity "reporte" as reporte {
+        * id_reporte : BIGINT UNSIGNED <<PK>>
+        --
+        * id_usuario : BIGINT UNSIGNED <<FK>>
+        * id_categoria : SMALLINT UNSIGNED <<FK>>
+        * id_comuna : INT UNSIGNED <<FK>>
+        id_localidad : INT UNSIGNED <<FK>>
+        ..  ubicacion  ..
+        * ubicacion : POINT (SRID 4326)
+        direccion_referencia : VARCHAR(255)
+        ..  contenido  ..
+        * descripcion : VARCHAR(500)
+        * estado : ENUM
+        * es_anonimo : BOOLEAN
+        ..  contadores (denormalizados)  ..
+        * total_confirmaciones : INT UNSIGNED
+        * total_desmentidos : INT UNSIGNED
+        --
+        * fecha_creacion : TIMESTAMP
+        fecha_expiracion : DATETIME
+    }
+
+    entity "reporte_imagen" as imagen {
+        * id_imagen : BIGINT UNSIGNED <<PK>>
+        --
+        * id_reporte : BIGINT UNSIGNED <<FK>>
+        * url_archivo : VARCHAR(500)
+        * orden : TINYINT UNSIGNED
+        * fecha_carga : TIMESTAMP
+    }
+
+    entity "reporte_voto" as voto {
+        * id_reporte : BIGINT UNSIGNED <<PK,FK>>
+        * id_usuario : BIGINT UNSIGNED <<PK,FK>>
+        --
+        * tipo_voto : ENUM
+        * fecha_voto : TIMESTAMP
+    }
+
+    entity "comentario" as comentario {
+        * id_comentario : BIGINT UNSIGNED <<PK>>
+        --
+        * id_reporte : BIGINT UNSIGNED <<FK>>
+        * id_usuario : BIGINT UNSIGNED <<FK>>
+        * contenido : VARCHAR(500)
+        * estado : ENUM
+        * fecha_creacion : TIMESTAMP
+    }
+
+    entity "reporte_seguimiento" as seguimiento {
+        * id_reporte : BIGINT UNSIGNED <<PK,FK>>
+        * id_usuario : BIGINT UNSIGNED <<PK,FK>>
+        --
+        * notif_activa : BOOLEAN
+        * fecha_inicio : TIMESTAMP
+    }
+
+    entity "reporte_estado_historial" as historial {
+        * id_historial : BIGINT UNSIGNED <<PK>>
+        --
+        * id_reporte : BIGINT UNSIGNED <<FK>>
+        * estado_anterior : ENUM
+        * estado_nuevo : ENUM
+        id_usuario_responsable : BIGINT UNSIGNED <<FK>>
+        motivo : VARCHAR(255)
+        * fecha_cambio : TIMESTAMP
+    }
+}
+
+' =============================================================================
+' NIVEL 4 - Difusion, emergencia y analisis
+' =============================================================================
+package "4. Notificaciones y analisis" as P4 {
+
+    entity "notificacion" as notificacion {
+        * id_notificacion : BIGINT UNSIGNED <<PK>>
+        --
+        * id_usuario : BIGINT UNSIGNED <<FK>>
+        * id_reporte : BIGINT UNSIGNED <<FK>>
+        id_dispositivo : BIGINT UNSIGNED <<FK>>
+        id_zona_segura : BIGINT UNSIGNED <<FK>>
+        --
+        * motivo : ENUM
+        * distancia_metros : INT UNSIGNED
+        * estado_envio : ENUM
+        * fecha_envio : TIMESTAMP
+        fecha_lectura : DATETIME
+    }
+
+    entity "entidad_emergencia" as entidad {
+        * id_entidad : SMALLINT UNSIGNED <<PK>>
+        --
+        * id_comuna : INT UNSIGNED <<FK>>
+        * nombre : VARCHAR(100)
+        * tipo : ENUM
+        * telefono : VARCHAR(20)
+        direccion : VARCHAR(255)
+        ubicacion : POINT (SRID 4326)
+        * activa : BOOLEAN
+    }
+
+    entity "localidad_estadistica" as estadistica {
+        * id_estadistica : BIGINT UNSIGNED <<PK>>
+        --
+        * id_localidad : INT UNSIGNED <<FK>>
+        * periodo : DATE
+        * total_reportes : INT UNSIGNED
+        * reportes_validados : INT UNSIGNED
+        * indice_riesgo : DECIMAL(5,2)
+        * fecha_calculo : TIMESTAMP
+    }
+}
+
+' =============================================================================
+' Relaciones
+' =============================================================================
+
+' --- Territorio ---
+region      ||--o{ comuna         : "agrupa"
+comuna      ||--o{ localidad      : "se subdivide en"
+
+' --- Territorio hacia el resto del modelo ---
+comuna      |o--o{ usuario        : "reside en"
+comuna      ||--o{ reporte        : "registra"
+comuna      ||--o{ entidad        : "cuenta con"
+localidad   |o--o{ reporte        : "localiza"
+localidad   ||--o{ estadistica    : "resume en"
+
+' --- Usuario y su configuracion ---
+usuario     ||--o{ usuario_rol    : "posee"
+rol         ||--o{ usuario_rol    : "se asigna en"
+usuario     |o--o{ usuario_rol    : "asigna a otro"
+usuario     ||--|| preferencia    : "configura"
+usuario     ||--o{ zona_segura    : "define"
+usuario     ||--o{ dispositivo    : "registra"
+usuario     ||--o{ consentimiento : "otorga"
+
+' --- Reportes ---
+usuario     ||--o{ reporte        : "crea"
+categoria   ||--o{ reporte        : "clasifica"
+entidad     |o--o{ categoria      : "atiende"
+reporte     ||--o{ imagen         : "adjunta"
+reporte     ||--o{ voto           : "recibe"
+usuario     ||--o{ voto           : "emite"
+reporte     ||--o{ comentario     : "contiene"
+usuario     ||--o{ comentario     : "escribe"
+reporte     ||--o{ seguimiento    : "es seguido en"
+usuario     ||--o{ seguimiento    : "sigue"
+reporte     ||--o{ historial      : "cambia de estado en"
+usuario     |o--o{ historial      : "modifica"
+
+' --- Notificaciones ---
+reporte     ||--o{ notificacion   : "origina"
+usuario     ||--o{ notificacion   : "recibe"
+dispositivo |o--o{ notificacion   : "entrega"
+zona_segura |o--o{ notificacion   : "dispara"
+
+' =============================================================================
+' Notas de diseno (agrupadas para no alterar la disposicion del grafo)
+' =============================================================================
+
+legend bottom
+<b>NOTACION</b>
+  *  campo obligatorio (NOT NULL)      <<PK>> clave primaria      <<FK>> clave foranea      <<UK>> clave unica
+  ||--o{  uno a muchos        ||--||  uno a uno        |o--o{  cero o uno a muchos
+  No se incluyen usuario_token ni usuario_sesion (infraestructura de autenticacion).
+====
+<b>DOMINIOS DE LOS ENUM</b>  (lista cerrada de valores; no son claves foraneas)
+  usuario.estado                  PENDIENTE | ACTIVO | SUSPENDIDO | ELIMINADO
+  localidad.tipo                  URBANA | RURAL | SECTOR
+  usuario_dispositivo.plataforma  ANDROID | IOS | WEB
+  usuario_consentimiento.tipo     PRIVACIDAD | GEOLOCALIZACION | TERMINOS_USO
+  reporte.estado                  PENDIENTE | VALIDADO | DESCARTADO | RESUELTO | EXPIRADO
+  reporte_voto.tipo_voto          CONFIRMA | DESMIENTE
+  comentario.estado               PUBLICADO | OCULTO | ELIMINADO
+  notificacion.motivo             ZONA_SEGURA | PROXIMIDAD | SEGUIMIENTO
+  notificacion.estado_envio       PENDIENTE | ENVIADA | ENTREGADA | FALLIDA
+  entidad_emergencia.tipo         CARABINEROS | BOMBEROS | SAMU | SEGURIDAD_CIUDADANA | OTRO
+
+endlegend
+
+@enduml
