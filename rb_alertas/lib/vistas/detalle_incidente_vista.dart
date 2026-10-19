@@ -416,10 +416,14 @@ class _DetalleIncidenteVistaState extends State<DetalleIncidenteVista> {
       },
       child: Scaffold(
         backgroundColor: Colors.white,
-        body: _cuerpo(),
-        bottomNavigationBar: _detalle != null && _puedeComentar(_detalle!)
-            ? _barraComentario(_detalle!)
-            : null,
+        // La barra va en el body y no en bottomNavigationBar: solo el body se
+        // achica al abrir el teclado, así la barra sube y queda a la vista.
+        body: Column(
+          children: [
+            Expanded(child: _cuerpo()),
+            if (_detalle != null && _puedeComentar(_detalle!)) _barraComentario(_detalle!),
+          ],
+        ),
       ),
     );
   }

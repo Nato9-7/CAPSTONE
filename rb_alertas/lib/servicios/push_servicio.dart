@@ -67,10 +67,12 @@ class PushServicio {
     if (!_soportado || _disponible) return false;
     try {
       await Firebase.initializeApp();
-    } catch (_) {
+    } catch (error) {
+      debugPrint('[push] Firebase no arrancó: $error');
       return false;
     }
     _disponible = true;
+    debugPrint('[push] Firebase listo');
 
     await _locales.initialize(
       settings: const InitializationSettings(
@@ -101,17 +103,24 @@ class PushServicio {
   /// Pide permiso y registra el teléfono en la API para la cuenta actual.
   /// Se llama al iniciar sesión y al abrir la app con una sesión guardada.
   static Future<void> registrar() async {
+    debugPrint(
+      '[push] registrar: firebase=$_disponible, sesion=${Sesion.token != null}',
+    );
     if (!_disponible || Sesion.token == null) return;
     try {
       final permiso = await FirebaseMessaging.instance.requestPermission();
+      debugPrint('[push] permiso: ${permiso.authorizationStatus}');
       if (permiso.authorizationStatus == AuthorizationStatus.denied) return;
       final guardado = await _almacen.read(key: _claveFid);
+      debugPrint('[push] FID guardado: $guardado');
       if (guardado != null && guardado.isNotEmpty) {
         await _enviarToken(guardado);
       }
       // Si el FID es nuevo o cambió, llega por onRegistered.
       await FirebaseMessaging.instance.register();
-    } catch (_) {
+      debugPrint('[push] register() terminó, esperando onRegistered');
+    } catch (error) {
+      debugPrint('[push] registrar falló: $error');
       // se reintenta la próxima vez que se abra la app
     }
   }
@@ -182,6 +191,7 @@ class PushServicio {
   }
 
   static Future<void> _recibirFid(String fid) async {
+    debugPrint('[push] onRegistered: $fid');
     try {
       await _almacen.write(key: _claveFid, value: fid);
     } catch (_) {
@@ -213,8 +223,12 @@ class PushServicio {
           ),
         }),
       );
+      debugPrint(
+        '[push] API dispositivos: ${respuesta.statusCode} ${respuesta.body}',
+      );
       if (respuesta.statusCode == 204) _tokenRegistrado = tokenPush;
-    } catch (_) {
+    } catch (error) {
+      debugPrint('[push] envío a la API falló: $error');
       // se reintenta la próxima vez que se abra la app
     }
   }
