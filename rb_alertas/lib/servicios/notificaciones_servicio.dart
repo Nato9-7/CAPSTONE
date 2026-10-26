@@ -28,11 +28,14 @@ class ZonaDeAlerta {
   }
 }
 
-/// Un incidente que cayó dentro de alguna zona segura del usuario.
+/// Un incidente que cayó dentro de alguna zona segura del usuario, o que un
+/// vecino compartió en uno de sus grupos.
 class AlertaDeZona {
   final int id;
   final ReporteCercano reporte;
   final ZonaDeAlerta? zona;
+  /// Nombre del grupo, solo en los avisos de grupo (motivo GRUPO).
+  final String? grupo;
   final int? distanciaMetros;
   final DateTime? fechaEnvio;
   /// Cambia en memoria al abrir el detalle, sin recargar toda la lista.
@@ -42,13 +45,16 @@ class AlertaDeZona {
     required this.id,
     required this.reporte,
     required this.zona,
+    this.grupo,
     required this.distanciaMetros,
     required this.fechaEnvio,
     required this.leida,
   });
 
-  /// "a 320 m de tu Casa", o solo la distancia si la zona ya no existe.
+  /// "a 320 m de tu Casa", "En el grupo Villa Los Notros", o solo la
+  /// distancia si la zona ya no existe.
   String get referencia {
+    if (grupo != null) return 'En el grupo $grupo';
     final distancia = distanciaMetros == null
         ? null
         : (distanciaMetros! < 1000
@@ -64,6 +70,7 @@ class AlertaDeZona {
 
   factory AlertaDeZona.desdeJson(Map<String, dynamic> json) {
     final zona = json['zona'];
+    final grupo = json['grupo'];
     return AlertaDeZona(
       id: (json['id_notificacion'] as num).toInt(),
       reporte: ReporteCercano.desdeJson(
@@ -72,6 +79,7 @@ class AlertaDeZona {
       zona: zona == null
           ? null
           : ZonaDeAlerta.desdeJson(zona as Map<String, dynamic>),
+      grupo: grupo is Map ? grupo['nombre']?.toString() : null,
       distanciaMetros: (json['distancia_metros'] as num?)?.toInt(),
       fechaEnvio: DateTime.tryParse((json['fecha_envio'] ?? '').toString()),
       leida: json['leida'] == true,

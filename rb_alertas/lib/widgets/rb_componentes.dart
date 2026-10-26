@@ -134,6 +134,37 @@ class ChipEstado extends StatelessWidget {
   }
 }
 
+/// Píldora con candado: el reporte es privado de un grupo vecinal.
+class ChipSoloGrupo extends StatelessWidget {
+  final bool grande;
+
+  const ChipSoloGrupo({super.key, this.grande = false});
+
+  @override
+  Widget build(BuildContext context) {
+    final tamanoTexto = grande ? 14.0 : 12.5;
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: grande ? 14 : 10, vertical: grande ? 7 : 4),
+      decoration: BoxDecoration(
+        color: RBColores.fondo,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: RBColores.linea),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.lock_outline_rounded, size: tamanoTexto + 2, color: RBColores.texto2),
+          const SizedBox(width: 4),
+          Text(
+            'Solo el grupo',
+            style: TextStyle(fontSize: tamanoTexto, fontWeight: FontWeight.w700, color: RBColores.texto2),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Marca y mascota
 // ---------------------------------------------------------------------------
@@ -444,12 +475,18 @@ class ChipFiltro extends StatelessWidget {
                 icono!,
                 const SizedBox(width: 8),
               ],
-              Text(
-                etiqueta,
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  color: activo ? Colors.white : RBColores.tinta,
+              // Flexible: una etiqueta larga (el nombre de un grupo) se corta
+              // con "…" en vez de desbordar el chip en pantallas angostas.
+              Flexible(
+                child: Text(
+                  etiqueta,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: activo ? Colors.white : RBColores.tinta,
+                  ),
                 ),
               ),
             ],

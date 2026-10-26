@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 from pathlib import Path
 from app import grafo
-from app.rutas import admin, comentarios, dispositivos, notificaciones, reportes, usuarios, zonas
+from app.rutas import admin, comentarios, dispositivos, grupos, notificaciones, reportes, usuarios, zonas
 
 @asynccontextmanager
 async def ciclo_de_vida(app: FastAPI):
@@ -49,6 +49,7 @@ app.include_router(comentarios.router, prefix = "/api/reportes")
 app.include_router(zonas.router, prefix = "/api/usuarios/zonas")
 app.include_router(notificaciones.router, prefix = "/api/usuarios/notificaciones")
 app.include_router(dispositivos.router, prefix = "/api/usuarios/dispositivos")
+app.include_router(grupos.router, prefix = "/api/grupos")
 app.include_router(admin.router, prefix = "/api/admin")
 
 # Logo de la app para las páginas que abren los enlaces del correo y los correos.
