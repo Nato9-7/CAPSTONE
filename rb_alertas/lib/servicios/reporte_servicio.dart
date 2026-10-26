@@ -293,6 +293,8 @@ class DetalleReporte {
   final TipoVoto? miVoto;
   // Comentarios publicados (el número del botón de la tarjeta del mapa).
   final int totalComentarios;
+  // Privado de un grupo: solo lo ven el autor y los vecinos del grupo.
+  final bool soloGrupo;
 
   DetalleReporte({
     required this.id,
@@ -313,6 +315,7 @@ class DetalleReporte {
     required this.desmentidos,
     required this.miVoto,
     required this.totalComentarios,
+    this.soloGrupo = false,
   });
 
   bool get activo => estado == 'PENDIENTE' || estado == 'VALIDADO';
@@ -340,6 +343,7 @@ class DetalleReporte {
       desmentidos: (json['total_desmentidos'] as num?)?.toInt() ?? 0,
       miVoto: TipoVoto.desdeApi(json['mi_voto']),
       totalComentarios: (json['total_comentarios'] as num?)?.toInt() ?? 0,
+      soloGrupo: json['visibilidad'] == 'GRUPO',
     );
   }
 }
@@ -504,6 +508,8 @@ class ReporteServicio {
   }
 
   /// [token] es el de la sesión (login): la API identifica al autor con él.
+  /// Con [idsGrupos] el reporte aparece también en esos grupos; con
+  /// [soloGrupo] solo lo ven sus vecinos (no sale en el mapa público).
   Future<int> enviarReporte({
     required String token,
     required int idCategoria,
@@ -512,6 +518,8 @@ class ReporteServicio {
     required double longitud,
     String? direccion,
     Evidencia? evidencia,
+    List<int> idsGrupos = const [],
+    bool soloGrupo = false,
   }) async {
     final solicitud = http.MultipartRequest(
       'POST',
@@ -525,6 +533,9 @@ class ReporteServicio {
       'latitud': latitud.toString(),
       'longitud': longitud.toString(),
       if (direccion != null && direccion.isNotEmpty) 'direccion': direccion,
+      // Separados por comas: un formulario multipart no admite repetir el campo.
+      if (idsGrupos.isNotEmpty) 'ids_grupos': idsGrupos.join(','),
+      if (idsGrupos.isNotEmpty && soloGrupo) 'solo_grupo': 'true',
     });
 
     if (evidencia != null) {

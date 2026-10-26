@@ -11,6 +11,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:rb_alertas/servicios/estado_alertas_servicio.dart';
@@ -19,6 +20,7 @@ import 'package:rb_alertas/tema/rb_tema.dart';
 import 'package:rb_alertas/vistas/admin_vista.dart';
 import 'package:rb_alertas/vistas/alertas_vista.dart';
 import 'package:rb_alertas/vistas/detalle_incidente_vista.dart';
+import 'package:rb_alertas/vistas/grupo_detalle_vista.dart';
 import 'package:rb_alertas/vistas/grupos_vista.dart';
 import 'package:rb_alertas/vistas/inicio_sesion_vista.dart';
 import 'package:rb_alertas/vistas/mapa_vista.dart';
@@ -81,6 +83,14 @@ final _casos = <_Caso>[
     await _tocar(t, find.text('Emergencias'));
   }),
   _Caso('07_reportar', () => const ReportarIncidenteVista(), conSesion: true),
+  // Toca un grupo y activa "Solo para el grupo" para ver la sección completa.
+  _Caso('07b_reportar_en_grupo', () => const ReportarIncidenteVista(), conSesion: true,
+      preparar: (t) async {
+    // Sin GPS en las pruebas: tocar el mapa marca el punto, como haría el usuario.
+    await _tocar(t, find.byType(FlutterMap));
+    await _tocar(t, find.text('Condominio Parque Austral'));
+    await _tocar(t, find.text('Solo para el grupo'));
+  }),
   _Caso('08_detalle', () => const DetalleIncidenteVista(idReporte: 1), conSesion: true),
   // Baja hasta los comentarios y abre "Responder" para ver la barra con la respuesta.
   _Caso('08b_detalle_comentarios', () => const DetalleIncidenteVista(idReporte: 1), conSesion: true,
@@ -88,7 +98,25 @@ final _casos = <_Caso>[
   _Caso('09_cerca', () => const AlertasVista(), conSesion: true),
   _Caso('10_mis_zonas', () => const AlertasVista(pestanaInicial: 1), conSesion: true),
   _Caso('11_mis_reportes', () => const AlertasVista(pestanaInicial: 2), conSesion: true),
-  _Caso('12_grupos', () => const GruposVista()),
+  _Caso('12_grupos_sin_sesion', () => const GruposVista()),
+  _Caso('12b_grupos', () => const GruposVista(), conSesion: true),
+  _Caso('12c_unirse_grupo', () => const GruposVista(), conSesion: true, preparar: (t) async {
+    await _tocar(t, find.text('Unirme con un código'));
+    await t.enterText(find.byType(TextField), 'k7q2mxab');
+    await _tocar(t, find.text('Buscar grupo'));
+  }),
+  _Caso('12d_grupo_admin', () => const GrupoDetalleVista(idGrupo: 1), conSesion: true),
+  _Caso('12e_grupo_miembro', () => const GrupoDetalleVista(idGrupo: 2), conSesion: true),
+  _Caso('12f_editar_grupo', () => const GrupoDetalleVista(idGrupo: 1), conSesion: true,
+      preparar: (t) async {
+    await _tocar(t, find.byTooltip('Opciones del grupo'));
+    await _tocar(t, find.text('Editar grupo'));
+  }),
+  _Caso('12g_vecinos_grupo', () => const GrupoDetalleVista(idGrupo: 1), conSesion: true,
+      preparar: (t) async {
+    await _tocar(t, find.byTooltip('Opciones del grupo'));
+    await _tocar(t, find.text('Ver vecinos'));
+  }),
   _Caso('13_perfil', () => const PerfilVista(), conSesion: true),
   _Caso('14_perfil_sin_sesion', () => const PerfilVista()),
   _Caso('15_zonas', () => const ZonasSegurasVista(), conSesion: true),
@@ -100,6 +128,13 @@ final _casos = <_Caso>[
       preparar: (t) async => _tocar(t, find.text('Reportes'))),
   _Caso('19_admin_usuarios', () => const AdminVista(), conSesion: true, admin: true,
       preparar: (t) async => _tocar(t, find.text('Usuarios'))),
+  _Caso('19b_admin_grupos', () => const AdminVista(), conSesion: true, admin: true,
+      preparar: (t) async => _tocar(t, find.text('Grupos'))),
+  _Caso('19c_admin_reportes_grupo', () => const AdminVista(), conSesion: true, admin: true,
+      preparar: (t) async {
+    await _tocar(t, find.text('Grupos'));
+    await _tocar(t, find.text('Ver reportes'));
+  }),
   _Caso('20_admin_grafo', () => const AdminVista(), conSesion: true, admin: true,
       preparar: (t) async => _tocar(t, find.text('Grafo'))),
 ];

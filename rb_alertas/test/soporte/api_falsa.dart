@@ -42,10 +42,19 @@ Object? _responder(String metodo, String ruta) {
   if (RegExp(r'^/api/reportes/\d+/comentarios$').hasMatch(ruta)) return _comentarios;
   if (ruta == '/api/usuarios/perfil') return _perfil;
   if (ruta == '/api/usuarios/zonas/') return _zonas;
+  if (ruta == '/api/grupos/') return _grupos;
+  if (ruta == '/api/grupos/en-punto') return _gruposEnPunto;
+  if (ruta == '/api/grupos/1') return _grupoAdmin;
+  if (ruta == '/api/grupos/2') return _grupoMiembro;
+  if (RegExp(r'^/api/grupos/\d+/reportes$').hasMatch(ruta)) return _reportesGrupo;
+  if (RegExp(r'^/api/grupos/\d+/miembros$').hasMatch(ruta)) return _miembrosGrupo;
+  if (ruta.startsWith('/api/grupos/invitacion/')) return _invitacionGrupo;
   if (ruta == '/api/usuarios/notificaciones/') return _notificaciones;
   if (ruta == '/api/admin/resumen') return _resumenAdmin;
   if (ruta == '/api/admin/reportes') return _reportesAdmin;
   if (ruta == '/api/admin/usuarios') return _usuariosAdmin;
+  if (ruta == '/api/admin/grupos') return _gruposAdmin;
+  if (RegExp(r'^/api/admin/grupos/\d+/reportes$').hasMatch(ruta)) return _reportesGrupoAdmin;
   if (ruta == '/api/admin/grafo/inicio') return _inicioGrafo;
   return null;
 }
@@ -193,6 +202,113 @@ final _zonas = {
     {'id_zona_segura': 2, 'tipo': 'ESTUDIO', 'nombre': 'Estudio', 'latitud': -41.472, 'longitud': -72.935, 'radio_metros': 1000, 'direccion_referencia': 'Calle Benavente 550'},
     {'id_zona_segura': 3, 'tipo': 'OTRO', 'nombre': 'Casa de mis padres en Pelluco', 'latitud': -41.48, 'longitud': -72.9, 'radio_metros': 2000, 'direccion_referencia': 'Sector Pelluco'},
   ],
+};
+
+Map<String, Object?> _grupo(int id, String nombre, String rol, int miembros) => {
+      'id_grupo': id,
+      'nombre': nombre,
+      'descripcion': 'Para avisarnos entre vecinos del pasaje y de la plaza del sector',
+      'latitud': -41.468,
+      'longitud': -72.94,
+      'radio_metros': 1000,
+      'direccion_referencia': 'Avenida Presidente Ibáñez 1234, Puerto Montt',
+      'rol': rol,
+      'es_admin': rol == 'ADMIN',
+      'total_miembros': miembros,
+      'ultimo_reporte': _hace(const Duration(hours: 2)),
+      'codigo_invitacion': rol == 'ADMIN' ? 'K7Q2MXAB' : null,
+      'codigo_expira': rol == 'ADMIN' ? _ahora.add(const Duration(days: 5)).toIso8601String() : null,
+      'codigo_vencido': rol == 'ADMIN' ? false : null,
+    };
+
+final _grupoAdmin = _grupo(1, 'Junta de vecinos Villa Los Notros de Puerto Montt', 'ADMIN', 128);
+final _grupoMiembro = _grupo(2, 'Condominio Parque Austral', 'MIEMBRO', 1);
+
+final _grupos = {
+  'maximo': 5,
+  'puede_crear': false,
+  'radios_permitidos': [500, 1000, 2000],
+  'grupos': [_grupoAdmin, _grupoMiembro],
+};
+
+final _reportesGrupo = [
+  {
+    ..._reporte(3, 'ROBO', 'Robo o asalto', 'Calle Urmeneta esquina Avenida Diego Portales, Puerto Montt',
+        'PENDIENTE', const Duration(minutes: 20)),
+    'autor': 'Suricata Centinela 42',
+    'es_mio': false,
+    'visibilidad': 'GRUPO',
+    'fecha_publicacion': _hace(const Duration(minutes: 20)),
+    'total_comentarios': 12,
+  },
+  {
+    ..._reporte(4, 'SOSPECHOSO', 'Actividad sospechosa', 'Pasaje Los Aromos', 'VALIDADO',
+        const Duration(hours: 5)),
+    'autor': 'Suricata Protectora 17',
+    'es_mio': true,
+    'visibilidad': 'PUBLICO',
+    'fecha_publicacion': _hace(const Duration(hours: 5)),
+    'total_comentarios': 1,
+  },
+];
+
+final _gruposAdmin = [
+  {
+    'id_grupo': 1,
+    'nombre': 'Junta de vecinos Villa Los Notros de Puerto Montt',
+    'descripcion': 'Para avisarnos entre vecinos del pasaje y de la plaza del sector',
+    'radio_metros': 1000,
+    'direccion': 'Avenida Presidente Ibáñez 1234, Puerto Montt',
+    'activo': true,
+    'fecha_creacion': _hace(const Duration(days: 40)),
+    'codigo_vencido': true,
+    'creador': 'María Fernanda Soto Riquelme',
+    'creador_email': 'maria.fernanda.soto.riquelme@correo-largo.cl',
+    'total_miembros': 128,
+    'total_reportes': 37,
+    'reportes_privados': 12,
+    'ultimo_reporte': _hace(const Duration(hours: 2)),
+  },
+  {
+    'id_grupo': 2,
+    'nombre': 'Condominio Parque Austral',
+    'descripcion': null,
+    'radio_metros': 500,
+    'direccion': null,
+    'activo': false,
+    'fecha_creacion': _hace(const Duration(days: 3)),
+    'codigo_vencido': false,
+    'creador': 'Pedro Díaz',
+    'creador_email': 'pedro@correo.cl',
+    'total_miembros': 1,
+    'total_reportes': 0,
+    'reportes_privados': 0,
+    'ultimo_reporte': null,
+  },
+];
+
+final _reportesGrupoAdmin = [
+  for (final r in _reportesGrupo)
+    {...r, 'fecha_publicacion': r['fecha_publicacion'], 'vencido': false},
+];
+
+const _gruposEnPunto = [
+  {'id_grupo': 1, 'nombre': 'Junta de vecinos Villa Los Notros de Puerto Montt'},
+  {'id_grupo': 2, 'nombre': 'Condominio Parque Austral'},
+];
+
+final _miembrosGrupo = [
+  {'id_miembro': 1, 'alias': 'Suricata Protectora 17', 'rol': 'ADMIN', 'soy_yo': true, 'fecha_union': _hace(const Duration(days: 30))},
+  {'id_miembro': 2, 'alias': 'Suricata Intrépida 88', 'rol': 'MIEMBRO', 'soy_yo': false, 'fecha_union': _hace(const Duration(days: 2))},
+];
+
+const _invitacionGrupo = {
+  'id_grupo': 1,
+  'nombre': 'Junta de vecinos Villa Los Notros de Puerto Montt',
+  'descripcion': 'Para avisarnos entre vecinos del pasaje y de la plaza del sector',
+  'radio_metros': 1000,
+  'total_miembros': 128,
+  'ya_es_miembro': false,
 };
 
 final _notificaciones = {

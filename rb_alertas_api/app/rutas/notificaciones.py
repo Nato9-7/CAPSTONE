@@ -28,6 +28,8 @@ def _fila_a_json(fila: dict) -> dict:
         # La zona viaja aunque se haya borrado: fk_notif_zona es ON DELETE SET NULL,
         # asi que una alerta vieja puede quedar sin zona y la app muestra solo el reporte.
         "zona": zona,
+        # Solo en los avisos de motivo GRUPO.
+        "grupo": {"id_grupo": fila["id_grupo"], "nombre": fila["grupo_nombre"]} if fila["id_grupo"] is not None else None,
         "reporte": {
             "id_reporte": fila["id_reporte"],
             "categoria_codigo": fila["categoria_codigo"],
@@ -63,6 +65,7 @@ def listar_notificaciones(
         SELECT n.id_notificacion, n.motivo, n.distancia_metros,
                n.fecha_envio, n.fecha_lectura,
                n.id_zona_segura, z.nombre AS zona_nombre, z.radio_metros AS zona_radio,
+               n.id_grupo, g.nombre AS grupo_nombre,
                r.id_reporte, c.codigo AS categoria_codigo, c.nombre AS categoria,
                c.color_hex, ST_Latitude(r.ubicacion) AS latitud,
                ST_Longitude(r.ubicacion) AS longitud,
@@ -79,11 +82,14 @@ def listar_notificaciones(
         JOIN reporte r ON r.id_reporte = n.id_reporte
         JOIN categoria_incidente c ON c.id_categoria = r.id_categoria
         LEFT JOIN zona_segura z ON z.id_zona_segura = n.id_zona_segura
+        LEFT JOIN grupo g ON g.id_grupo = n.id_grupo
         LEFT JOIN comuna cm ON cm.id_comuna = r.id_comuna
         LEFT JOIN localidad l ON l.id_localidad = r.id_localidad
         WHERE n.id_usuario = %s
           AND n.motivo NOT IN ('COMENTARIO', 'RESPUESTA')
           AND r.estado <> 'DESCARTADO'
+          -- El aviso de un reporte privado se oculta si su grupo se eliminó.
+          AND (r.visibilidad = 'PUBLICO' OR g.activo = 1)
           {condicion_leidas}
         ORDER BY n.fecha_envio DESC
         LIMIT %s
@@ -96,8 +102,10 @@ def listar_notificaciones(
         SELECT COUNT(*) AS total
         FROM notificacion n
         JOIN reporte r ON r.id_reporte = n.id_reporte
+        LEFT JOIN grupo g ON g.id_grupo = n.id_grupo
         WHERE n.id_usuario = %s AND n.fecha_lectura IS NULL AND r.estado <> 'DESCARTADO'
           AND n.motivo NOT IN ('COMENTARIO', 'RESPUESTA')
+          AND (r.visibilidad = 'PUBLICO' OR g.activo = 1)
         """,
         (usuario["id_usuario"],),
     )

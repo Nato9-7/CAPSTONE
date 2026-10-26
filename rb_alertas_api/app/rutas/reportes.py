@@ -161,6 +161,7 @@ def listar_reportes(limite: int = Query(200, ge=1, le=500)):
         FROM reporte r
         JOIN categoria_incidente c ON c.id_categoria = r.id_categoria
         WHERE r.estado IN ('PENDIENTE', 'VALIDADO')
+          AND r.visibilidad = 'PUBLICO'
           AND (r.fecha_expiracion IS NULL OR r.fecha_expiracion > NOW())
         ORDER BY r.fecha_creacion DESC
         LIMIT %s
@@ -199,6 +200,7 @@ def listar_reportes_cercanos(
         FROM reporte r
         JOIN categoria_incidente c ON c.id_categoria = r.id_categoria
         WHERE r.estado IN ('PENDIENTE', 'VALIDADO')
+          AND r.visibilidad = 'PUBLICO'
           AND (r.fecha_expiracion IS NULL OR r.fecha_expiracion > NOW())
           AND ST_Distance(r.ubicacion, {PUNTO_SQL}) <= %s
         ORDER BY r.fecha_creacion DESC
@@ -267,7 +269,15 @@ def crear_reporte(
     longitud: float = Form(ge=-180, le=180),
     direccion: str | None = Form(None, max_length=255),
     evidencia: UploadFile | None = File(None),
+    ids_grupos: str = Form("", max_length=100),
+    solo_grupo: bool = Form(False),
 ):
+    """Crea un reporte. Con `ids_grupos` ("3,7") además aparece en el chat de esos
+    grupos; con `solo_grupo` es privado: no sale en el mapa ni avisa a las zonas seguras.
+
+    Los ids van separados por comas porque el formulario multipart de la app
+    no admite repetir un campo.
+    """
     descripcion = descripcion.strip()
     if not descripcion:
         raise HTTPException(status_code=422, detail="La descripción no puede estar vacía")
@@ -290,6 +300,14 @@ def crear_reporte(
             detail="La ubicación está fuera de las comunas donde funciona RB Alertas",
         )
     id_localidad = _resolver_localidad(punto_wkt, id_comuna)
+
+    # Antes de guardar la evidencia, para no dejar un archivo huérfano si los grupos no sirven.
+    ids_grupos = _leer_ids_grupos(ids_grupos)
+    if solo_grupo and not ids_grupos:
+        raise HTTPException(status_code=422, detail="Elige al menos un grupo para que el reporte sea privado")
+    if ids_grupos:
+        _validar_grupos_del_reporte(ids_grupos, usuario["id_usuario"], punto_wkt)
+    visibilidad = "GRUPO" if solo_grupo else "PUBLICO"
 
     ruta_evidencia = None
     evidencia_url = None
@@ -322,9 +340,9 @@ def crear_reporte(
                 f"""
                 INSERT INTO reporte (
                     id_usuario, id_categoria, id_comuna, id_localidad,
-                    ubicacion, direccion_referencia, descripcion, fecha_expiracion
+                    ubicacion, direccion_referencia, descripcion, visibilidad, fecha_expiracion
                 ) VALUES (
-                    %s, %s, %s, %s, {PUNTO_SQL}, %s, %s,
+                    %s, %s, %s, %s, {PUNTO_SQL}, %s, %s, %s,
                     DATE_ADD(NOW(), INTERVAL %s HOUR)
                 )
                 """,
@@ -336,10 +354,17 @@ def crear_reporte(
                     punto_wkt,
                     direccion,
                     descripcion,
+                    visibilidad,
                     horas_vigencia,
                 ),
             )
             id_reporte = cursor.lastrowid
+
+            for id_grupo in ids_grupos:
+                cursor.execute(
+                    "INSERT INTO grupo_reporte (id_grupo, id_reporte) VALUES (%s, %s)",
+                    (id_grupo, id_reporte),
+                )
 
             if evidencia_url is not None:
                 cursor.execute(
@@ -351,18 +376,90 @@ def crear_reporte(
             ruta_evidencia.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=error.msg)
 
-    # El aviso a las zonas seguras va aqui, con el reporte ya confirmado en la BD.
-    avisos = _notificar_zonas_seguras(id_reporte, punto_wkt, usuario["id_usuario"])
+    # Los avisos van aqui, con el reporte ya confirmado en la BD. Primero los del
+    # grupo: quien es miembro y además tiene una zona segura cerca recibe un solo
+    # aviso, el del grupo. Un reporte privado no avisa a las zonas seguras.
+    avisos_grupo = _notificar_grupos(id_reporte, ids_grupos, usuario["id_usuario"])
+    avisos = 0 if visibilidad == "GRUPO" else _notificar_zonas_seguras(id_reporte, punto_wkt, usuario["id_usuario"])
     # El push sale después de responder, igual que los correos: no demora el reporte.
-    if avisos:
+    if avisos or avisos_grupo:
         tareas.add_task(push.enviar_alertas_de_reporte, id_reporte)
 
     return {
         "id_reporte": id_reporte,
         "estado": "PENDIENTE",
+        "visibilidad": visibilidad,
         "evidencia_url": evidencia_url,
         "zonas_notificadas": avisos,
+        "grupos": ids_grupos,
+        "miembros_notificados": avisos_grupo,
     }
+
+
+def _leer_ids_grupos(texto: str) -> list[int]:
+    try:
+        ids = {int(parte) for parte in texto.split(",") if parte.strip()}
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Los grupos elegidos no son válidos")
+    if any(id_grupo < 1 for id_grupo in ids):
+        raise HTTPException(status_code=422, detail="Los grupos elegidos no son válidos")
+    return sorted(ids)
+
+
+def _validar_grupos_del_reporte(ids_grupos: list[int], id_usuario: int, punto_wkt: str) -> None:
+    """Cada grupo elegido debe estar activo, tener al autor como miembro y contener el punto del incidente."""
+    marcas = ", ".join(["%s"] * len(ids_grupos))
+    validos = consultar(
+        f"""
+        SELECT g.id_grupo
+        FROM grupo g
+        JOIN grupo_miembro m ON m.id_grupo = g.id_grupo AND m.id_usuario = %s
+        WHERE g.id_grupo IN ({marcas})
+          AND g.activo = 1
+          AND ST_Distance_Sphere(g.centro, {PUNTO_SQL}) <= g.radio_metros
+        """,
+        (id_usuario, *ids_grupos, punto_wkt),
+    )
+    if len(validos) != len(ids_grupos):
+        raise HTTPException(
+            status_code=422,
+            detail="Solo puedes compartir el reporte en tus grupos cuya área incluye el lugar del incidente",
+        )
+
+
+def _notificar_grupos(id_reporte: int, ids_grupos: list[int], id_autor: int) -> int:
+    """Avisa a los miembros de los grupos donde se compartió el reporte.
+
+    Igual que _notificar_zonas_seguras: corre fuera de la transacción del reporte
+    y, si falla, solo se pierde el aviso (el reporte ya está en el chat del grupo).
+    Quien está en varios de esos grupos recibe un solo aviso.
+    """
+    if not ids_grupos:
+        return 0
+    marcas = ", ".join(["%s"] * len(ids_grupos))
+    try:
+        with transaccion() as cursor:
+            cursor.execute(
+                f"""
+                INSERT INTO notificacion (id_usuario, id_reporte, id_grupo, motivo)
+                SELECT id_usuario, %s, id_grupo, 'GRUPO'
+                FROM (
+                    SELECT m.id_usuario, m.id_grupo,
+                           ROW_NUMBER() OVER (PARTITION BY m.id_usuario ORDER BY m.id_grupo) AS orden
+                    FROM grupo_miembro m
+                    JOIN usuario u ON u.id_usuario = m.id_usuario
+                    WHERE m.id_grupo IN ({marcas})
+                      AND m.id_usuario <> %s
+                      AND u.estado = 'ACTIVO'
+                ) AS candidatos
+                WHERE orden = 1
+                """,
+                (id_reporte, *ids_grupos, id_autor),
+            )
+            return cursor.rowcount or 0
+    except mysql.connector.Error as error:
+        log.error("No se pudieron generar los avisos de grupo del reporte %s: %s", id_reporte, error)
+        return 0
 
 
 def _notificar_zonas_seguras(id_reporte: int, punto_wkt: str, id_autor: int) -> int:
@@ -398,10 +495,14 @@ def _notificar_zonas_seguras(id_reporte: int, punto_wkt: str, id_autor: int) -> 
                       AND u.estado = 'ACTIVO'
                       AND COALESCE(p.notif_zona_activa, 1) = 1
                       AND ST_Distance_Sphere(z.centro, {PUNTO_SQL}) <= z.radio_metros
+                      AND NOT EXISTS (
+                          SELECT 1 FROM notificacion n
+                          WHERE n.id_reporte = %s AND n.id_usuario = z.id_usuario
+                      )
                 ) AS candidatas
                 WHERE orden = 1
                 """,
-                (id_reporte, punto_wkt, punto_wkt, id_autor, punto_wkt),
+                (id_reporte, punto_wkt, punto_wkt, id_autor, punto_wkt, id_reporte),
             )
             return cursor.rowcount or 0
     except mysql.connector.Error as error:
@@ -450,6 +551,34 @@ def alias_autor(id_reporte: int) -> str:
     return f"Suricata {adjetivo} {numero}"
 
 
+def puede_ver_reporte(id_reporte: int, id_autor: int, visibilidad: str, id_usuario: int | None) -> bool:
+    """Un reporte GRUPO solo lo ven su autor y los miembros de los grupos activos donde se compartió."""
+    if visibilidad == "PUBLICO":
+        return True
+    if id_usuario is None:
+        return False
+    if id_usuario == id_autor:
+        return True
+    return bool(consultar(
+        """
+        SELECT 1
+        FROM grupo_reporte gr
+        JOIN grupo g ON g.id_grupo = gr.id_grupo AND g.activo = 1
+        JOIN grupo_miembro m ON m.id_grupo = gr.id_grupo AND m.id_usuario = %s
+        WHERE gr.id_reporte = %s
+        LIMIT 1
+        """,
+        (id_usuario, id_reporte),
+    ))
+
+
+def verificar_acceso_reporte(id_reporte: int, id_usuario: int | None) -> None:
+    """404 si el reporte no existe o es privado de un grupo ajeno: no se revela cuál de los dos."""
+    filas = consultar("SELECT id_usuario, visibilidad FROM reporte WHERE id_reporte = %s", (id_reporte,))
+    if not filas or not puede_ver_reporte(id_reporte, filas[0]["id_usuario"], filas[0]["visibilidad"], id_usuario):
+        raise HTTPException(status_code=404, detail="Reporte no encontrado")
+
+
 @router.get("/{id_reporte}")
 def detalle_reporte(
     id_reporte: int = PathParam(ge=1),
@@ -457,7 +586,7 @@ def detalle_reporte(
 ):
     filas = consultar(
         """
-        SELECT r.id_reporte, r.id_usuario, r.id_comuna, r.estado,
+        SELECT r.id_reporte, r.id_usuario, r.id_comuna, r.estado, r.visibilidad,
                r.total_confirmaciones, r.total_desmentidos,
                c.codigo AS categoria_codigo, c.nombre AS categoria, c.color_hex, c.id_entidad,
                ST_Latitude(r.ubicacion) AS latitud, ST_Longitude(r.ubicacion) AS longitud,
@@ -469,7 +598,8 @@ def detalle_reporte(
         """,
         (id_reporte,),
     )
-    if not filas:
+    id_usuario = usuario["id_usuario"] if usuario is not None else None
+    if not filas or not puede_ver_reporte(id_reporte, filas[0]["id_usuario"], filas[0]["visibilidad"], id_usuario):
         raise HTTPException(status_code=404, detail="Reporte no encontrado")
     r = filas[0]
 
@@ -503,6 +633,7 @@ def detalle_reporte(
         "direccion": r["direccion"],
         "descripcion": r["descripcion"],
         "estado": r["estado"],
+        "visibilidad": r["visibilidad"],
         "fecha_creacion": r["fecha_creacion"],
         "fecha_expiracion": r["fecha_expiracion"],
         "autor": alias_autor(r["id_reporte"]),
@@ -524,13 +655,13 @@ def _reporte_votable(id_reporte: int, id_usuario: int) -> dict:
     """Valida que el reporte admita votos de este usuario y lo devuelve."""
     filas = consultar(
         """
-        SELECT id_usuario, estado,
+        SELECT id_usuario, estado, visibilidad,
                (fecha_expiracion IS NOT NULL AND fecha_expiracion <= NOW()) AS vencido
         FROM reporte WHERE id_reporte = %s
         """,
         (id_reporte,),
     )
-    if not filas:
+    if not filas or not puede_ver_reporte(id_reporte, filas[0]["id_usuario"], filas[0]["visibilidad"], id_usuario):
         raise HTTPException(status_code=404, detail="Reporte no encontrado")
     reporte = filas[0]
     if reporte["id_usuario"] == id_usuario:
@@ -573,6 +704,7 @@ def quitar_voto(
     usuario: dict = Depends(usuario_actual),
 ):
     """Retira el voto propio. Si no había voto, responde igual (operación idempotente)."""
+    verificar_acceso_reporte(id_reporte, usuario["id_usuario"])
     ejecutar(
         "DELETE FROM reporte_voto WHERE id_reporte = %s AND id_usuario = %s",
         (id_reporte, usuario["id_usuario"]),

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart' show LatLng;
+import 'package:rb_alertas/servicios/grupos_servicio.dart';
 import 'package:rb_alertas/servicios/reporte_servicio.dart';
 import 'package:rb_alertas/servicios/sesion.dart';
 import 'package:rb_alertas/servicios/ubicacion_servicio.dart';
@@ -30,6 +31,7 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
   final _mapController = MapController();
   final _reporteServicio = ReporteServicio();
   final _ubicacionServicio = UbicacionServicio();
+  final _gruposServicio = GruposServicio();
 
   List<CategoriaIncidente>? _categorias;
   String? _errorCategorias;
@@ -52,6 +54,13 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
   int _versionUbicacion = 0;
 
   bool _enviando = false;
+
+  // Grupos del usuario cuyo círculo contiene la ubicación elegida. Vacío si no
+  // tiene grupos ahí: la sección no se muestra y el reporte es uno normal.
+  List<GrupoEnPunto> _gruposDisponibles = [];
+  final Set<int> _gruposElegidos = {};
+  // Privado: solo lo ven los vecinos de los grupos elegidos.
+  bool _soloGrupo = false;
 
   @override
   void initState() {
@@ -125,6 +134,7 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
     if (_mapaListo) {
       _mapController.move(punto, _mapController.camera.zoom);
     }
+    _buscarGrupos(punto);
 
     final direccion = await _ubicacionServicio.obtenerDireccion(punto);
     // Si el usuario ya marcó otro punto, esta respuesta llegó tarde.
@@ -134,6 +144,35 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
           direccion ??
           '${punto.latitude.toStringAsFixed(5)}, ${punto.longitude.toStringAsFixed(5)}';
     });
+  }
+
+  /// Revisa en qué grupos del usuario cae el punto. Si falla, el reporte se
+  /// puede enviar igual como uno normal: los grupos son un extra.
+  Future<void> _buscarGrupos(LatLng punto) async {
+    final token = Sesion.token;
+    if (token == null || token.isEmpty) return;
+    try {
+      final grupos = await _gruposServicio.enPunto(
+        token: token,
+        latitud: punto.latitude,
+        longitud: punto.longitude,
+      );
+      // Si el usuario ya marcó otro punto, esta respuesta llegó tarde.
+      if (!mounted || _ubicacion != punto) return;
+      setState(() {
+        _gruposDisponibles = grupos;
+        // Se conservan solo los elegidos que siguen conteniendo el punto.
+        _gruposElegidos.retainWhere((id) => grupos.any((g) => g.id == id));
+        if (_gruposElegidos.isEmpty) _soloGrupo = false;
+      });
+    } catch (_) {
+      if (!mounted || _ubicacion != punto) return;
+      setState(() {
+        _gruposDisponibles = [];
+        _gruposElegidos.clear();
+        _soloGrupo = false;
+      });
+    }
   }
 
   /// Abre un mapa grande para mover el pin hasta el lugar exacto.
@@ -208,10 +247,16 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
         longitud: _ubicacion.longitude,
         direccion: _direccion,
         evidencia: _evidencia,
+        idsGrupos: _gruposElegidos.toList(),
+        soloGrupo: _soloGrupo,
       );
 
       if (!mounted) return;
-      _mostrarMensaje('Reporte enviado. ¡Gracias por alertar a tu comunidad!');
+      _mostrarMensaje(
+        _soloGrupo
+            ? 'Reporte enviado a tu grupo. ¡Gracias por avisar a tus vecinos!'
+            : 'Reporte enviado. ¡Gracias por alertar a tu comunidad!',
+      );
       Navigator.pop(context, _ubicacion);
     } on ReporteServicioException catch (e) {
       if (!mounted) return;
@@ -283,6 +328,12 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
                           const EtiquetaSeccion('Ubicación'),
                           const SizedBox(height: 12),
                           _tarjetaUbicacion(),
+                          if (_gruposDisponibles.isNotEmpty) ...[
+                            const SizedBox(height: 26),
+                            const EtiquetaSeccion('Compartir en tus grupos'),
+                            const SizedBox(height: 12),
+                            _seccionGrupos(),
+                          ],
                           const SizedBox(height: 26),
                           const EtiquetaSeccion('Descripción'),
                           const SizedBox(height: 12),
@@ -545,6 +596,72 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
     );
   }
 
+  Widget _seccionGrupos() {
+    final hayElegidos = _gruposElegidos.isNotEmpty;
+    // Material y no Container con color: el SwitchListTile pinta su efecto
+    // al tocarlo sobre el Material más cercano.
+    return Material(
+      color: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(RBRadios.tarjeta + 4),
+        side: const BorderSide(color: RBColores.linea),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 16, 12, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'El lugar está dentro de estos grupos. Elige dónde quieres que aparezca.',
+              style: TextStyle(fontSize: 14.5, height: 1.4, color: RBColores.texto2),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final grupo in _gruposDisponibles)
+                  ChipFiltro(
+                    etiqueta: grupo.nombre,
+                    activo: _gruposElegidos.contains(grupo.id),
+                    conCheck: true,
+                    icono: const Icon(Icons.groups_rounded, size: 19, color: RBColores.azul),
+                    onTap: () => setState(() {
+                      if (!_gruposElegidos.remove(grupo.id)) _gruposElegidos.add(grupo.id);
+                      if (_gruposElegidos.isEmpty) _soloGrupo = false;
+                    }),
+                  ),
+              ],
+            ),
+            // La opción de privacidad solo tiene sentido si hay un grupo elegido.
+            if (hayElegidos) ...[
+              const SizedBox(height: 8),
+              const Divider(color: RBColores.linea),
+              SwitchListTile(
+                value: _soloGrupo,
+                onChanged: (valor) => setState(() => _soloGrupo = valor),
+                contentPadding: EdgeInsets.zero,
+                activeThumbColor: Colors.white,
+                activeTrackColor: RBColores.verde,
+                secondary: const Icon(Icons.lock_outline_rounded, color: RBColores.azul),
+                title: const Text(
+                  'Solo para el grupo',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: RBColores.tinta),
+                ),
+                subtitle: Text(
+                  _soloGrupo
+                      ? 'No aparecerá en el mapa ni avisará a otros vecinos de la zona.'
+                      : 'También aparecerá en el mapa para toda la comunidad.',
+                  style: const TextStyle(fontSize: 14, height: 1.35, color: RBColores.texto2),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _campoDescripcion() {
     // FormField propio para que el contador quede dentro de la caja, abajo a
     // la derecha, y el error de validación aparezca debajo.
@@ -682,10 +799,13 @@ class _ReportarIncidenteVistaState extends State<ReportarIncidenteVista> {
               color: RBColores.verde50,
               borderRadius: BorderRadius.circular(16),
             ),
-            child: const Text(
-              'Se avisará a los vecinos que estén cerca del lugar. '
-              '¡Gracias por cuidar tu barrio!',
-              style: TextStyle(
+            child: Text(
+              _soloGrupo
+                  ? 'Se avisará solo a los vecinos de tu grupo. '
+                      '¡Gracias por cuidar tu barrio!'
+                  : 'Se avisará a los vecinos que estén cerca del lugar. '
+                      '¡Gracias por cuidar tu barrio!',
+              style: const TextStyle(
                 fontSize: 14,
                 height: 1.35,
                 fontWeight: FontWeight.w500,

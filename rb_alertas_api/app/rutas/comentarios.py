@@ -8,7 +8,7 @@ import mysql.connector
 
 from app import push
 from app.db import consultar, ejecutar, transaccion
-from app.rutas.reportes import ADJETIVOS_SURICATA, CARPETA_UPLOADS, _detectar_formato, alias_autor
+from app.rutas.reportes import ADJETIVOS_SURICATA, CARPETA_UPLOADS, _detectar_formato, alias_autor, puede_ver_reporte
 from app.seguridad import usuario_actual, usuario_opcional
 
 router = APIRouter()
@@ -82,10 +82,11 @@ def comentarios_de_reporte(id_reporte: int) -> list[dict]:
     )
 
 
-def _reporte(id_reporte: int) -> dict:
+def _reporte(id_reporte: int, usuario: dict | None) -> dict:
+    """El reporte, si quien consulta puede verlo (los privados de grupo solo los ven sus miembros)."""
     filas = consultar(
         """
-        SELECT r.id_reporte, r.id_usuario, r.estado, c.nombre AS categoria,
+        SELECT r.id_reporte, r.id_usuario, r.estado, r.visibilidad, c.nombre AS categoria,
                (r.estado IN ('PENDIENTE', 'VALIDADO')
                 AND (r.fecha_expiracion IS NULL OR r.fecha_expiracion > NOW())) AS vigente
         FROM reporte r
@@ -94,7 +95,8 @@ def _reporte(id_reporte: int) -> dict:
         """,
         (id_reporte,),
     )
-    if not filas:
+    id_usuario = usuario["id_usuario"] if usuario is not None else None
+    if not filas or not puede_ver_reporte(id_reporte, filas[0]["id_usuario"], filas[0]["visibilidad"], id_usuario):
         raise HTTPException(status_code=404, detail="Reporte no encontrado")
     return filas[0]
 
@@ -128,7 +130,7 @@ def listar_comentarios(
     Con sesión, los avisos de comentarios de este reporte quedan leídos: quien
     abre la conversación ya los vio.
     """
-    reporte = _reporte(id_reporte)
+    reporte = _reporte(id_reporte, usuario)
     filas = comentarios_de_reporte(id_reporte)
     alias = mapa_alias(id_reporte, reporte["id_usuario"], filas)
     id_actual = usuario["id_usuario"] if usuario else None
@@ -203,7 +205,7 @@ def crear_comentario(
     Responder a una respuesta cuelga del mismo comentario raíz (un solo nivel),
     pero el aviso push le llega a quien escribió la respuesta.
     """
-    reporte = _reporte(id_reporte)
+    reporte = _reporte(id_reporte, usuario)
     if not reporte["vigente"]:
         raise HTTPException(status_code=409, detail="Este reporte ya no admite comentarios")
 
@@ -268,7 +270,10 @@ def _avisos_comentario(reporte: dict, id_autor: int, respondido: dict | None, co
     extracto = extracto or "Adjuntó una foto"
 
     avisos = []
-    if respondido is not None and respondido["id_usuario"] != id_autor:
+    # En un reporte privado, quien comentó y después salió del grupo ya no recibe avisos.
+    if respondido is not None and respondido["id_usuario"] != id_autor and puede_ver_reporte(
+        reporte["id_reporte"], reporte["id_usuario"], reporte["visibilidad"], respondido["id_usuario"]
+    ):
         avisos.append({
             "id_usuario": respondido["id_usuario"],
             "motivo": "RESPUESTA",

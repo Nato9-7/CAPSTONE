@@ -15,8 +15,9 @@ import 'package:rb_alertas/servicios/sesion.dart';
 import 'package:rb_alertas/vistas/alertas_vista.dart';
 import 'package:rb_alertas/vistas/detalle_incidente_vista.dart';
 
-/// Avisos push (Firebase Cloud Messaging): alertas de zona segura y
-/// comentarios nuevos en los reportes propios o respuestas a un comentario.
+/// Avisos push (Firebase Cloud Messaging): alertas de zona segura, reportes
+/// nuevos en los grupos y comentarios nuevos en los reportes propios o
+/// respuestas a un comentario.
 ///
 /// Por ahora solo en Android. Si falta android/app/google-services.json,
 /// Firebase no arranca y la app sigue igual, solo que sin avisos push:
@@ -145,25 +146,33 @@ class PushServicio {
     }
   }
 
-  /// Id del reporte si el aviso es de un comentario; null si es una alerta de zona.
+  /// Id del reporte si el aviso abre un reporte (comentario o reporte de un
+  /// grupo); null si es una alerta de zona, que abre la pestaña Alertas.
   static int? reporteDeAviso(Map<String, dynamic>? datos) {
-    if (datos == null || datos['tipo'] != 'COMENTARIO') return null;
-    return int.tryParse('${datos['id_reporte'] ?? ''}');
+    final tipo = datos?['tipo'];
+    if (tipo != 'COMENTARIO' && tipo != 'GRUPO') return null;
+    return int.tryParse('${datos!['id_reporte'] ?? ''}');
   }
 
-  /// Un aviso de comentario abre su reporte; el resto, la pestaña Alertas.
+  /// Los avisos de comentario bajan hasta la conversación y van por su canal.
+  static bool esAvisoDeComentario(Map<String, dynamic>? datos) =>
+      datos?['tipo'] == 'COMENTARIO';
+
+  /// Un aviso de comentario o de grupo abre su reporte; el resto, la pestaña Alertas.
   static void abrirDesdeAviso(Map<String, dynamic>? datos) {
     final idReporte = reporteDeAviso(datos);
-    idReporte != null ? abrirReporte(idReporte) : abrirAlertas();
+    idReporte != null
+        ? abrirReporte(idReporte, irAComentarios: esAvisoDeComentario(datos))
+        : abrirAlertas();
   }
 
   /// Abre el detalle encima de la pantalla actual, para volver a ella con «atrás».
-  static void abrirReporte(int idReporte) {
+  static void abrirReporte(int idReporte, {bool irAComentarios = true}) {
     if (Sesion.token == null || Sesion.esAdmin) return;
     navegador.currentState?.push(
       MaterialPageRoute(
         builder: (context) =>
-            DetalleIncidenteVista(idReporte: idReporte, irAComentarios: true),
+            DetalleIncidenteVista(idReporte: idReporte, irAComentarios: irAComentarios),
       ),
     );
   }
@@ -234,7 +243,8 @@ class PushServicio {
   }
 
   static Future<void> _mostrarEnPrimerPlano(RemoteMessage mensaje) async {
-    final esComentario = reporteDeAviso(mensaje.data) != null;
+    final esComentario = esAvisoDeComentario(mensaje.data);
+    // Las alertas de zona y de grupo suman a la insignia de Alertas.
     if (!esComentario) EstadoAlertas.refrescarZonasSinLeer();
     final aviso = mensaje.notification;
     if (aviso == null) return;

@@ -69,6 +69,8 @@ class ReporteAdmin {
   final int desmentidos;
   final String? imagen;
   final String autor;
+  // Privado de un grupo vecinal: no sale en el mapa público.
+  final bool soloGrupo;
 
   ReporteAdmin({
     required this.id,
@@ -85,6 +87,7 @@ class ReporteAdmin {
     required this.desmentidos,
     required this.imagen,
     required this.autor,
+    this.soloGrupo = false,
   });
 
   factory ReporteAdmin.desdeJson(Map<String, dynamic> json) {
@@ -104,6 +107,106 @@ class ReporteAdmin {
       confirmaciones: (json['total_confirmaciones'] as num?)?.toInt() ?? 0,
       desmentidos: (json['total_desmentidos'] as num?)?.toInt() ?? 0,
       imagen: json['imagen']?.toString(),
+      autor: (json['autor'] ?? '').toString(),
+      soloGrupo: json['visibilidad'] == 'GRUPO',
+    );
+  }
+}
+
+/// Grupo vecinal tal como lo ve el panel: activo o cerrado, con quien lo creó.
+class GrupoAdmin {
+  final int id;
+  final String nombre;
+  final String? descripcion;
+  final int radioMetros;
+  final String? direccion;
+  final bool activo;
+  final DateTime? fechaCreacion;
+  final String creador;
+  final String creadorEmail;
+  final int totalMiembros;
+  final int totalReportes;
+  final int reportesPrivados;
+  final DateTime? ultimoReporte;
+  final bool codigoVencido;
+
+  GrupoAdmin({
+    required this.id,
+    required this.nombre,
+    required this.descripcion,
+    required this.radioMetros,
+    required this.direccion,
+    required this.activo,
+    required this.fechaCreacion,
+    required this.creador,
+    required this.creadorEmail,
+    required this.totalMiembros,
+    required this.totalReportes,
+    required this.reportesPrivados,
+    required this.ultimoReporte,
+    required this.codigoVencido,
+  });
+
+  factory GrupoAdmin.desdeJson(Map<String, dynamic> json) {
+    return GrupoAdmin(
+      id: (json['id_grupo'] as num).toInt(),
+      nombre: (json['nombre'] ?? '').toString(),
+      descripcion: json['descripcion']?.toString(),
+      radioMetros: (json['radio_metros'] as num?)?.toInt() ?? 0,
+      direccion: json['direccion']?.toString(),
+      activo: json['activo'] == true,
+      fechaCreacion: DateTime.tryParse(json['fecha_creacion']?.toString() ?? ''),
+      creador: (json['creador'] ?? '').toString().trim(),
+      creadorEmail: (json['creador_email'] ?? '').toString(),
+      totalMiembros: (json['total_miembros'] as num?)?.toInt() ?? 0,
+      totalReportes: (json['total_reportes'] as num?)?.toInt() ?? 0,
+      reportesPrivados: (json['reportes_privados'] as num?)?.toInt() ?? 0,
+      ultimoReporte: DateTime.tryParse(json['ultimo_reporte']?.toString() ?? ''),
+      codigoVencido: json['codigo_vencido'] == true,
+    );
+  }
+}
+
+/// Un reporte compartido en un grupo, para la hoja del panel.
+class ReporteDeGrupoAdmin {
+  final int id;
+  final String categoria;
+  final String categoriaCodigo;
+  final String? colorHex;
+  final String estado;
+  final bool vencido;
+  final bool soloGrupo;
+  final String descripcion;
+  final String? direccion;
+  final DateTime? fechaPublicacion;
+  final String autor;
+
+  ReporteDeGrupoAdmin({
+    required this.id,
+    required this.categoria,
+    required this.categoriaCodigo,
+    required this.colorHex,
+    required this.estado,
+    required this.vencido,
+    required this.soloGrupo,
+    required this.descripcion,
+    required this.direccion,
+    required this.fechaPublicacion,
+    required this.autor,
+  });
+
+  factory ReporteDeGrupoAdmin.desdeJson(Map<String, dynamic> json) {
+    return ReporteDeGrupoAdmin(
+      id: (json['id_reporte'] as num).toInt(),
+      categoria: (json['categoria'] ?? '').toString(),
+      categoriaCodigo: (json['categoria_codigo'] ?? '').toString(),
+      colorHex: json['color_hex']?.toString(),
+      estado: (json['estado'] ?? '').toString(),
+      vencido: json['vencido'] == true,
+      soloGrupo: json['visibilidad'] == 'GRUPO',
+      descripcion: (json['descripcion'] ?? '').toString(),
+      direccion: json['direccion']?.toString(),
+      fechaPublicacion: DateTime.tryParse(json['fecha_publicacion']?.toString() ?? ''),
       autor: (json['autor'] ?? '').toString(),
     );
   }
@@ -403,6 +506,35 @@ class AdminServicio {
   ) async {
     await _enviar('PATCH', token, '/api/admin/usuarios/$idUsuario/estado', {
       'estado': estado,
+    });
+  }
+
+  Future<List<GrupoAdmin>> grupos(
+    String token, {
+    String? buscar,
+    bool? activo,
+  }) async {
+    final cuerpo = await _get(token, '/api/admin/grupos', {
+      if (buscar != null && buscar.trim().isNotEmpty) 'buscar': buscar.trim(),
+      if (activo != null) 'activo': '$activo',
+    });
+    return [
+      for (final g in cuerpo as List)
+        GrupoAdmin.desdeJson(g as Map<String, dynamic>),
+    ];
+  }
+
+  Future<List<ReporteDeGrupoAdmin>> reportesDeGrupo(String token, int idGrupo) async {
+    final cuerpo = await _get(token, '/api/admin/grupos/$idGrupo/reportes');
+    return [
+      for (final r in cuerpo as List)
+        ReporteDeGrupoAdmin.desdeJson(r as Map<String, dynamic>),
+    ];
+  }
+
+  Future<void> cambiarEstadoGrupo(String token, int idGrupo, bool activo) async {
+    await _enviar('PATCH', token, '/api/admin/grupos/$idGrupo/estado', {
+      'activo': activo,
     });
   }
 

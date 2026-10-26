@@ -52,7 +52,7 @@ def _distancia_legible(metros) -> str:
 
 
 def enviar_alertas_de_reporte(id_reporte: int) -> None:
-    """Envía por FCM las alertas de zona segura que generó un reporte.
+    """Envía por FCM las alertas que generó un reporte: zona segura y grupo.
 
     Se llama como tarea en segundo plano después de responder: si Firebase
     falla, el reporte y las alertas ya quedaron guardados y la app las ve
@@ -62,15 +62,16 @@ def enviar_alertas_de_reporte(id_reporte: int) -> None:
         # LEFT JOIN: quien no tiene teléfono activo también aparece, para marcar su aviso FALLIDA.
         destinos = consultar(
             """
-            SELECT n.id_notificacion, n.distancia_metros,
-                   z.nombre AS zona, c.nombre AS categoria,
+            SELECT n.id_notificacion, n.motivo, n.distancia_metros, n.id_grupo,
+                   z.nombre AS zona, g.nombre AS grupo, c.nombre AS categoria,
                    d.id_dispositivo, d.token_push
             FROM notificacion n
             LEFT JOIN usuario_dispositivo d ON d.id_usuario = n.id_usuario AND d.activo = 1
             JOIN reporte r ON r.id_reporte = n.id_reporte
             JOIN categoria_incidente c ON c.id_categoria = r.id_categoria
             LEFT JOIN zona_segura z ON z.id_zona_segura = n.id_zona_segura
-            WHERE n.id_reporte = %s AND n.motivo = 'ZONA_SEGURA'
+            LEFT JOIN grupo g ON g.id_grupo = n.id_grupo
+            WHERE n.id_reporte = %s AND n.motivo IN ('ZONA_SEGURA', 'GRUPO')
             """,
             (id_reporte,),
         )
@@ -85,11 +86,8 @@ def enviar_alertas_de_reporte(id_reporte: int) -> None:
 
     if not push_configurado():
         for destino in destinos:
-            print(
-                f"[push simulado] Dispositivo {destino['id_dispositivo']} | "
-                f"Alerta cerca de {destino['zona'] or 'tu zona segura'}: {destino['categoria']}",
-                flush=True,
-            )
+            titulo, cuerpo = _textos_alerta(destino)
+            print(f"[push simulado] Dispositivo {destino['id_dispositivo']} | {titulo}: {cuerpo}", flush=True)
         return
 
     try:
@@ -103,23 +101,23 @@ def enviar_alertas_de_reporte(id_reporte: int) -> None:
 
     mensajes = []
     for destino in destinos:
-        zona = destino["zona"] or "tu zona segura"
+        titulo, cuerpo = _textos_alerta(destino)
+        # La app usa estos datos al tocar el aviso: ZONA_SEGURA abre la pestaña
+        # Alertas y GRUPO abre el reporte.
+        datos = {
+            "tipo": destino["motivo"],
+            "id_notificacion": str(destino["id_notificacion"]),
+            "id_reporte": str(id_reporte),
+        }
+        if destino["id_grupo"] is not None:
+            datos["id_grupo"] = str(destino["id_grupo"])
         mensajes.append((
             destino["id_notificacion"],
             messaging.Message(
                 # token_push guarda el FID del teléfono (la app lo recibe por onRegistered).
                 fid=destino["token_push"],
-                notification=messaging.Notification(
-                    title=f"Alerta cerca de {zona}",
-                    body=f"Nuevo reporte: {destino['categoria']}, "
-                    f"{_distancia_legible(destino['distancia_metros'])} de tu zona.",
-                ),
-                # La app usa estos datos para abrir la pestaña Alertas al tocar el aviso.
-                data={
-                    "tipo": "ZONA_SEGURA",
-                    "id_notificacion": str(destino["id_notificacion"]),
-                    "id_reporte": str(id_reporte),
-                },
+                notification=messaging.Notification(title=titulo, body=cuerpo),
+                data=datos,
                 android=messaging.AndroidConfig(
                     priority="high",
                     notification=messaging.AndroidNotification(channel_id=CANAL_ANDROID),
@@ -128,6 +126,18 @@ def enviar_alertas_de_reporte(id_reporte: int) -> None:
         ))
 
     _marcar_envio(_enviar_mensajes(messaging, app, mensajes, id_reporte), intentadas)
+
+
+def _textos_alerta(destino: dict) -> tuple[str, str]:
+    """Título y cuerpo del aviso según su motivo."""
+    if destino["motivo"] == "GRUPO":
+        grupo = destino["grupo"] or "tu grupo"
+        return f"Nuevo reporte en {grupo}", f"{destino['categoria']}: toca para ver el reporte."
+    zona = destino["zona"] or "tu zona segura"
+    return (
+        f"Alerta cerca de {zona}",
+        f"Nuevo reporte: {destino['categoria']}, {_distancia_legible(destino['distancia_metros'])} de tu zona.",
+    )
 
 
 def enviar_avisos_comentario(id_reporte: int, avisos: list[dict]) -> None:

@@ -587,6 +587,7 @@ class _DetalleIncidenteVistaState extends State<DetalleIncidenteVista> {
               grande: true,
               texto: estado == EstadoVisual.validada ? 'Validada por vecinos' : null,
             ),
+            if (d.soloGrupo) const ChipSoloGrupo(grande: true),
           ],
         ),
         const SizedBox(height: 16),
