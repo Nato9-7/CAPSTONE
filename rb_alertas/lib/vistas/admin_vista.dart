@@ -5,7 +5,8 @@ import 'package:rb_alertas/servicios/estado_alertas_servicio.dart';
 import 'package:rb_alertas/servicios/perfil_servicio.dart';
 import 'package:rb_alertas/servicios/sesion.dart';
 import 'package:rb_alertas/tema/rb_tema.dart';
-import 'package:rb_alertas/vistas/admin_grafo_vista.dart';
+import 'package:rb_alertas/vistas/admin_red_vista.dart';
+import 'package:rb_alertas/widgets/lienzo_grafo.dart';
 import 'package:rb_alertas/vistas/mapa_vista.dart';
 import 'package:rb_alertas/widgets/categoria_visual.dart';
 import 'package:rb_alertas/widgets/rb_componentes.dart';
@@ -104,10 +105,50 @@ Widget _mensajeCentro(String texto, {VoidCallback? reintentar}) {
 
 /// Panel de administración: es la única pantalla de la cuenta admin (el login
 /// la abre en vez del mapa). La API vuelve a comprobarlo en cada ruta /api/admin.
-class AdminVista extends StatelessWidget {
+///
+/// En pantallas anchas (computador) usa un menú lateral; en el celular, pestañas.
+class AdminVista extends StatefulWidget {
   const AdminVista({super.key});
 
-  Future<void> _cerrarSesion(BuildContext context) async {
+  @override
+  State<AdminVista> createState() => _AdminVistaState();
+}
+
+class _AdminVistaState extends State<AdminVista> with SingleTickerProviderStateMixin {
+  static const _secciones = [
+    ('Resumen', Icons.dashboard_outlined, Icons.dashboard_rounded),
+    ('Reportes', Icons.report_outlined, Icons.report_rounded),
+    ('Usuarios', Icons.people_outline_rounded, Icons.people_rounded),
+    ('Grupos', Icons.groups_outlined, Icons.groups_rounded),
+    ('Red', Icons.hub_outlined, Icons.hub_rounded),
+  ];
+
+  late final TabController _pestanas = TabController(length: _secciones.length, vsync: this)
+    ..addListener(() {
+      if (_indice != _pestanas.index) setState(() => _indice = _pestanas.index);
+    });
+  int _indice = 0;
+
+  late final List<Widget> _paginas = [
+    _PestanaResumen(alAbrirRed: () => _ir(4)),
+    const _PestanaReportes(),
+    const _PestanaUsuarios(),
+    const _PestanaGrupos(),
+    const SeccionRed(),
+  ];
+
+  @override
+  void dispose() {
+    _pestanas.dispose();
+    super.dispose();
+  }
+
+  void _ir(int indice) {
+    setState(() => _indice = indice);
+    _pestanas.animateTo(indice);
+  }
+
+  Future<void> _cerrarSesion() async {
     final confirmar = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -134,7 +175,7 @@ class AdminVista extends StatelessWidget {
     }
     Sesion.cerrar();
     EstadoAlertas.limpiar();
-    if (!context.mounted) return;
+    if (!mounted) return;
     Navigator.pushAndRemoveUntil(
       context,
       MaterialPageRoute(builder: (context) => const MapaVista()),
@@ -144,78 +185,141 @@ class AdminVista extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DefaultTabController(
-      length: 5,
-      child: Scaffold(
-        backgroundColor: RBColores.fondo,
-        body: SafeArea(
-          child: Column(
-            children: [
-              _encabezado(context),
-              const _SelectorPestanas(),
-              const SizedBox(height: 8),
-              const Expanded(
-                child: TabBarView(
-                  children: [
-                    _PestanaResumen(),
-                    _PestanaReportes(),
-                    _PestanaUsuarios(),
-                    _PestanaGrupos(),
-                    PestanaGrafo(),
-                  ],
-                ),
-              ),
-            ],
-          ),
+    return Scaffold(
+      backgroundColor: RBColores.fondo,
+      body: SafeArea(
+        child: LayoutBuilder(
+          builder: (context, c) => c.maxWidth >= 1000 ? _escritorio() : _movil(),
         ),
       ),
     );
   }
 
-  /// Suricata y marca de la app, como en el inicio de sesión.
-  Widget _encabezado(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 8, 14),
-      child: Row(
-        children: [
-          const AvatarSuricata(tamano: 46),
-          const SizedBox(width: 12),
-          const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                MarcaRB(tamano: 23),
-                SizedBox(height: 2),
-                Text(
-                  'Panel de Administración',
-                  style: TextStyle(fontSize: 13.5, color: RBColores.texto2),
+  /// Computador: menú lateral fijo y el contenido a la derecha.
+  Widget _escritorio() {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          width: 236,
+          color: Colors.white,
+          padding: const EdgeInsets.fromLTRB(14, 18, 14, 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Row(
+                children: [
+                  AvatarSuricata(tamano: 42),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        MarcaRB(tamano: 20),
+                        Text(
+                          'Administración',
+                          style: TextStyle(fontSize: 12.5, color: RBColores.texto2),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 26),
+              for (final (i, (nombre, icono, iconoActivo)) in _secciones.indexed)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Material(
+                    color: _indice == i ? RBColores.azul50 : Colors.transparent,
+                    borderRadius: BorderRadius.circular(12),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () => _ir(i),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+                        child: Row(
+                          children: [
+                            Icon(
+                              _indice == i ? iconoActivo : icono,
+                              size: 21,
+                              color: _indice == i ? RBColores.azul : RBColores.texto2,
+                            ),
+                            const SizedBox(width: 12),
+                            Text(
+                              nombre,
+                              style: TextStyle(
+                                fontSize: 14.5,
+                                fontWeight: _indice == i ? FontWeight.w800 : FontWeight.w600,
+                                color: _indice == i ? RBColores.azul : RBColores.tinta,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
-              ],
-            ),
+              const Spacer(),
+              TextButton.icon(
+                style: TextButton.styleFrom(
+                  foregroundColor: RBColores.rojo,
+                  alignment: Alignment.centerLeft,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                ),
+                onPressed: _cerrarSesion,
+                icon: const Icon(Icons.logout_rounded, size: 20),
+                label: const Text('Cerrar sesión'),
+              ),
+            ],
           ),
-          IconButton(
-            tooltip: 'Cerrar sesión',
-            icon: const Icon(Icons.logout_rounded, color: RBColores.rojo),
-            onPressed: () => _cerrarSesion(context),
-          ),
-        ],
-      ),
+        ),
+        const VerticalDivider(width: 1, color: RBColores.linea),
+        Expanded(child: IndexedStack(index: _indice, children: _paginas)),
+      ],
     );
   }
-}
 
-/// Pestañas segmentadas, iguales a las de la pantalla Alertas.
-class _SelectorPestanas extends StatelessWidget {
-  const _SelectorPestanas();
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: SelectorSegmentado(
-        controlador: DefaultTabController.of(context),
-        opciones: const ['Resumen', 'Reportes', 'Usuarios', 'Grupos', 'Grafo'],
-      ),
+  /// Celular: encabezado con la marca y pestañas segmentadas.
+  Widget _movil() {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 8, 14),
+          child: Row(
+            children: [
+              const AvatarSuricata(tamano: 46),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    MarcaRB(tamano: 23),
+                    SizedBox(height: 2),
+                    Text(
+                      'Panel de Administración',
+                      style: TextStyle(fontSize: 13.5, color: RBColores.texto2),
+                    ),
+                  ],
+                ),
+              ),
+              IconButton(
+                tooltip: 'Cerrar sesión',
+                icon: const Icon(Icons.logout_rounded, color: RBColores.rojo),
+                onPressed: _cerrarSesion,
+              ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: SelectorSegmentado(
+            controlador: _pestanas,
+            opciones: [for (final (nombre, _, _) in _secciones) nombre],
+          ),
+        ),
+        const SizedBox(height: 8),
+        Expanded(child: TabBarView(controller: _pestanas, children: _paginas)),
+      ],
     );
   }
 }
@@ -224,7 +328,10 @@ class _SelectorPestanas extends StatelessWidget {
 // Resumen
 
 class _PestanaResumen extends StatefulWidget {
-  const _PestanaResumen();
+  /// Abre la sección Red (desde la miniatura).
+  final VoidCallback alAbrirRed;
+
+  const _PestanaResumen({required this.alAbrirRed});
 
   @override
   State<_PestanaResumen> createState() => _PestanaResumenState();
@@ -234,6 +341,8 @@ class _PestanaResumenState extends State<_PestanaResumen>
     with AutomaticKeepAliveClientMixin {
   final _servicio = AdminServicio();
   ResumenAdmin? _resumen;
+  RedGrafo? _red;
+  ResumenGrafo? _resumenRed;
   String? _error;
 
   @override
@@ -245,8 +354,26 @@ class _PestanaResumenState extends State<_PestanaResumen>
     _cargar();
   }
 
+  /// La red en miniatura es un extra: si Neo4j no responde, el resumen se ve igual.
+  Future<void> _cargarRed() async {
+    try {
+      final token = Sesion.token ?? '';
+      final red = await _servicio.red(token);
+      final resumen = await _servicio.resumenGrafo(token);
+      if (mounted) {
+        setState(() {
+          _red = red;
+          _resumenRed = resumen;
+        });
+      }
+    } catch (_) {
+      // sin miniatura
+    }
+  }
+
   Future<void> _cargar() async {
     setState(() => _error = null);
+    _cargarRed();
     try {
       final resumen = await _servicio.resumen(Sesion.token ?? '');
       if (!mounted) return;
@@ -280,6 +407,11 @@ class _PestanaResumenState extends State<_PestanaResumen>
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
         children: [
+          if (_red != null && _red!.nodos.isNotEmpty) ...[
+            _titulo('La red de vecinos'),
+            _miniRed(),
+            const SizedBox(height: 28),
+          ],
           _titulo('Reportes'),
           _filaCifras([
             ('Vigentes', r.reportesVigentes, RBColores.azul),
@@ -361,6 +493,66 @@ class _PestanaResumenState extends State<_PestanaResumen>
     padding: const EdgeInsets.only(bottom: 10, left: 4),
     child: EtiquetaSeccion(texto),
   );
+
+  /// Vista pequeña de quién apoya a quién, con los hallazgos al lado.
+  Widget _miniRed() {
+    final r = _resumenRed;
+    Widget cifra(int? valor, String texto, Color color) => Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        children: [
+          Text(
+            '${valor ?? 0}',
+            style: TextStyle(fontFamily: RBFuentes.titulos, fontSize: 24, fontWeight: FontWeight.w800, color: color),
+          ),
+          const SizedBox(width: 8),
+          Expanded(child: Text(texto, style: const TextStyle(fontSize: 13, color: RBColores.texto2))),
+        ],
+      ),
+    );
+    final cifras = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        cifra(r?.sospechosos, 'grupos de cuentas sospechosas', RBColores.rojo),
+        cifra(r?.bajaReputacion, 'vecinos con reputación baja', colorAmbarRed),
+        cifra(r?.incidentesAbiertos, 'incidentes abiertos con varios reportes', RBColores.azul),
+        FilledButton.icon(
+          onPressed: widget.alAbrirRed,
+          icon: const Icon(Icons.hub_rounded, size: 18),
+          label: const Text('Explorar la red'),
+        ),
+      ],
+    );
+    final lienzo = SizedBox(
+      height: 220,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: ColoredBox(
+          color: RBColores.fondo,
+          child: LienzoGrafo(nodos: _red!.nodos, aristas: _red!.aristas, interactivo: false),
+        ),
+      ),
+    );
+    return TarjetaRB(
+      onTap: widget.alAbrirRed,
+      child: LayoutBuilder(
+        builder: (context, c) => c.maxWidth >= 560
+            ? Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(flex: 3, child: lienzo),
+                  const SizedBox(width: 18),
+                  Expanded(flex: 2, child: cifras),
+                ],
+              )
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [lienzo, const SizedBox(height: 14), cifras],
+              ),
+      ),
+    );
+  }
 
   Widget _filaCifras(List<(String, int, Color)> cifras) {
     return Row(
