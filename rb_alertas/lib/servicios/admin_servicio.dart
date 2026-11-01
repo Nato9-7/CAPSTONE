@@ -71,6 +71,11 @@ class ReporteAdmin {
   final String autor;
   // Privado de un grupo vecinal: no sale en el mapa público.
   final bool soloGrupo;
+  final double? latitud;
+  final double? longitud;
+  // Comentarios publicados y ocultos por moderación.
+  final int comentarios;
+  final int comentariosOcultos;
 
   ReporteAdmin({
     required this.id,
@@ -88,7 +93,13 @@ class ReporteAdmin {
     required this.imagen,
     required this.autor,
     this.soloGrupo = false,
+    this.latitud,
+    this.longitud,
+    this.comentarios = 0,
+    this.comentariosOcultos = 0,
   });
+
+  bool get tieneUbicacion => latitud != null && longitud != null;
 
   factory ReporteAdmin.desdeJson(Map<String, dynamic> json) {
     return ReporteAdmin(
@@ -109,6 +120,10 @@ class ReporteAdmin {
       imagen: json['imagen']?.toString(),
       autor: (json['autor'] ?? '').toString(),
       soloGrupo: json['visibilidad'] == 'GRUPO',
+      latitud: (json['latitud'] as num?)?.toDouble(),
+      longitud: (json['longitud'] as num?)?.toDouble(),
+      comentarios: (json['total_comentarios'] as num?)?.toInt() ?? 0,
+      comentariosOcultos: (json['comentarios_ocultos'] as num?)?.toInt() ?? 0,
     );
   }
 }
@@ -558,9 +573,14 @@ class AdminServicio {
     return ResumenAdmin.desdeJson(cuerpo as Map<String, dynamic>);
   }
 
-  Future<List<ReporteAdmin>> reportes(String token, {String? estado}) async {
+  Future<List<ReporteAdmin>> reportes(
+    String token, {
+    String? estado,
+    int limite = 100,
+  }) async {
     final cuerpo = await _get(token, '/api/admin/reportes', {
       'estado': ?estado,
+      'limite': '$limite',
     });
     return [
       for (final r in cuerpo as List)
@@ -612,6 +632,26 @@ class AdminServicio {
       'estado': estado,
       'motivo': ?motivo,
     });
+  }
+
+  /// Elimina el reporte para siempre (con sus votos, comentarios y fotos).
+  Future<void> eliminarReporte(String token, int idReporte) async {
+    await _enviar('DELETE', token, '/api/admin/reportes/$idReporte', null);
+  }
+
+  /// Elimina un comentario (y su foto). No se puede deshacer.
+  Future<void> eliminarComentario(String token, int idComentario) async {
+    await _enviar('DELETE', token, '/api/admin/comentarios/$idComentario', null);
+  }
+
+  /// Suspende a quien escribió el comentario (sin revelar quién es).
+  Future<void> suspenderAutorComentario(String token, int idComentario) async {
+    await _enviar(
+      'POST',
+      token,
+      '/api/admin/comentarios/$idComentario/suspender-autor',
+      null,
+    );
   }
 
   Future<void> suspenderAutor(String token, int idReporte) async {
