@@ -130,7 +130,7 @@ def _filas_mysql() -> dict[str, list[dict]]:
             "WHERE id_localidad IN (SELECT DISTINCT id_localidad FROM reporte WHERE id_localidad IS NOT NULL)"
         ),
         "votos": [{**v, "fecha_voto": _texto_fecha(v["fecha_voto"])} for v in votos],
-        "zonas": _opcional("SELECT id_zona_segura, id_usuario, tipo, nombre, radio_metros, activa FROM zona_segura"),
+        "zonas": _opcional("SELECT id_zona_segura, id_usuario, nombre, radio_metros, activa FROM zona_segura"),
         "avisos": _opcional(
             "SELECT id_reporte, id_zona_segura, distancia_metros FROM notificacion "
             "WHERE id_zona_segura IS NOT NULL AND id_reporte IS NOT NULL"
@@ -189,7 +189,7 @@ _CYPHER_RECONSTRUIR = [
        CREATE (u)-[:VOTO {tipo: v.tipo_voto, fecha: v.fecha_voto}]->(r)""",
     """UNWIND $zonas AS z
        MATCH (u:Usuario {id: z.id_usuario})
-       CREATE (u)-[:TIENE_ZONA]->(:ZonaSegura {id: z.id_zona_segura, tipo: z.tipo, nombre: z.nombre,
+       CREATE (u)-[:TIENE_ZONA]->(:ZonaSegura {id: z.id_zona_segura, nombre: z.nombre,
                                               radio: z.radio_metros, activa: z.activa = 1})""",
     """UNWIND $avisos AS a
        MATCH (r:Reporte {id: a.id_reporte}), (z:ZonaSegura {id: a.id_zona_segura})

@@ -450,7 +450,8 @@ def cuentas_sospechosas():
             """
             MATCH (c:Coordinacion)<-[:MIEMBRO_DE]-(u:Usuario)
             WITH c, u ORDER BY u.alias
-            RETURN properties(c) AS grupo, collect(properties(u)) AS miembros
+            WITH c, collect(properties(u)) AS miembros
+            RETURN properties(c) AS grupo, miembros
             ORDER BY c.reciprocidad DESC, c.confirmaciones_internas DESC
             """
         )
