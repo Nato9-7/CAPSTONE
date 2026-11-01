@@ -455,10 +455,31 @@ def cuentas_sospechosas():
             ORDER BY c.reciprocidad DESC, c.confirmaciones_internas DESC
             """
         )
+        evidencia = grafo.consultar_grafo(
+            """
+            MATCH (c:Coordinacion)<-[:MIEMBRO_DE]-(a:Usuario)-[v:VOTO {tipo: 'CONFIRMA'}]->(r:Reporte)
+                  <-[:CREO]-(b:Usuario)-[:MIEMBRO_DE]->(c)
+            WHERE a <> b
+            RETURN c.id AS grupo, a.alias AS votante, b.alias AS autor, r.id AS reporte,
+                   r.categoria AS categoria, v.fecha AS fecha
+            ORDER BY v.fecha DESC
+            """
+        )
+        afuera = grafo.consultar_grafo(
+            """
+            MATCH (c:Coordinacion)<-[:MIEMBRO_DE]-(a:Usuario)-[:VOTO {tipo: 'CONFIRMA'}]->(:Reporte)<-[:CREO]-(b:Usuario)
+            WHERE NOT (b)-[:MIEMBRO_DE]->(c) AND a <> b
+            RETURN c.id AS grupo, count(*) AS total
+            """
+        )
+        externas = {f["grupo"]: f["total"] for f in afuera}
         return [
             {
                 **_nodo("Coordinacion", f["grupo"]),
                 "miembros": [_nodo("Usuario", m) for m in f["miembros"]],
+                # Por qué es sospechoso: cada voto dentro del grupo y cuántos dieron afuera.
+                "evidencia": [e for e in evidencia if e["grupo"] == f["grupo"]["id"]],
+                "confirmaciones_afuera": externas.get(f["grupo"]["id"], 0),
             }
             for f in filas
         ]
@@ -475,7 +496,7 @@ def suspender_sospechosos(id_grupo: int = PathParam(ge=1)):
     ))
     if not miembros:
         raise HTTPException(status_code=404, detail="Ese grupo ya no está entre los sospechosos")
-    suspendidas = 0
+    suspendidas = []
     with transaccion() as cursor:
         for m in miembros:
             cursor.execute("SELECT email, estado FROM usuario WHERE id_usuario = %s FOR UPDATE", (m["id"],))
@@ -485,9 +506,9 @@ def suspender_sospechosos(id_grupo: int = PathParam(ge=1)):
             if usuario["email"].strip().lower() in CORREOS_ADMIN:
                 continue
             _suspender(cursor, m["id"])
-            suspendidas += 1
+            suspendidas.append(m["id"])
     _resincronizar()
-    return {"id_grupo": id_grupo, "suspendidas": suspendidas}
+    return {"id_grupo": id_grupo, "suspendidas": len(suspendidas), "ids": suspendidas}
 
 
 @router.get("/grafo/reputacion")
@@ -607,6 +628,206 @@ def _resincronizar() -> None:
         grafo.sincronizar()
     except Exception:  # noqa: BLE001 - el cambio en MySQL ya quedó hecho
         pass
+
+
+# -- Explorador de la red ------------------------------------------------------
+
+_PROYECCION_RELACION = """
+RETURN labels(startNode(rel))[0] AS tipo_a, properties(startNode(rel)) AS a,
+       type(rel) AS tipo_rel, properties(rel) AS datos_rel,
+       labels(endNode(rel))[0] AS tipo_b, properties(endNode(rel)) AS b
+"""
+
+
+def _armar_red(filas: list[dict], extra_nodos: list[dict] | None = None) -> dict:
+    """Nodos y aristas sin repetir a partir de filas (a)-[rel]->(b)."""
+    nodos: dict[str, dict] = {n["clave"]: n for n in (extra_nodos or [])}
+    aristas = []
+    for fila in filas:
+        a, b = _nodo(fila["tipo_a"], fila["a"]), _nodo(fila["tipo_b"], fila["b"])
+        nodos.setdefault(a["clave"], a)
+        nodos.setdefault(b["clave"], b)
+        aristas.append({"origen": a["clave"], "destino": b["clave"], "tipo": fila["tipo_rel"], "datos": fila["datos_rel"] or {}})
+    return {"nodos": list(nodos.values()), "aristas": aristas}
+
+
+def _comunidades(red: dict) -> None:
+    """Marca cada nodo con su comunidad: grupos de vecinos y reportes unidos por votos o
+    creación. Lugares y categorías no cuentan (unirían a todos por igual)."""
+    padre: dict[str, str] = {}
+
+    def raiz(x: str) -> str:
+        padre.setdefault(x, x)
+        while padre[x] != x:
+            padre[x] = padre[padre[x]]
+            x = padre[x]
+        return x
+
+    for arista in red["aristas"]:
+        if arista["tipo"] in ("CREO", "VOTO", "CONFIRMA_A", "DESMIENTE_A", "AGRUPA", "MIEMBRO_DE"):
+            padre[raiz(arista["origen"])] = raiz(arista["destino"])
+    tamanos: dict[str, int] = {}
+    for n in red["nodos"]:
+        tamanos[raiz(n["clave"])] = tamanos.get(raiz(n["clave"]), 0) + 1
+    # Numeradas de la más grande a la más chica; las de un solo nodo quedan sin comunidad.
+    orden = {r: i for i, r in enumerate(sorted((r for r, t in tamanos.items() if t > 1), key=lambda r: -tamanos[r]))}
+    for n in red["nodos"]:
+        n["comunidad"] = orden.get(raiz(n["clave"]))
+
+
+@router.get("/grafo/red")
+def red_completa(
+    modo: Literal["vecinos", "completa"] = "vecinos",
+    dias: int | None = Query(None, ge=1, le=3650),
+    capas: str = Query("lugares,incidentes,sospechosos", max_length=100),
+    limite: int = Query(300, ge=10, le=1000),
+):
+    """La red para el explorador del panel.
+
+    - modo=vecinos: solo vecinos, unidos por quién confirma o desmiente a quién; el
+      peso de cada unión es cuántas veces lo hizo.
+    - modo=completa: vecinos y reportes, más las capas pedidas (lugares, categorias,
+      zonas, incidentes, sospechosos).
+    `dias` limita a la actividad de los últimos N días (sin él, toda la historia).
+    """
+    pedidas = {c.strip() for c in capas.split(",") if c.strip()}
+    desde = None
+    if dias:
+        from datetime import datetime, timedelta
+
+        desde = (datetime.now() - timedelta(days=dias)).isoformat()
+
+    def consultar_red():
+        if modo == "vecinos":
+            filas = grafo.consultar_grafo(
+                """
+                MATCH (a:Usuario)-[v:VOTO]->(r:Reporte)<-[:CREO]-(b:Usuario)
+                WHERE a <> b AND ($desde IS NULL OR r.fecha_creacion >= $desde)
+                WITH a, b, sum(CASE v.tipo WHEN 'CONFIRMA' THEN 1 ELSE 0 END) AS confirma,
+                           sum(CASE v.tipo WHEN 'DESMIENTE' THEN 1 ELSE 0 END) AS desmiente
+                ORDER BY confirma + desmiente DESC LIMIT $limite
+                RETURN 'Usuario' AS tipo_a, properties(a) AS a,
+                       CASE WHEN confirma >= desmiente THEN 'CONFIRMA_A' ELSE 'DESMIENTE_A' END AS tipo_rel,
+                       {peso: confirma + desmiente, confirma: confirma, desmiente: desmiente} AS datos_rel,
+                       'Usuario' AS tipo_b, properties(b) AS b
+                """,
+                desde=desde,
+                limite=limite,
+            )
+            # También los vecinos que reportaron sin recibir votos, para que la red esté completa.
+            solos = grafo.consultar_grafo(
+                """
+                MATCH (u:Usuario)-[:CREO]->(r:Reporte)
+                WHERE NOT u.es_admin AND ($desde IS NULL OR r.fecha_creacion >= $desde)
+                RETURN DISTINCT properties(u) AS u LIMIT $limite
+                """,
+                desde=desde,
+                limite=limite,
+            )
+            red = _armar_red(filas, [_nodo("Usuario", f["u"]) for f in solos])
+        else:
+            tipos = ["CREO", "VOTO"]
+            if "lugares" in pedidas:
+                tipos.append("OCURRIO_EN")
+            if "categorias" in pedidas:
+                tipos.append("ES_DE")
+            if "zonas" in pedidas:
+                tipos += ["TIENE_ZONA", "ALERTO_A"]
+            if "incidentes" in pedidas:
+                tipos.append("AGRUPA")
+            if "sospechosos" in pedidas:
+                tipos.append("MIEMBRO_DE")
+            filas = grafo.consultar_grafo(
+                f"""
+                MATCH (r:Reporte) WHERE $desde IS NULL OR r.fecha_creacion >= $desde
+                WITH r ORDER BY r.fecha_creacion DESC LIMIT $limite
+                WITH collect(r) AS reportes
+                UNWIND reportes AS r
+                MATCH (r)-[rel:{"|".join(tipos)}]-(x)
+                WITH DISTINCT rel
+                {_PROYECCION_RELACION}
+                """,
+                desde=desde,
+                limite=limite,
+            )
+            if "sospechosos" in pedidas:
+                filas += grafo.consultar_grafo("MATCH ()-[rel:MIEMBRO_DE]->() " + _PROYECCION_RELACION)
+            red = _armar_red(filas)
+        _comunidades(red)
+        return {**red, "sincronizacion": grafo.ultima_sincronizacion}
+
+    return _grafo_o_503(consultar_red)
+
+
+@router.get("/grafo/buscar")
+def buscar_en_grafo(q: str = Query(min_length=1, max_length=60)):
+    """Vecinos por seudónimo, reportes o incidentes por número, y lugares o categorías por nombre."""
+    texto = q.strip().lstrip("#").lower()
+    numero = int(texto) if texto.isdigit() else -1
+
+    def consultar_busqueda():
+        filas = grafo.consultar_grafo(
+            """
+            CALL () {
+                MATCH (u:Usuario) WHERE toLower(u.alias) CONTAINS $texto
+                RETURN 'Usuario' AS tipo, properties(u) AS n, 0 AS orden LIMIT 8
+                UNION
+                MATCH (r:Reporte) WHERE r.id = $numero
+                RETURN 'Reporte' AS tipo, properties(r) AS n, 1 AS orden
+                UNION
+                MATCH (i:Incidente) WHERE i.id = $numero
+                RETURN 'Incidente' AS tipo, properties(i) AS n, 2 AS orden
+                UNION
+                MATCH (l) WHERE (l:Localidad OR l:Comuna OR l:Categoria) AND toLower(l.nombre) CONTAINS $texto
+                RETURN labels(l)[0] AS tipo, properties(l) AS n, 3 AS orden LIMIT 8
+            }
+            RETURN tipo, n ORDER BY orden LIMIT 15
+            """,
+            texto=texto,
+            numero=numero,
+        )
+        return [_nodo(f["tipo"], f["n"]) for f in filas]
+
+    return _grafo_o_503(consultar_busqueda)
+
+
+@router.get("/grafo/camino")
+def camino_mas_corto(
+    desde: str = Query(pattern=r"^[A-Za-z]+:\d+$"),
+    hasta: str = Query(pattern=r"^[A-Za-z]+:\d+$"),
+):
+    """El camino más corto entre dos elementos (hasta 8 pasos), con shortestPath de Neo4j."""
+    (tipo_a, id_a), (tipo_b, id_b) = (c.split(":") for c in (desde, hasta))
+    if tipo_a not in TIPOS_NODO or tipo_b not in TIPOS_NODO:
+        raise HTTPException(status_code=422, detail="Tipo de nodo no válido")
+    if desde == hasta:
+        raise HTTPException(status_code=422, detail="Elige dos elementos distintos")
+
+    # Solo relaciones reales: los grupos sospechosos e incidentes los calcula el sistema
+    # y no cuentan como camino, salvo que uno de los extremos sea justamente uno de ellos.
+    relaciones = ["CREO", "VOTO", "OCURRIO_EN", "ES_DE", "PERTENECE_A", "TIENE_ZONA", "ALERTO_A"]
+    if "Coordinacion" in (tipo_a, tipo_b):
+        relaciones.append("MIEMBRO_DE")
+    if "Incidente" in (tipo_a, tipo_b):
+        relaciones.append("AGRUPA")
+
+    def consultar_camino():
+        filas = grafo.consultar_grafo(
+            f"""
+            MATCH (a:{tipo_a} {{id: $id_a}}), (b:{tipo_b} {{id: $id_b}})
+            MATCH p = shortestPath((a)-[:{"|".join(relaciones)}*..8]-(b))
+            UNWIND relationships(p) AS rel
+            {_PROYECCION_RELACION}
+            """,
+            id_a=int(id_a),
+            id_b=int(id_b),
+        )
+        if not filas:
+            raise HTTPException(status_code=404, detail="Esos dos elementos no están conectados")
+        red = _armar_red(filas)
+        return {**red, "pasos": len(filas)}
+
+    return _grafo_o_503(consultar_camino)
 
 
 @router.get("/grafo/nodo/{tipo}/{id_nodo}")

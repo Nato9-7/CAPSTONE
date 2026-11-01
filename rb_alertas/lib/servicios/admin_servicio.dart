@@ -309,6 +309,9 @@ class NodoGrafo {
   /// Texto corto extra (p. ej. "12 acciones") en las listas del inicio.
   final String? detalle;
 
+  /// Grupo de vecinos y reportes conectados entre sí (null si está aislado).
+  final int? comunidad;
+
   NodoGrafo({
     required this.clave,
     required this.tipo,
@@ -316,6 +319,7 @@ class NodoGrafo {
     required this.datos,
     this.anillo = 0,
     this.detalle,
+    this.comunidad,
   });
 
   int get id => (datos['id'] as num).toInt();
@@ -328,6 +332,52 @@ class NodoGrafo {
     datos: (json['datos'] as Map?)?.cast<String, dynamic>() ?? {},
     anillo: (json['anillo'] as num?)?.toInt() ?? 0,
     detalle: json['detalle']?.toString(),
+    comunidad: (json['comunidad'] as num?)?.toInt(),
+  );
+}
+
+/// Un trozo de la red: lo que se dibuja en el explorador.
+class RedGrafo {
+  final List<NodoGrafo> nodos;
+  final List<AristaGrafo> aristas;
+
+  /// Solo en un camino: cuántos pasos hay entre los dos extremos.
+  final int? pasos;
+
+  RedGrafo({required this.nodos, required this.aristas, this.pasos});
+
+  factory RedGrafo.desdeJson(Map<String, dynamic> json) => RedGrafo(
+    nodos: [
+      for (final n in (json['nodos'] as List? ?? []))
+        NodoGrafo.desdeJson(n as Map<String, dynamic>),
+    ],
+    aristas: [
+      for (final a in (json['aristas'] as List? ?? []))
+        AristaGrafo.desdeJson(a as Map<String, dynamic>),
+    ],
+    pasos: (json['pasos'] as num?)?.toInt(),
+  );
+}
+
+/// Un voto dentro de un grupo sospechoso: la evidencia de por qué lo es.
+class VotoEvidencia {
+  final String votante;
+  final String autor;
+  final int reporte;
+  final String categoria;
+
+  VotoEvidencia({
+    required this.votante,
+    required this.autor,
+    required this.reporte,
+    required this.categoria,
+  });
+
+  factory VotoEvidencia.desdeJson(Map<String, dynamic> json) => VotoEvidencia(
+    votante: (json['votante'] ?? '').toString(),
+    autor: (json['autor'] ?? '').toString(),
+    reporte: (json['reporte'] as num?)?.toInt() ?? 0,
+    categoria: (json['categoria'] ?? '').toString(),
   );
 }
 
@@ -404,7 +454,18 @@ class GrupoSospechoso {
   final NodoGrafo nodo;
   final List<NodoGrafo> miembros;
 
-  GrupoSospechoso({required this.nodo, required this.miembros});
+  /// Los votos entre los miembros (por qué el grupo es sospechoso).
+  final List<VotoEvidencia> evidencia;
+
+  /// Confirmaciones que dieron a vecinos de fuera del grupo.
+  final int confirmacionesAfuera;
+
+  GrupoSospechoso({
+    required this.nodo,
+    required this.miembros,
+    this.evidencia = const [],
+    this.confirmacionesAfuera = 0,
+  });
 
   int get id => nodo.id;
 
@@ -423,6 +484,11 @@ class GrupoSospechoso {
       for (final m in (json['miembros'] as List? ?? []))
         NodoGrafo.desdeJson(m as Map<String, dynamic>),
     ],
+    evidencia: [
+      for (final e in (json['evidencia'] as List? ?? []))
+        VotoEvidencia.desdeJson(e as Map<String, dynamic>),
+    ],
+    confirmacionesAfuera: (json['confirmaciones_afuera'] as num?)?.toInt() ?? 0,
   );
 }
 
@@ -609,15 +675,53 @@ class AdminServicio {
     ];
   }
 
-  /// Suspende todas las cuentas del grupo; devuelve cuántas se suspendieron.
-  Future<int> suspenderGrupoSospechoso(String token, int idGrupo) async {
+  /// Suspende todas las cuentas del grupo; devuelve los ids suspendidos
+  /// (para poder deshacerlo reactivándolas).
+  Future<List<int>> suspenderGrupoSospechoso(String token, int idGrupo) async {
     final cuerpo = await _enviar(
       'POST',
       token,
       '/api/admin/grafo/sospechosos/$idGrupo/suspender',
       null,
     );
-    return ((cuerpo as Map?)?['suspendidas'] as num?)?.toInt() ?? 0;
+    return [
+      for (final id in ((cuerpo as Map?)?['ids'] as List? ?? []))
+        (id as num).toInt(),
+    ];
+  }
+
+  /// La red del explorador. [modo]: "vecinos" (quién apoya a quién) o
+  /// "completa" (vecinos y reportes con las [capas] pedidas). [dias] limita
+  /// a la actividad reciente; null es toda la historia.
+  Future<RedGrafo> red(
+    String token, {
+    String modo = 'vecinos',
+    int? dias,
+    Set<String> capas = const {},
+  }) async {
+    final cuerpo = await _get(token, '/api/admin/grafo/red', {
+      'modo': modo,
+      if (dias != null) 'dias': '$dias',
+      'capas': capas.join(','),
+    });
+    return RedGrafo.desdeJson(cuerpo as Map<String, dynamic>);
+  }
+
+  Future<List<NodoGrafo>> buscarEnGrafo(String token, String texto) async {
+    final cuerpo = await _get(token, '/api/admin/grafo/buscar', {'q': texto});
+    return [
+      for (final n in cuerpo as List)
+        NodoGrafo.desdeJson(n as Map<String, dynamic>),
+    ];
+  }
+
+  /// El camino más corto entre dos elementos (lo calcula Neo4j).
+  Future<RedGrafo> camino(String token, NodoGrafo desde, NodoGrafo hasta) async {
+    final cuerpo = await _get(token, '/api/admin/grafo/camino', {
+      'desde': desde.clave,
+      'hasta': hasta.clave,
+    });
+    return RedGrafo.desdeJson(cuerpo as Map<String, dynamic>);
   }
 
   /// [orden]: "baja" (menos confiables primero) o "alta".
