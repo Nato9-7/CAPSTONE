@@ -44,6 +44,9 @@ class ReporteMapa {
   final String estado;
   final DateTime? fechaCreacion;
 
+  /// Reportes del mismo hecho que la API juntó en este incidente (1 si es único).
+  final int totalReportes;
+
   ReporteMapa({
     required this.id,
     required this.categoriaCodigo,
@@ -55,6 +58,7 @@ class ReporteMapa {
     required this.descripcion,
     required this.estado,
     required this.fechaCreacion,
+    this.totalReportes = 1,
   });
 
   factory ReporteMapa.desdeJson(Map<String, dynamic> json) {
@@ -69,6 +73,7 @@ class ReporteMapa {
       descripcion: (json['descripcion'] ?? '').toString(),
       estado: (json['estado'] ?? '').toString(),
       fechaCreacion: DateTime.tryParse((json['fecha_creacion'] ?? '').toString()),
+      totalReportes: (json['total_reportes'] as num?)?.toInt() ?? 1,
     );
   }
 }
@@ -88,6 +93,9 @@ class ReporteCercano {
   final double distanciaMetros;
   final int confirmaciones;
 
+  /// Reportes del mismo hecho que la API juntó en este incidente (1 si es único).
+  final int totalReportes;
+
   ReporteCercano({
     required this.id,
     required this.categoriaCodigo,
@@ -101,6 +109,7 @@ class ReporteCercano {
     required this.fechaCreacion,
     required this.distanciaMetros,
     required this.confirmaciones,
+    this.totalReportes = 1,
   });
 
   /// "a 500 m" / "a 1.2 km", como se muestra en la lista de alertas.
@@ -123,6 +132,7 @@ class ReporteCercano {
       fechaCreacion: DateTime.tryParse((json['fecha_creacion'] ?? '').toString()),
       distanciaMetros: (json['distancia_metros'] as num?)?.toDouble() ?? 0,
       confirmaciones: (json['total_confirmaciones'] as num?)?.toInt() ?? 0,
+      totalReportes: (json['total_reportes'] as num?)?.toInt() ?? 1,
     );
   }
 }
@@ -272,6 +282,33 @@ class ResumenVotos {
   }
 }
 
+/// Otro reporte del mismo hecho, visto desde el detalle.
+class ReporteDelIncidente {
+  final int id;
+  final String autor;
+  final String descripcion;
+  final DateTime? fechaCreacion;
+
+  /// true para el reporte que se está mirando.
+  final bool esEste;
+
+  ReporteDelIncidente({
+    required this.id,
+    required this.autor,
+    required this.descripcion,
+    required this.fechaCreacion,
+    required this.esEste,
+  });
+
+  factory ReporteDelIncidente.desdeJson(Map<String, dynamic> json) => ReporteDelIncidente(
+    id: (json['id_reporte'] as num).toInt(),
+    autor: (json['autor'] ?? '').toString(),
+    descripcion: (json['descripcion'] ?? '').toString(),
+    fechaCreacion: DateTime.tryParse((json['fecha_creacion'] ?? '').toString()),
+    esEste: json['es_este'] == true,
+  );
+}
+
 class DetalleReporte {
   final int id;
   final String categoriaCodigo;
@@ -295,6 +332,8 @@ class DetalleReporte {
   final int totalComentarios;
   // Privado de un grupo: solo lo ven el autor y los vecinos del grupo.
   final bool soloGrupo;
+  // Todos los reportes del mismo hecho (incluido este), del primero al último.
+  final List<ReporteDelIncidente> reportesDelIncidente;
 
   DetalleReporte({
     required this.id,
@@ -316,7 +355,11 @@ class DetalleReporte {
     required this.miVoto,
     required this.totalComentarios,
     this.soloGrupo = false,
+    this.reportesDelIncidente = const [],
   });
+
+  /// Otros vecinos reportaron lo mismo: el reporte es parte de un incidente mayor.
+  bool get esIncidenteAgrupado => reportesDelIncidente.length > 1;
 
   bool get activo => estado == 'PENDIENTE' || estado == 'VALIDADO';
 
@@ -344,6 +387,10 @@ class DetalleReporte {
       miVoto: TipoVoto.desdeApi(json['mi_voto']),
       totalComentarios: (json['total_comentarios'] as num?)?.toInt() ?? 0,
       soloGrupo: json['visibilidad'] == 'GRUPO',
+      reportesDelIncidente: [
+        for (final r in ((json['incidente'] as Map?)?['reportes'] as List? ?? []))
+          ReporteDelIncidente.desdeJson(r as Map<String, dynamic>),
+      ],
     );
   }
 }

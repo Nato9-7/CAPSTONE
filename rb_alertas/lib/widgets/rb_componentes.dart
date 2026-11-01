@@ -719,17 +719,20 @@ class AtribucionMapa extends StatelessWidget {
 }
 
 /// Pin circular de un incidente: color de la categoría, borde blanco e ícono.
-/// Seleccionado crece y suma un halo del mismo color.
+/// Seleccionado crece y suma un halo del mismo color. Si varios vecinos
+/// reportaron el mismo hecho ([cantidad] > 1), lleva una burbuja con el número.
 class PinIncidente extends StatelessWidget {
   final String codigo;
   final String? colorHex;
   final bool seleccionado;
+  final int cantidad;
 
   const PinIncidente({
     super.key,
     required this.codigo,
     this.colorHex,
     this.seleccionado = false,
+    this.cantidad = 1,
   });
 
   @override
@@ -753,7 +756,37 @@ class PinIncidente extends StatelessWidget {
       ),
       child: Icon(iconoCategoria(codigo), color: Colors.white, size: tamano * 0.42),
     );
-    if (!seleccionado) return Center(child: pin);
+    final conContador = cantidad < 2
+        ? pin
+        : Stack(
+            clipBehavior: Clip.none,
+            children: [
+              pin,
+              Positioned(
+                right: -4,
+                top: -4,
+                child: Container(
+                  constraints: const BoxConstraints(minWidth: 22),
+                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: RBColores.tinta,
+                    borderRadius: BorderRadius.circular(11),
+                    border: Border.all(color: Colors.white, width: 2),
+                  ),
+                  child: Text(
+                    cantidad > 99 ? '99+' : '$cantidad',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          );
+    if (!seleccionado) return Center(child: conContador);
     return Center(
       child: Container(
         width: tamano + 22,
@@ -763,7 +796,7 @@ class PinIncidente extends StatelessWidget {
           shape: BoxShape.circle,
         ),
         alignment: Alignment.center,
-        child: pin,
+        child: conContador,
       ),
     );
   }

@@ -270,8 +270,11 @@ class _PanelCercanasState extends State<_PanelCercanas>
       titulo: tituloReporte(alerta.categoria, alerta.direccion),
       detalle: tiempo.isEmpty ? capitalizar(distancia) : '$tiempo · $distancia',
       estado: EstadoVisual.desdeApi(alerta.estado),
-      contador: '${alerta.confirmaciones} '
-          '${alerta.confirmaciones == 1 ? 'confirma' : 'confirman'}',
+      contador: [
+        if (alerta.totalReportes > 1) '${alerta.totalReportes} reportes',
+        '${alerta.confirmaciones} '
+            '${alerta.confirmaciones == 1 ? 'confirma' : 'confirman'}',
+      ].join(' · '),
       onTap: () => _abrirDetalle(alerta.id),
     );
   }
