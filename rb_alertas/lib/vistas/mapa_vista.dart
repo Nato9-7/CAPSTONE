@@ -21,7 +21,12 @@ class MapaVista extends StatefulWidget {
   /// Punto donde se abre el mapa (por ejemplo, el reporte recién enviado).
   final LatLng? centrarEn;
 
-  const MapaVista({super.key, this.centrarEn});
+  /// Panel de administración: el mapa se ve igual que para los vecinos, pero
+  /// sin reportar ni votar, y la tarjeta ofrece moderar el reporte. Devuelve
+  /// true si se cambió algo, para recargar los pines.
+  final Future<bool> Function(int idReporte)? alModerar;
+
+  const MapaVista({super.key, this.centrarEn, this.alModerar});
 
   @override
   State<MapaVista> createState() => _MapaVistaState();
@@ -51,6 +56,8 @@ class _MapaVistaState extends State<MapaVista> {
   ReporteMapa? _seleccionado;
   DetalleReporte? _vistaPrevia;
   bool _votando = false;
+
+  bool get _modoAdmin => widget.alModerar != null;
 
   @override
   void initState() {
@@ -85,10 +92,12 @@ class _MapaVistaState extends State<MapaVista> {
   Future<void> _cargarReportes() async {
     try {
       final reportes = await _reporteServicio.obtenerReportes();
-      EstadoAlertas.revisar(reportes.map((r) => r.id));
-      // Enciende la insignia por alertas de zona sin leer aunque el usuario
-      // todavia no haya entrado a la pestana Alertas.
-      EstadoAlertas.refrescarZonasSinLeer();
+      if (!_modoAdmin) {
+        EstadoAlertas.revisar(reportes.map((r) => r.id));
+        // Enciende la insignia por alertas de zona sin leer aunque el usuario
+        // todavia no haya entrado a la pestana Alertas.
+        EstadoAlertas.refrescarZonasSinLeer();
+      }
       if (!mounted) return;
       setState(() {
         _reportes = reportes;
@@ -208,6 +217,15 @@ class _MapaVistaState extends State<MapaVista> {
     if (_seleccionado != null) _cargarVistaPrevia(_seleccionado!.id);
   }
 
+  /// Panel de administración: si se moderó (estado, eliminado...), se recargan
+  /// los pines; si dejó de estar vigente, su tarjeta se cierra sola.
+  Future<void> _moderar(int idReporte) async {
+    final cambio = await widget.alModerar!(idReporte);
+    if (!cambio || !mounted) return;
+    await _cargarReportes();
+    if (_seleccionado != null) _cargarVistaPrevia(_seleccionado!.id);
+  }
+
   Future<void> _abrirReportar() async {
     final punto = await Navigator.push<LatLng>(
       context,
@@ -324,7 +342,7 @@ class _MapaVistaState extends State<MapaVista> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _BarraBusqueda(onAvatar: _irAPerfil),
+                  _BarraBusqueda(onAvatar: _modoAdmin ? null : _irAPerfil),
                   const SizedBox(height: 8),
                   _BotonFiltrar(
                     categoria: categoriaFiltro,
@@ -357,7 +375,7 @@ class _MapaVistaState extends State<MapaVista> {
           if (seleccionado == null) ...[
             Positioned(
               right: 12,
-              bottom: 20 + altoBoton + 10,
+              bottom: _modoAdmin ? 20 : 20 + altoBoton + 10,
               child: _BotonCuadrado(
                 tamano: altoBoton,
                 onTap: _buscandoUbicacion ? null : _irAMiUbicacion,
@@ -370,39 +388,40 @@ class _MapaVistaState extends State<MapaVista> {
                     : const Icon(Icons.my_location_rounded, color: RBColores.azul, size: 22),
               ),
             ),
-            Positioned(
-              left: 12,
-              right: 12,
-              bottom: 20,
-              // Si los botones no caben, se reparten el ancho y el texto se
-              // achica en vez de cortarse.
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Flexible(
-                    child: _BotonPildora(
-                      texto: 'Emergencias',
-                      icono: Icons.notification_important_outlined,
-                      fondo: Colors.white,
-                      color: RBColores.rojo,
-                      alto: altoBoton,
-                      onTap: () => mostrarPanelEmergencias(context),
+            if (!_modoAdmin)
+              Positioned(
+                left: 12,
+                right: 12,
+                bottom: 20,
+                // Si los botones no caben, se reparten el ancho y el texto se
+                // achica en vez de cortarse.
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Flexible(
+                      child: _BotonPildora(
+                        texto: 'Emergencias',
+                        icono: Icons.notification_important_outlined,
+                        fondo: Colors.white,
+                        color: RBColores.rojo,
+                        alto: altoBoton,
+                        onTap: () => mostrarPanelEmergencias(context),
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  Flexible(
-                    child: _BotonPildora(
-                      texto: 'Reportar',
-                      icono: Icons.add_rounded,
-                      fondo: RBColores.verde,
-                      color: Colors.white,
-                      alto: altoBoton,
-                      onTap: _abrirReportar,
+                    const SizedBox(width: 12),
+                    Flexible(
+                      child: _BotonPildora(
+                        texto: 'Reportar',
+                        icono: Icons.add_rounded,
+                        fondo: RBColores.verde,
+                        color: Colors.white,
+                        alto: altoBoton,
+                        onTap: _abrirReportar,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
           ] else
             Positioned(
               left: 12,
@@ -416,13 +435,16 @@ class _MapaVistaState extends State<MapaVista> {
                 onAbrir: () => _abrirDetalle(seleccionado.id),
                 onComentarios: () => _abrirDetalle(seleccionado.id, irAComentarios: true),
                 onVotar: _votar,
+                onModerar: _modoAdmin ? () => _moderar(seleccionado.id) : null,
               ),
             ),
         ],
       ),
-      bottomNavigationBar: const BarraNavegacionInferior(
-        seccionActiva: SeccionApp.mapa,
-      ),
+      bottomNavigationBar: _modoAdmin
+          ? null
+          : const BarraNavegacionInferior(
+              seccionActiva: SeccionApp.mapa,
+            ),
     );
   }
 }
@@ -462,7 +484,8 @@ class _EtiquetaPin extends StatelessWidget {
 }
 
 class _BarraBusqueda extends StatelessWidget {
-  final VoidCallback onAvatar;
+  /// Sin acción (panel de administración) no se muestra el avatar.
+  final VoidCallback? onAvatar;
 
   const _BarraBusqueda({required this.onAvatar});
 
@@ -512,25 +535,26 @@ class _BarraBusqueda extends StatelessWidget {
               ),
             ),
           ),
-          GestureDetector(
-            onTap: onAvatar,
-            child: Container(
-              width: alto - 10,
-              height: alto - 10,
-              alignment: Alignment.center,
-              decoration: const BoxDecoration(color: RBColores.azul, shape: BoxShape.circle),
-              child: iniciales.isEmpty
-                  ? const Icon(Icons.person_rounded, color: Colors.white, size: 20)
-                  : Text(
-                      iniciales,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
+          if (onAvatar != null)
+            GestureDetector(
+              onTap: onAvatar,
+              child: Container(
+                width: alto - 10,
+                height: alto - 10,
+                alignment: Alignment.center,
+                decoration: const BoxDecoration(color: RBColores.azul, shape: BoxShape.circle),
+                child: iniciales.isEmpty
+                    ? const Icon(Icons.person_rounded, color: Colors.white, size: 20)
+                    : Text(
+                        iniciales,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
-                    ),
+              ),
             ),
-          ),
         ],
       ),
     );
@@ -827,6 +851,9 @@ class _TarjetaVistaPrevia extends StatelessWidget {
   final VoidCallback onComentarios;
   final void Function(DetalleReporte, TipoVoto) onVotar;
 
+  /// Panel de administración: en vez de votar se modera el reporte.
+  final VoidCallback? onModerar;
+
   const _TarjetaVistaPrevia({
     required this.reporte,
     required this.detalle,
@@ -835,6 +862,7 @@ class _TarjetaVistaPrevia extends StatelessWidget {
     required this.onAbrir,
     required this.onComentarios,
     required this.onVotar,
+    this.onModerar,
   });
 
   @override
@@ -970,7 +998,17 @@ class _TarjetaVistaPrevia extends StatelessWidget {
                 const SizedBox(height: 14),
                 Row(
                   children: [
-                    if (d == null)
+                    if (onModerar != null)
+                      FilledButton.icon(
+                        style: FilledButton.styleFrom(
+                          backgroundColor: RBColores.rojo,
+                          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 13),
+                        ),
+                        onPressed: onModerar,
+                        icon: const Icon(Icons.shield_outlined, size: 19),
+                        label: const Text('Moderar'),
+                      )
+                    else if (d == null)
                       const SizedBox(
                         height: 48,
                         child: Center(
