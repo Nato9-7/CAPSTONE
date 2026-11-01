@@ -17,6 +17,7 @@ String nombreTipoRed(String tipo) => switch (tipo) {
   'ZonaSegura' => 'Zona segura',
   'Coordinacion' => 'Cuentas coordinadas',
   'Incidente' => 'Incidente',
+  'Grupo' => 'Grupo de vecinos',
   _ => tipo,
 };
 
@@ -45,6 +46,7 @@ const _capasDisponibles = <(String, String, IconData)>[
   ('categorias', 'Categorías', Icons.category_rounded),
   ('incidentes', 'Incidentes', Icons.layers_rounded),
   ('sospechosos', 'Grupos sospechosos', Icons.gpp_maybe_rounded),
+  ('grupos', 'Grupos de vecinos', Icons.groups_rounded),
   ('zonas', 'Zonas seguras', Icons.shield_rounded),
 ];
 
@@ -73,7 +75,7 @@ class _SeccionRedState extends State<SeccionRed> with AutomaticKeepAliveClientMi
   // Filtros.
   String _modo = 'vecinos';
   int _periodo = _periodos.length - 1;
-  final Set<String> _capas = {'lugares', 'incidentes', 'sospechosos'};
+  final Set<String> _capas = {'lugares', 'incidentes', 'sospechosos', 'grupos'};
   bool _comunidades = false;
 
   /// Pantalla angosta (celular): filtros en una hoja aparte y leyenda plegada.
@@ -923,6 +925,7 @@ class _SeccionRedState extends State<SeccionRed> with AutomaticKeepAliveClientMi
                 linea(RBColores.verde, 'Confirma'),
                 linea(RBColores.rojo, 'Desmiente'),
                 linea(RBColores.azul, 'Creó'),
+                linea(RBColores.petroleo, 'Grupo de vecinos'),
                 const Text('Más grueso = más veces', style: TextStyle(fontSize: 11, color: RBColores.texto2)),
               ],
       ),
@@ -1155,6 +1158,29 @@ class _SeccionRedState extends State<SeccionRed> with AutomaticKeepAliveClientMi
         ];
       case 'ZonaSegura':
         return [if (d['radio'] != null) Text('Radio de ${d['radio']} m'), const SizedBox(height: 8)];
+      case 'Grupo':
+        // Miembros y reportes compartidos según lo que se ve en la red.
+        final miembros = _aristas.where((a) => a.tipo == 'INTEGRA' && a.destino == n.clave).length;
+        final compartidos = _aristas.where((a) => a.tipo == 'COMPARTIDO_EN' && a.destino == n.clave).length;
+        return [
+          Text(
+            d['activo'] == false ? 'Grupo cerrado' : 'Grupo activo',
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '$miembros ${miembros == 1 ? 'miembro' : 'miembros'} y $compartidos '
+            '${compartidos == 1 ? 'reporte compartido' : 'reportes compartidos'} en esta vista'
+            '${d['radio'] != null ? ' · área de ${d['radio']} m' : ''}.',
+            style: const TextStyle(color: RBColores.texto2, height: 1.4),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Usa «Ampliar sus conexiones» para ver todos sus miembros y reportes.',
+            style: TextStyle(fontSize: 12.5, color: RBColores.texto2),
+          ),
+          const SizedBox(height: 8),
+        ];
       default:
         return const [];
     }

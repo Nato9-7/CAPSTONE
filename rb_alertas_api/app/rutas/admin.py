@@ -394,7 +394,9 @@ def cambiar_estado_grupo(datos: CambioEstadoGrupo, id_grupo: int = PathParam(ge=
 #   - Incidentes: ¿estos reportes son el mismo hecho? (ver app/incidentes.py)
 # Además, cualquier elemento se puede poner "en foco" para ver sus conexiones.
 
-TIPOS_NODO = ("Usuario", "Reporte", "Categoria", "Comuna", "Localidad", "ZonaSegura", "Coordinacion", "Incidente")
+TIPOS_NODO = (
+    "Usuario", "Reporte", "Categoria", "Comuna", "Localidad", "ZonaSegura", "Coordinacion", "Incidente", "Grupo",
+)
 MAXIMO_RELACIONES_FOCO = 90
 
 
@@ -664,7 +666,7 @@ def _comunidades(red: dict) -> None:
         return x
 
     for arista in red["aristas"]:
-        if arista["tipo"] in ("CREO", "VOTO", "CONFIRMA_A", "DESMIENTE_A", "AGRUPA", "MIEMBRO_DE"):
+        if arista["tipo"] in ("CREO", "VOTO", "CONFIRMA_A", "DESMIENTE_A", "AGRUPA", "MIEMBRO_DE", "INTEGRA", "COMPARTIDO_EN"):
             padre[raiz(arista["origen"])] = raiz(arista["destino"])
     tamanos: dict[str, int] = {}
     for n in red["nodos"]:
@@ -679,7 +681,7 @@ def _comunidades(red: dict) -> None:
 def red_completa(
     modo: Literal["vecinos", "completa"] = "vecinos",
     dias: int | None = Query(None, ge=1, le=3650),
-    capas: str = Query("lugares,incidentes,sospechosos", max_length=100),
+    capas: str = Query("lugares,incidentes,sospechosos,grupos", max_length=100),
     limite: int = Query(300, ge=10, le=1000),
 ):
     """La red para el explorador del panel.
@@ -687,7 +689,7 @@ def red_completa(
     - modo=vecinos: solo vecinos, unidos por quién confirma o desmiente a quién; el
       peso de cada unión es cuántas veces lo hizo.
     - modo=completa: vecinos y reportes, más las capas pedidas (lugares, categorias,
-      zonas, incidentes, sospechosos).
+      zonas, incidentes, sospechosos, grupos).
     `dias` limita a la actividad de los últimos N días (sin él, toda la historia).
     """
     pedidas = {c.strip() for c in capas.split(",") if c.strip()}
@@ -737,6 +739,8 @@ def red_completa(
                 tipos.append("AGRUPA")
             if "sospechosos" in pedidas:
                 tipos.append("MIEMBRO_DE")
+            if "grupos" in pedidas:
+                tipos.append("COMPARTIDO_EN")
             filas = grafo.consultar_grafo(
                 f"""
                 MATCH (r:Reporte) WHERE $desde IS NULL OR r.fecha_creacion >= $desde
@@ -752,6 +756,8 @@ def red_completa(
             )
             if "sospechosos" in pedidas:
                 filas += grafo.consultar_grafo("MATCH ()-[rel:MIEMBRO_DE]->() " + _PROYECCION_RELACION)
+            if "grupos" in pedidas:
+                filas += grafo.consultar_grafo("MATCH ()-[rel:INTEGRA]->(:Grupo) " + _PROYECCION_RELACION)
             red = _armar_red(filas)
         _comunidades(red)
         return {**red, "sincronizacion": grafo.ultima_sincronizacion}
@@ -778,7 +784,7 @@ def buscar_en_grafo(q: str = Query(min_length=1, max_length=60)):
                 MATCH (i:Incidente) WHERE i.id = $numero
                 RETURN 'Incidente' AS tipo, properties(i) AS n, 2 AS orden
                 UNION
-                MATCH (l) WHERE (l:Localidad OR l:Comuna OR l:Categoria) AND toLower(l.nombre) CONTAINS $texto
+                MATCH (l) WHERE (l:Localidad OR l:Comuna OR l:Categoria OR l:Grupo) AND toLower(l.nombre) CONTAINS $texto
                 RETURN labels(l)[0] AS tipo, properties(l) AS n, 3 AS orden LIMIT 8
             }
             RETURN tipo, n ORDER BY orden LIMIT 15
@@ -805,7 +811,7 @@ def camino_mas_corto(
 
     # Solo relaciones reales: los grupos sospechosos e incidentes los calcula el sistema
     # y no cuentan como camino, salvo que uno de los extremos sea justamente uno de ellos.
-    relaciones = ["CREO", "VOTO", "OCURRIO_EN", "ES_DE", "PERTENECE_A", "TIENE_ZONA", "ALERTO_A"]
+    relaciones = ["CREO", "VOTO", "OCURRIO_EN", "ES_DE", "PERTENECE_A", "TIENE_ZONA", "ALERTO_A", "INTEGRA", "COMPARTIDO_EN"]
     if "Coordinacion" in (tipo_a, tipo_b):
         relaciones.append("MIEMBRO_DE")
     if "Incidente" in (tipo_a, tipo_b):
@@ -832,7 +838,9 @@ def camino_mas_corto(
 
 @router.get("/grafo/nodo/{tipo}/{id_nodo}")
 def foco_grafo(
-    tipo: Literal["Usuario", "Reporte", "Categoria", "Comuna", "Localidad", "ZonaSegura", "Coordinacion", "Incidente"],
+    tipo: Literal[
+        "Usuario", "Reporte", "Categoria", "Comuna", "Localidad", "ZonaSegura", "Coordinacion", "Incidente", "Grupo"
+    ],
     id_nodo: int = PathParam(ge=1),
 ):
     """El elemento en foco y lo conectado hasta 2 pasos, con el anillo de cada nodo (0, 1 o 2)."""
