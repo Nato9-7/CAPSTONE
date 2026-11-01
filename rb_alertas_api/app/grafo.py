@@ -89,7 +89,7 @@ def _filas_mysql() -> dict[str, list[dict]]:
         SELECT r.id_reporte, r.id_usuario, r.id_categoria, r.id_comuna, r.id_localidad, r.estado,
                LEFT(r.descripcion, 120) AS descripcion, r.fecha_creacion,
                (r.fecha_expiracion IS NOT NULL AND r.fecha_expiracion <= NOW()) AS vencido,
-               r.total_confirmaciones, r.total_desmentidos, c.codigo AS categoria_codigo,
+               r.total_confirmaciones, r.total_desmentidos, c.codigo AS categoria_codigo, r.visibilidad,
                ST_Latitude(r.ubicacion) AS latitud, ST_Longitude(r.ubicacion) AS longitud
         FROM reporte r
         JOIN categoria_incidente c ON c.id_categoria = r.id_categoria
@@ -134,6 +134,10 @@ def _filas_mysql() -> dict[str, list[dict]]:
         ),
         "votos": [{**v, "fecha_voto": _texto_fecha(v["fecha_voto"])} for v in votos],
         "zonas": _opcional("SELECT id_zona_segura, id_usuario, nombre, radio_metros, activa FROM zona_segura"),
+        # Grupos de vecinos: quién los integra y qué reportes se compartieron en ellos.
+        "grupos": _opcional("SELECT id_grupo, nombre, activo, radio_metros FROM grupo"),
+        "miembros_grupo": _opcional("SELECT id_grupo, id_usuario, rol FROM grupo_miembro"),
+        "reportes_grupo": _opcional("SELECT id_grupo, id_reporte FROM grupo_reporte"),
         "avisos": _opcional(
             "SELECT id_reporte, id_zona_segura, distancia_metros FROM notificacion "
             "WHERE id_zona_segura IS NOT NULL AND id_reporte IS NOT NULL"
@@ -179,7 +183,8 @@ _CYPHER_RECONSTRUIR = [
        CREATE (rep:Reporte {id: r.id_reporte, estado: r.estado, descripcion: r.descripcion,
                             fecha_creacion: r.fecha_creacion, vencido: r.vencido,
                             confirmaciones: r.total_confirmaciones, desmentidos: r.total_desmentidos,
-                            categoria: cat.nombre, categoria_codigo: cat.codigo, color: cat.color})
+                            categoria: cat.nombre, categoria_codigo: cat.codigo, color: cat.color,
+                            visibilidad: r.visibilidad})
        CREATE (u)-[:CREO]->(rep)
        CREATE (rep)-[:ES_DE]->(cat)
        WITH rep, r
@@ -197,6 +202,14 @@ _CYPHER_RECONSTRUIR = [
     """UNWIND $avisos AS a
        MATCH (r:Reporte {id: a.id_reporte}), (z:ZonaSegura {id: a.id_zona_segura})
        CREATE (r)-[:ALERTO_A {distancia: a.distancia_metros}]->(z)""",
+    """UNWIND $grupos AS g
+       CREATE (:Grupo {id: g.id_grupo, nombre: g.nombre, activo: g.activo = 1, radio: g.radio_metros})""",
+    """UNWIND $miembros_grupo AS m
+       MATCH (u:Usuario {id: m.id_usuario}), (g:Grupo {id: m.id_grupo})
+       CREATE (u)-[:INTEGRA {rol: m.rol}]->(g)""",
+    """UNWIND $reportes_grupo AS x
+       MATCH (r:Reporte {id: x.id_reporte}), (g:Grupo {id: x.id_grupo})
+       CREATE (r)-[:COMPARTIDO_EN]->(g)""",
     # Cuentas que se confirman entre ellas (posible coordinación).
     """UNWIND $coordinaciones AS g
        CREATE (c:Coordinacion {id: g.id, nivel: g.nivel, reciprocidad: g.reciprocidad,
@@ -227,6 +240,7 @@ _CYPHER_INDICES = [
     "CREATE INDEX zona_id IF NOT EXISTS FOR (n:ZonaSegura) ON (n.id)",
     "CREATE INDEX coordinacion_id IF NOT EXISTS FOR (n:Coordinacion) ON (n.id)",
     "CREATE INDEX incidente_id IF NOT EXISTS FOR (n:Incidente) ON (n.id)",
+    "CREATE INDEX grupo_id IF NOT EXISTS FOR (n:Grupo) ON (n.id)",
 ]
 
 
