@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
-import 'package:latlong2/latlong.dart';
 import 'package:rb_alertas/config/api_config.dart';
 import 'package:rb_alertas/servicios/admin_servicio.dart';
 import 'package:rb_alertas/servicios/estado_alertas_servicio.dart';
@@ -119,6 +117,7 @@ class AdminVista extends StatefulWidget {
 class _AdminVistaState extends State<AdminVista> with SingleTickerProviderStateMixin {
   static const _secciones = [
     ('Resumen', Icons.dashboard_outlined, Icons.dashboard_rounded),
+    ('Mapa', Icons.map_outlined, Icons.map_rounded),
     ('Reportes', Icons.report_outlined, Icons.report_rounded),
     ('Usuarios', Icons.people_outline_rounded, Icons.people_rounded),
     ('Grupos', Icons.groups_outlined, Icons.groups_rounded),
@@ -127,12 +126,19 @@ class _AdminVistaState extends State<AdminVista> with SingleTickerProviderStateM
 
   late final TabController _pestanas = TabController(length: _secciones.length, vsync: this)
     ..addListener(() {
-      if (_indice != _pestanas.index) setState(() => _indice = _pestanas.index);
+      if (_indice != _pestanas.index) _cambiar(_pestanas.index);
     });
   int _indice = 0;
 
-  late final List<Widget> _paginas = [
-    _PestanaResumen(alAbrirRed: () => _ir(4)),
+  /// Cambia cada vez que se entra al mapa, para que se recargue con lo moderado.
+  int _versionMapa = 0;
+
+  List<Widget> get _paginas => [
+    _PestanaResumen(alAbrirRed: () => _ir(5)),
+    MapaVista(
+      key: ValueKey(_versionMapa),
+      alModerar: (idReporte) => _abrirModeracion(context, idReporte),
+    ),
     const _PestanaReportes(),
     const _PestanaUsuarios(),
     const _PestanaGrupos(),
@@ -145,10 +151,18 @@ class _AdminVistaState extends State<AdminVista> with SingleTickerProviderStateM
     super.dispose();
   }
 
+  void _cambiar(int indice) {
+    setState(() {
+      if (indice == 1 && _indice != 1) _versionMapa++;
+      _indice = indice;
+    });
+  }
+
   void _ir(int indice) {
-    setState(() => _indice = indice);
+    _cambiar(indice);
     _pestanas.animateTo(indice);
   }
+
 
   Future<void> _cerrarSesion() async {
     final confirmar = await showDialog<bool>(
@@ -320,7 +334,14 @@ class _AdminVistaState extends State<AdminVista> with SingleTickerProviderStateM
           ),
         ),
         const SizedBox(height: 8),
-        Expanded(child: TabBarView(controller: _pestanas, children: _paginas)),
+        // Sin deslizar entre pestañas: el gesto se confundiría con mover los mapas.
+        Expanded(
+          child: TabBarView(
+            controller: _pestanas,
+            physics: const NeverScrollableScrollPhysics(),
+            children: _paginas,
+          ),
+        ),
       ],
     );
   }
@@ -623,40 +644,204 @@ class _PestanaResumenState extends State<_PestanaResumen>
   }
 }
 
-// -----------------------------------------------------------------------------
-// Reportes
+// Acciones de moderación de un reporte, compartidas por la lista de Reportes y
+// la ficha que se abre con "Moderar" desde el mapa. Cada una devuelve true si
+// cambió algo, para recargar lo que se está mostrando.
 
-class _PestanaReportes extends StatefulWidget {
-  const _PestanaReportes();
-
-  @override
-  State<_PestanaReportes> createState() => _PestanaReportesState();
+Future<bool> _accionAdmin(
+  BuildContext context,
+  Future<void> Function() accion,
+  String exito,
+) async {
+  try {
+    await accion();
+    if (context.mounted) _avisar(context, exito);
+    return true;
+  } on AdminServicioException catch (e) {
+    if (context.mounted) _avisar(context, e.mensaje);
+  } catch (_) {
+    if (context.mounted) _avisar(context, 'No se pudo conectar con el servidor');
+  }
+  return false;
 }
 
-class _PestanaReportesState extends State<_PestanaReportes>
-    with AutomaticKeepAliveClientMixin {
-  static const _filtros = [
-    (null, 'Todos'),
-    ('PENDIENTE', 'Pendientes'),
-    ('VALIDADO', 'Validados'),
-    ('RESUELTO', 'Resueltos'),
-    ('DESCARTADO', 'Descartados'),
-    ('EXPIRADO', 'Expirados'),
-  ];
+Future<bool> _cambiarEstadoReporte(
+  BuildContext context,
+  ReporteAdmin reporte,
+  String estado,
+) async {
+  final motivo = TextEditingController();
+  final (texto, color) = _estiloEstado(estado);
+  final confirmar = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text('Marcar como ${texto.toLowerCase()}'),
+      content: TextField(
+        controller: motivo,
+        maxLength: 200,
+        decoration: const InputDecoration(
+          labelText: 'Motivo (opcional)',
+          hintText: 'Queda en el historial del reporte',
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('Cancelar'),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: color),
+          onPressed: () => Navigator.pop(context, true),
+          child: const Text('Guardar'),
+        ),
+      ],
+    ),
+  );
+  if (confirmar != true || !context.mounted) return false;
+  return _accionAdmin(
+    context,
+    () => AdminServicio().cambiarEstadoReporte(
+      Sesion.token ?? '',
+      reporte.id,
+      estado,
+      motivo: motivo.text.trim().isEmpty ? null : motivo.text.trim(),
+    ),
+    'Reporte #${reporte.id} marcado como ${texto.toLowerCase()}',
+  );
+}
 
-  static const _centroInicial = LatLng(-41.4693, -72.9424);
+Future<bool> _suspenderAutorReporte(BuildContext context, ReporteAdmin reporte) async {
+  final confirmar = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Suspender a quien reportó'),
+      content: Text(
+        'La cuenta de «${reporte.autor}» no podrá volver a entrar ni crear '
+        'reportes hasta que la reactives en la pestaña Usuarios. '
+        'Se cerrarán todas sus sesiones.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('Cancelar'),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: RBColores.rojo),
+          onPressed: () => Navigator.pop(context, true),
+          child: const Text('Suspender'),
+        ),
+      ],
+    ),
+  );
+  if (confirmar != true || !context.mounted) return false;
+  return _accionAdmin(
+    context,
+    () => AdminServicio().suspenderAutor(Sesion.token ?? '', reporte.id),
+    'Cuenta de «${reporte.autor}» suspendida',
+  );
+}
 
-  final _servicio = AdminServicio();
-  List<ReporteAdmin>? _reportes;
-  String? _error;
-  String? _filtro;
+/// Al volver siempre cuenta como cambio: se recargan los contadores de comentarios.
+Future<bool> _verComentariosReporte(BuildContext context, ReporteAdmin reporte) async {
+  await showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: RBColores.fondo,
+    builder: (_) => _HojaComentarios(reporte: reporte),
+  );
+  return true;
+}
 
-  /// Mostrar los reportes sobre el mapa en vez de en lista.
-  bool _verMapa = false;
-  ReporteAdmin? _seleccionado;
+/// Eliminar no se puede deshacer: se pide escribir ELIMINAR para confirmar.
+Future<bool> _eliminarReporte(BuildContext context, ReporteAdmin reporte) async {
+  final confirmacion = TextEditingController();
+  final confirmar = await showDialog<bool>(
+    context: context,
+    builder: (context) => StatefulBuilder(
+      builder: (context, actualizar) => AlertDialog(
+        title: Text('Eliminar el reporte #${reporte.id}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Se borrará para siempre, junto con sus votos, comentarios, fotos y avisos. '
+              'No se puede deshacer.\n\n'
+              'Si solo es falso o ya no aplica, es mejor «Marcar descartado»: deja de verse '
+              'en el mapa pero queda el registro.',
+              style: TextStyle(height: 1.4),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: confirmacion,
+              autofocus: true,
+              onChanged: (_) => actualizar(() {}),
+              decoration: const InputDecoration(
+                labelText: 'Escribe ELIMINAR para confirmar',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: RBColores.rojo),
+            onPressed: confirmacion.text.trim().toUpperCase() == 'ELIMINAR'
+                ? () => Navigator.pop(context, true)
+                : null,
+            child: const Text('Eliminar'),
+          ),
+        ],
+      ),
+    ),
+  );
+  if (confirmar != true || !context.mounted) return false;
+  return _accionAdmin(
+    context,
+    () => AdminServicio().eliminarReporte(Sesion.token ?? '', reporte.id),
+    'Reporte #${reporte.id} eliminado',
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Mapa: "Moderar" en la tarjeta de un reporte abre su ficha encima del mapa.
+
+/// Devuelve true si se moderó algo, para que el mapa recargue sus pines.
+Future<bool> _abrirModeracion(BuildContext context, int idReporte) async {
+  var cambio = false;
+  await showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.white,
+    constraints: BoxConstraints(
+      maxWidth: 560,
+      maxHeight: MediaQuery.sizeOf(context).height * 0.85,
+    ),
+    builder: (_) => _HojaModerarReporte(
+      idReporte: idReporte,
+      alCambiar: () => cambio = true,
+    ),
+  );
+  return cambio;
+}
+
+class _HojaModerarReporte extends StatefulWidget {
+  final int idReporte;
+  final VoidCallback alCambiar;
+
+  const _HojaModerarReporte({required this.idReporte, required this.alCambiar});
 
   @override
-  bool get wantKeepAlive => true;
+  State<_HojaModerarReporte> createState() => _HojaModerarReporteState();
+}
+
+class _HojaModerarReporteState extends State<_HojaModerarReporte> {
+  ReporteAdmin? _reporte;
+  String? _error;
+  bool _cargando = true;
 
   @override
   void initState() {
@@ -667,345 +852,54 @@ class _PestanaReportesState extends State<_PestanaReportes>
   Future<void> _cargar() async {
     setState(() => _error = null);
     try {
-      final reportes = await _servicio.reportes(
-        Sesion.token ?? '',
-        estado: _filtro,
-        limite: 500,
-      );
+      final reporte = await AdminServicio().reporte(Sesion.token ?? '', widget.idReporte);
       if (!mounted) return;
       setState(() {
-        _reportes = reportes;
-        // El elegido se refresca con sus datos nuevos (o se suelta si ya no está).
-        final elegido = _seleccionado;
-        _seleccionado = elegido == null
-            ? null
-            : reportes.where((r) => r.id == elegido.id).firstOrNull;
+        _reporte = reporte;
+        _cargando = false;
+        if (reporte == null) _error = 'Este reporte ya no existe';
       });
     } on AdminServicioException catch (e) {
-      if (mounted) setState(() => _error = e.mensaje);
+      if (mounted) _fallo(e.mensaje);
     } catch (_) {
-      if (mounted) {
-        setState(() => _error = 'No se pudo conectar con el servidor');
-      }
+      if (mounted) _fallo('No se pudo conectar con el servidor');
     }
   }
 
-  void _filtrar(String? estado) {
+  void _fallo(String mensaje) {
     setState(() {
-      _filtro = estado;
-      _reportes = null;
+      _error = mensaje;
+      _cargando = false;
     });
+  }
+
+  Future<void> _moderar(Future<bool> accion) async {
+    if (!await accion || !mounted) return;
+    widget.alCambiar();
     _cargar();
   }
 
-  Future<void> _cambiarEstado(ReporteAdmin reporte, String estado) async {
-    final motivo = TextEditingController();
-    final (texto, color) = _estiloEstado(estado);
-    final confirmar = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Marcar como ${texto.toLowerCase()}'),
-        content: TextField(
-          controller: motivo,
-          maxLength: 200,
-          decoration: const InputDecoration(
-            labelText: 'Motivo (opcional)',
-            hintText: 'Queda en el historial del reporte',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: color),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Guardar'),
-          ),
-        ],
-      ),
-    );
-    if (confirmar != true) return;
-    await _ejecutar(
-      () => _servicio.cambiarEstadoReporte(
-        Sesion.token ?? '',
-        reporte.id,
-        estado,
-        motivo: motivo.text.trim().isEmpty ? null : motivo.text.trim(),
-      ),
-      'Reporte #${reporte.id} marcado como ${texto.toLowerCase()}',
-    );
-  }
-
-  Future<void> _suspenderAutor(ReporteAdmin reporte) async {
-    final confirmar = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Suspender a quien reportó'),
-        content: Text(
-          'La cuenta de «${reporte.autor}» no podrá volver a entrar ni crear '
-          'reportes hasta que la reactives en la pestaña Usuarios. '
-          'Se cerrarán todas sus sesiones.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: RBColores.rojo),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Suspender'),
-          ),
-        ],
-      ),
-    );
-    if (confirmar != true) return;
-    await _ejecutar(
-      () => _servicio.suspenderAutor(Sesion.token ?? '', reporte.id),
-      'Cuenta de «${reporte.autor}» suspendida',
-    );
-  }
-
-  Future<void> _verComentarios(ReporteAdmin reporte) async {
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: RBColores.fondo,
-      builder: (_) => _HojaComentarios(reporte: reporte),
-    );
-    // Al volver se recargan los contadores de comentarios.
-    if (mounted) _cargar();
-  }
-
-  /// Eliminar no se puede deshacer: se pide escribir ELIMINAR para confirmar.
-  Future<void> _eliminar(ReporteAdmin reporte) async {
-    final confirmacion = TextEditingController();
-    final confirmar = await showDialog<bool>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, actualizar) => AlertDialog(
-          title: Text('Eliminar el reporte #${reporte.id}'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Se borrará para siempre, junto con sus votos, comentarios, fotos y avisos. '
-                'No se puede deshacer.\n\n'
-                'Si solo es falso o ya no aplica, es mejor «Marcar descartado»: deja de verse '
-                'en el mapa pero queda el registro.',
-                style: TextStyle(height: 1.4),
-              ),
-              const SizedBox(height: 14),
-              TextField(
-                controller: confirmacion,
-                autofocus: true,
-                onChanged: (_) => actualizar(() {}),
-                decoration: const InputDecoration(
-                  labelText: 'Escribe ELIMINAR para confirmar',
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancelar'),
-            ),
-            FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: RBColores.rojo),
-              onPressed: confirmacion.text.trim().toUpperCase() == 'ELIMINAR'
-                  ? () => Navigator.pop(context, true)
-                  : null,
-              child: const Text('Eliminar'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (confirmar != true) return;
-    if (_seleccionado?.id == reporte.id) setState(() => _seleccionado = null);
-    await _ejecutar(
-      () => _servicio.eliminarReporte(Sesion.token ?? '', reporte.id),
-      'Reporte #${reporte.id} eliminado',
-    );
-  }
-
-  Future<void> _ejecutar(Future<void> Function() accion, String exito) async {
-    try {
-      await accion();
-      if (!mounted) return;
-      _avisar(context, exito);
-      _cargar();
-    } on AdminServicioException catch (e) {
-      if (mounted) _avisar(context, e.mensaje);
-    } catch (_) {
-      if (mounted) _avisar(context, 'No se pudo conectar con el servidor');
-    }
+  Future<void> _eliminar(ReporteAdmin r) async {
+    if (!await _eliminarReporte(context, r)) return;
+    widget.alCambiar();
+    if (mounted) Navigator.pop(context);
   }
 
   @override
   Widget build(BuildContext context) {
-    super.build(context);
-    return Column(
-      children: [
-        SizedBox(
-          height: 64,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-            children: [
-              ChipFiltro(
-                etiqueta: 'Lista',
-                icono: Icon(
-                  Icons.view_list_rounded,
-                  size: 18,
-                  color: _verMapa ? RBColores.azul : Colors.white,
-                ),
-                activo: !_verMapa,
-                onTap: () => setState(() => _verMapa = false),
-              ),
-              const SizedBox(width: 8),
-              ChipFiltro(
-                etiqueta: 'Mapa',
-                icono: Icon(
-                  Icons.map_rounded,
-                  size: 18,
-                  color: _verMapa ? Colors.white : RBColores.azul,
-                ),
-                activo: _verMapa,
-                onTap: () => setState(() => _verMapa = true),
-              ),
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 10),
-                child: VerticalDivider(width: 1, color: RBColores.linea),
-              ),
-              for (final (estado, etiqueta) in _filtros)
-                Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: ChipFiltro(
-                    etiqueta: etiqueta,
-                    activo: _filtro == estado,
-                    onTap: () => _filtrar(estado),
-                  ),
-                ),
-            ],
-          ),
-        ),
-        Expanded(child: _verMapa ? _mapa() : _lista()),
-      ],
-    );
-  }
-
-  // ---------------------------------------------------------------------------
-  // Mapa: todos los reportes (de cualquier estado) con su ficha y acciones.
-
-  Widget _mapa() {
-    final reportes = _reportes;
-    if (reportes == null) {
-      return _error == null
-          ? const Center(child: CircularProgressIndicator(color: RBColores.azul))
-          : _mensajeCentro(_error!, reintentar: _cargar);
+    final r = _reporte;
+    if (_cargando || r == null) {
+      return SizedBox(
+        height: 240,
+        child: _cargando
+            ? const Center(child: CircularProgressIndicator(color: RBColores.azul))
+            : _mensajeCentro(_error ?? '', reintentar: _cargar),
+      );
     }
-    final enMapa = reportes.where((r) => r.tieneUbicacion).toList();
-    final elegido = _seleccionado;
-    final mapa = Stack(
-      children: [
-        FlutterMap(
-          options: MapOptions(
-            initialCenter: _centroInicial,
-            initialZoom: 13,
-            onTap: (_, _) => setState(() => _seleccionado = null),
-          ),
-          children: [
-            capaMapaBase(),
-            MarkerLayer(
-              markers: [
-                for (final r in enMapa)
-                  Marker(
-                    point: LatLng(r.latitud!, r.longitud!),
-                    width: r.id == elegido?.id ? 84 : 48,
-                    height: r.id == elegido?.id ? 84 : 48,
-                    child: GestureDetector(
-                      onTap: () => setState(() => _seleccionado = r),
-                      // Los que ya no están vigentes se ven más tenues.
-                      child: Opacity(
-                        opacity: _vigente(r) || r.id == elegido?.id ? 1 : 0.5,
-                        child: PinIncidente(
-                          codigo: r.categoriaCodigo,
-                          colorHex: r.colorHex,
-                          seleccionado: r.id == elegido?.id,
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ],
-        ),
-        Positioned(
-          left: 12,
-          top: 12,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.95),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: RBColores.linea),
-            ),
-            child: Text(
-              '${enMapa.length} reportes en el mapa · los tenues ya no están vigentes',
-              style: const TextStyle(fontSize: 12.5, color: RBColores.tinta),
-            ),
-          ),
-        ),
-        const Positioned(right: 8, bottom: 4, child: AtribucionMapa()),
-      ],
-    );
-    return LayoutBuilder(
-      builder: (context, c) {
-        if (c.maxWidth >= 900) {
-          return Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Expanded(child: mapa),
-              SizedBox(
-                width: 360,
-                child: Material(
-                  color: Colors.white,
-                  child: elegido == null
-                      ? _mensajeCentro('Toca un reporte en el mapa para ver su ficha y moderarlo.')
-                      : _fichaReporte(elegido),
-                ),
-              ),
-            ],
-          );
-        }
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(child: mapa),
-            if (elegido != null)
-              ConstrainedBox(
-                constraints: BoxConstraints(maxHeight: c.maxHeight * 0.5),
-                child: Material(color: Colors.white, elevation: 8, child: _fichaReporte(elegido)),
-              ),
-          ],
-        );
-      },
-    );
-  }
-
-  bool _vigente(ReporteAdmin r) =>
-      (r.estado == 'PENDIENTE' || r.estado == 'VALIDADO') && !r.vencido;
-
-  /// Ficha del reporte elegido en el mapa, con todas las acciones a la vista.
-  Widget _fichaReporte(ReporteAdmin r) {
     final lugar = [r.direccion, r.zona].whereType<String>().where((p) => p.isNotEmpty).join(' · ');
     return ListView(
-      padding: const EdgeInsets.fromLTRB(18, 16, 18, 20),
+      shrinkWrap: true,
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
       children: [
         Row(
           children: [
@@ -1024,7 +918,7 @@ class _PestanaReportesState extends State<_PestanaReportes>
             ),
             IconButton(
               tooltip: 'Cerrar',
-              onPressed: () => setState(() => _seleccionado = null),
+              onPressed: () => Navigator.pop(context),
               icon: const Icon(Icons.close_rounded, color: RBColores.texto2),
             ),
           ],
@@ -1064,7 +958,7 @@ class _PestanaReportesState extends State<_PestanaReportes>
         ),
         const SizedBox(height: 14),
         OutlinedButton.icon(
-          onPressed: () => _verComentarios(r),
+          onPressed: () => _moderar(_verComentariosReporte(context, r)),
           icon: const Icon(Icons.forum_outlined, size: 19),
           label: Text(
             'Comentarios (${r.comentarios})'
@@ -1083,7 +977,7 @@ class _PestanaReportesState extends State<_PestanaReportes>
                 ChipFiltro(
                   etiqueta: _estiloEstado(estado).$1,
                   activo: false,
-                  onTap: () => _cambiarEstado(r, estado),
+                  onTap: () => _moderar(_cambiarEstadoReporte(context, r, estado)),
                 ),
           ],
         ),
@@ -1093,7 +987,7 @@ class _PestanaReportesState extends State<_PestanaReportes>
             foregroundColor: RBColores.rojo,
             side: const BorderSide(color: RBColores.rojo, width: 1.4),
           ),
-          onPressed: () => _suspenderAutor(r),
+          onPressed: () => _moderar(_suspenderAutorReporte(context, r)),
           icon: const Icon(Icons.block_rounded, size: 18),
           label: const Text('Suspender a quien reportó'),
         ),
@@ -1104,6 +998,101 @@ class _PestanaReportesState extends State<_PestanaReportes>
           icon: const Icon(Icons.delete_forever_rounded, size: 19),
           label: const Text('Eliminar reporte'),
         ),
+      ],
+    );
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Reportes
+
+class _PestanaReportes extends StatefulWidget {
+  const _PestanaReportes();
+
+  @override
+  State<_PestanaReportes> createState() => _PestanaReportesState();
+}
+
+class _PestanaReportesState extends State<_PestanaReportes>
+    with AutomaticKeepAliveClientMixin {
+  static const _filtros = [
+    (null, 'Todos'),
+    ('PENDIENTE', 'Pendientes'),
+    ('VALIDADO', 'Validados'),
+    ('RESUELTO', 'Resueltos'),
+    ('DESCARTADO', 'Descartados'),
+    ('EXPIRADO', 'Expirados'),
+  ];
+
+  final _servicio = AdminServicio();
+  List<ReporteAdmin>? _reportes;
+  String? _error;
+  String? _filtro;
+
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  void initState() {
+    super.initState();
+    _cargar();
+  }
+
+  Future<void> _cargar() async {
+    setState(() => _error = null);
+    try {
+      final reportes = await _servicio.reportes(
+        Sesion.token ?? '',
+        estado: _filtro,
+      );
+      if (!mounted) return;
+      setState(() => _reportes = reportes);
+    } on AdminServicioException catch (e) {
+      if (mounted) setState(() => _error = e.mensaje);
+    } catch (_) {
+      if (mounted) {
+        setState(() => _error = 'No se pudo conectar con el servidor');
+      }
+    }
+  }
+
+  void _filtrar(String? estado) {
+    setState(() {
+      _filtro = estado;
+      _reportes = null;
+    });
+    _cargar();
+  }
+
+  /// Aplica una acción de moderación y recarga la lista si cambió algo.
+  Future<void> _moderar(Future<bool> accion) async {
+    if (await accion && mounted) _cargar();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return Column(
+      children: [
+        SizedBox(
+          height: 64,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            children: [
+              for (final (estado, etiqueta) in _filtros)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ChipFiltro(
+                    etiqueta: etiqueta,
+                    activo: _filtro == estado,
+                    onTap: () => _filtrar(estado),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        Expanded(child: _lista()),
       ],
     );
   }
@@ -1217,14 +1206,10 @@ class _PestanaReportesState extends State<_PestanaReportes>
             ),
             icon: const Icon(Icons.more_vert, color: RBColores.texto2),
             onSelected: (accion) => switch (accion) {
-              'SUSPENDER_AUTOR' => _suspenderAutor(r),
-              'COMENTARIOS' => _verComentarios(r),
-              'ELIMINAR' => _eliminar(r),
-              'MAPA' => setState(() {
-                _verMapa = true;
-                _seleccionado = r;
-              }),
-              _ => _cambiarEstado(r, accion),
+              'SUSPENDER_AUTOR' => _moderar(_suspenderAutorReporte(context, r)),
+              'COMENTARIOS' => _moderar(_verComentariosReporte(context, r)),
+              'ELIMINAR' => _moderar(_eliminarReporte(context, r)),
+              _ => _moderar(_cambiarEstadoReporte(context, r, accion)),
             },
             itemBuilder: (_) => [
               for (final estado in const [
@@ -1257,17 +1242,6 @@ class _PestanaReportesState extends State<_PestanaReportes>
                   ),
                 ),
               ),
-              if (r.tieneUbicacion)
-                const PopupMenuItem(
-                  value: 'MAPA',
-                  child: Text(
-                    'Ver en el mapa',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      color: RBColores.tinta,
-                    ),
-                  ),
-                ),
               const PopupMenuItem(
                 value: 'SUSPENDER_AUTOR',
                 child: Text(

@@ -83,14 +83,23 @@ def resumen():
 @router.get("/reportes")
 def listar_reportes(
     estado: Literal["PENDIENTE", "VALIDADO", "DESCARTADO", "RESUELTO", "EXPIRADO"] | None = None,
-    limite: int = Query(100, ge=1, le=500),
+    limite: int = Query(100, ge=1, le=300),
+    id_reporte: int | None = Query(None, ge=1),
 ):
     """Todos los reportes (no solo los vigentes), del más reciente al más antiguo.
+    Con id_reporte trae solo ese (para moderarlo desde el mapa del panel).
 
     Igual que en el resto de la API, el autor se muestra con su alias: el panel
     puede suspender a quien reportó (ver suspender_autor) sin conocer su nombre.
     """
-    filtro, parametros = ("WHERE r.estado = %s", (estado,)) if estado else ("", ())
+    condiciones, parametros = [], []
+    if estado:
+        condiciones.append("r.estado = %s")
+        parametros.append(estado)
+    if id_reporte:
+        condiciones.append("r.id_reporte = %s")
+        parametros.append(id_reporte)
+    filtro = "WHERE " + " AND ".join(condiciones) if condiciones else ""
     filas = consultar(
         f"""
         SELECT r.id_reporte, c.nombre AS categoria, c.codigo AS categoria_codigo, c.color_hex,

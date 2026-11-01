@@ -573,19 +573,25 @@ class AdminServicio {
     return ResumenAdmin.desdeJson(cuerpo as Map<String, dynamic>);
   }
 
-  Future<List<ReporteAdmin>> reportes(
-    String token, {
-    String? estado,
-    int limite = 100,
-  }) async {
+  Future<List<ReporteAdmin>> reportes(String token, {String? estado}) async {
     final cuerpo = await _get(token, '/api/admin/reportes', {
       'estado': ?estado,
-      'limite': '$limite',
     });
     return [
       for (final r in cuerpo as List)
         ReporteAdmin.desdeJson(r as Map<String, dynamic>),
     ];
+  }
+
+  /// Un reporte con sus datos de moderación, o null si ya no existe.
+  Future<ReporteAdmin?> reporte(String token, int idReporte) async {
+    final cuerpo = await _get(token, '/api/admin/reportes', {
+      'id_reporte': '$idReporte',
+    });
+    final lista = cuerpo as List;
+    return lista.isEmpty
+        ? null
+        : ReporteAdmin.desdeJson(lista.first as Map<String, dynamic>);
   }
 
   Future<List<ComentarioAdmin>> comentarios(String token, int idReporte) async {
