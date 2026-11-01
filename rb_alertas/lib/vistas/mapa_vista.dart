@@ -283,6 +283,7 @@ class _MapaVistaState extends State<MapaVista> {
                           child: PinIncidente(
                             codigo: reporte.categoriaCodigo,
                             colorHex: reporte.colorHex,
+                            cantidad: reporte.totalReportes,
                           ),
                         ),
                       ),
@@ -296,6 +297,7 @@ class _MapaVistaState extends State<MapaVista> {
                         codigo: seleccionado.categoriaCodigo,
                         colorHex: seleccionado.colorHex,
                         seleccionado: true,
+                        cantidad: seleccionado.totalReportes,
                       ),
                     ),
                     Marker(
@@ -434,6 +436,11 @@ class _EtiquetaPin extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final tiempo = tiempoCorto(reporte.fechaCreacion);
+    final nombre = nombreCortoCategoria(reporte.categoriaCodigo, reporte.categoria);
+    // Varios vecinos reportaron lo mismo: se muestra como un solo incidente.
+    final titulo = reporte.totalReportes > 1
+        ? '$nombre · ${reporte.totalReportes} reportes'
+        : nombre;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
       decoration: BoxDecoration(
@@ -441,9 +448,7 @@ class _EtiquetaPin extends StatelessWidget {
         borderRadius: BorderRadius.circular(10),
       ),
       child: Text(
-        tiempo.isEmpty
-            ? nombreCortoCategoria(reporte.categoriaCodigo, reporte.categoria)
-            : '${nombreCortoCategoria(reporte.categoriaCodigo, reporte.categoria)} · $tiempo',
+        tiempo.isEmpty ? titulo : '$titulo · $tiempo',
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: const TextStyle(

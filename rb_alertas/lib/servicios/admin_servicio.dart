@@ -375,53 +375,111 @@ class FocoGrafo {
   );
 }
 
-class HallazgoGrafo {
-  /// "alerta" (conviene revisarlo) o "info".
-  final String nivel;
-  final String texto;
-  final NodoGrafo nodo;
-
-  HallazgoGrafo({required this.nivel, required this.texto, required this.nodo});
-
-  bool get esAlerta => nivel == 'alerta';
-}
-
-/// Portada del grafo: hallazgos y elementos desde donde empezar a explorar.
-class InicioGrafo {
-  final List<HallazgoGrafo> hallazgos;
-  final List<NodoGrafo> reportes;
-  final List<NodoGrafo> vecinos;
-  final List<NodoGrafo> lugares;
+/// Contadores de las tres secciones del grafo.
+class ResumenGrafo {
+  final int sospechosos;
+  final int bajaReputacion;
+  final int incidentesAbiertos;
 
   /// Fecha (texto ISO) de la última copia de MySQL a Neo4j, si hubo.
   final String? sincronizadoEn;
 
-  InicioGrafo({
-    required this.hallazgos,
-    required this.reportes,
-    required this.vecinos,
-    required this.lugares,
+  ResumenGrafo({
+    required this.sospechosos,
+    required this.bajaReputacion,
+    required this.incidentesAbiertos,
     required this.sincronizadoEn,
   });
 
-  static List<NodoGrafo> _nodos(dynamic lista) => [
-    for (final n in (lista as List? ?? []))
-      NodoGrafo.desdeJson(n as Map<String, dynamic>),
-  ];
-
-  factory InicioGrafo.desdeJson(Map<String, dynamic> json) => InicioGrafo(
-    hallazgos: [
-      for (final h in (json['hallazgos'] as List? ?? []))
-        HallazgoGrafo(
-          nivel: (h['nivel'] ?? 'info').toString(),
-          texto: (h['texto'] ?? '').toString(),
-          nodo: NodoGrafo.desdeJson(h['nodo'] as Map<String, dynamic>),
-        ),
-    ],
-    reportes: _nodos(json['reportes']),
-    vecinos: _nodos(json['vecinos']),
-    lugares: _nodos(json['lugares']),
+  factory ResumenGrafo.desdeJson(Map<String, dynamic> json) => ResumenGrafo(
+    sospechosos: (json['sospechosos'] as num?)?.toInt() ?? 0,
+    bajaReputacion: (json['baja_reputacion'] as num?)?.toInt() ?? 0,
+    incidentesAbiertos: (json['incidentes_abiertos'] as num?)?.toInt() ?? 0,
     sincronizadoEn: (json['sincronizacion'] as Map?)?['fecha']?.toString(),
+  );
+}
+
+/// Grupo de cuentas que se confirman los reportes entre ellas.
+class GrupoSospechoso {
+  final NodoGrafo nodo;
+  final List<NodoGrafo> miembros;
+
+  GrupoSospechoso({required this.nodo, required this.miembros});
+
+  int get id => nodo.id;
+
+  /// "ALTO" o "MEDIO".
+  String get nivel => (nodo.datos['nivel'] ?? 'MEDIO').toString();
+
+  /// Parte de las confirmaciones de sus miembros que se quedan dentro del grupo (0 a 1).
+  double get reciprocidad => (nodo.datos['reciprocidad'] as num?)?.toDouble() ?? 0;
+
+  int get confirmacionesInternas =>
+      (nodo.datos['confirmaciones_internas'] as num?)?.toInt() ?? 0;
+
+  factory GrupoSospechoso.desdeJson(Map<String, dynamic> json) => GrupoSospechoso(
+    nodo: NodoGrafo.desdeJson(json),
+    miembros: [
+      for (final m in (json['miembros'] as List? ?? []))
+        NodoGrafo.desdeJson(m as Map<String, dynamic>),
+    ],
+  );
+}
+
+/// Vecino con su reputación (0 a 100) y lo que la explica.
+class VecinoReputacion {
+  final NodoGrafo nodo;
+  final int reportes;
+  final bool sospechoso;
+
+  VecinoReputacion({
+    required this.nodo,
+    required this.reportes,
+    required this.sospechoso,
+  });
+
+  int _entero(String campo) => (nodo.datos[campo] as num?)?.toInt() ?? 0;
+
+  int get puntaje => (nodo.datos['reputacion'] as num?)?.round() ?? 50;
+  int get confirmaciones => _entero('confirmaciones_recibidas');
+  int get desmentidos => _entero('desmentidos_recibidos');
+  int get buenos => _entero('reportes_buenos');
+  int get descartados => _entero('reportes_descartados');
+
+  factory VecinoReputacion.desdeJson(Map<String, dynamic> json) => VecinoReputacion(
+    nodo: NodoGrafo.desdeJson(json),
+    reportes: (json['reportes'] as num?)?.toInt() ?? 0,
+    sospechoso: json['sospechoso'] == true,
+  );
+}
+
+/// Varios reportes del mismo hecho, juntados en un incidente.
+class IncidenteGrafo {
+  final NodoGrafo nodo;
+  final String? lugar;
+  final int vigentes;
+  final List<NodoGrafo> reportes;
+
+  IncidenteGrafo({
+    required this.nodo,
+    required this.lugar,
+    required this.vigentes,
+    required this.reportes,
+  });
+
+  /// El incidente se identifica con el id de su primer reporte.
+  int get id => nodo.id;
+  String get categoria => (nodo.datos['categoria'] ?? '').toString();
+  DateTime? get ultimo => DateTime.tryParse((nodo.datos['fin'] ?? '').toString());
+
+  factory IncidenteGrafo.desdeJson(Map<String, dynamic> json) => IncidenteGrafo(
+    nodo: NodoGrafo.desdeJson(json),
+    lugar: json['lugar']?.toString(),
+    vigentes: (json['vigentes'] as num?)?.toInt() ?? 0,
+    reportes: [
+      for (final r in (json['reportes'] as List? ?? []))
+        NodoGrafo.desdeJson(r as Map<String, dynamic>),
+    ],
   );
 }
 
@@ -538,9 +596,58 @@ class AdminServicio {
     });
   }
 
-  Future<InicioGrafo> inicioGrafo(String token) async {
-    final cuerpo = await _get(token, '/api/admin/grafo/inicio');
-    return InicioGrafo.desdeJson(cuerpo as Map<String, dynamic>);
+  Future<ResumenGrafo> resumenGrafo(String token) async {
+    final cuerpo = await _get(token, '/api/admin/grafo/resumen');
+    return ResumenGrafo.desdeJson(cuerpo as Map<String, dynamic>);
+  }
+
+  Future<List<GrupoSospechoso>> cuentasSospechosas(String token) async {
+    final cuerpo = await _get(token, '/api/admin/grafo/sospechosos');
+    return [
+      for (final g in cuerpo as List)
+        GrupoSospechoso.desdeJson(g as Map<String, dynamic>),
+    ];
+  }
+
+  /// Suspende todas las cuentas del grupo; devuelve cuántas se suspendieron.
+  Future<int> suspenderGrupoSospechoso(String token, int idGrupo) async {
+    final cuerpo = await _enviar(
+      'POST',
+      token,
+      '/api/admin/grafo/sospechosos/$idGrupo/suspender',
+      null,
+    );
+    return ((cuerpo as Map?)?['suspendidas'] as num?)?.toInt() ?? 0;
+  }
+
+  /// [orden]: "baja" (menos confiables primero) o "alta".
+  Future<List<VecinoReputacion>> reputacion(String token, {String orden = 'baja'}) async {
+    final cuerpo = await _get(token, '/api/admin/grafo/reputacion', {'orden': orden});
+    return [
+      for (final v in cuerpo as List)
+        VecinoReputacion.desdeJson(v as Map<String, dynamic>),
+    ];
+  }
+
+  Future<List<IncidenteGrafo>> incidentes(String token) async {
+    final cuerpo = await _get(token, '/api/admin/grafo/incidentes');
+    return [
+      for (final i in cuerpo as List)
+        IncidenteGrafo.desdeJson(i as Map<String, dynamic>),
+    ];
+  }
+
+  /// Aplica [estado] (VALIDADO, RESUELTO o DESCARTADO) a todos los reportes del incidente.
+  Future<void> cambiarEstadoIncidente(
+    String token,
+    int idIncidente,
+    String estado, {
+    String? motivo,
+  }) async {
+    await _enviar('PATCH', token, '/api/admin/incidentes/$idIncidente/estado', {
+      'estado': estado,
+      'motivo': ?motivo,
+    });
   }
 
   /// [nodo] en el centro, con sus conexiones hasta 2 pasos.
@@ -574,7 +681,8 @@ class AdminServicio {
     throw AdminServicioException(_mensaje(respuesta, 'No se pudo cargar'));
   }
 
-  Future<void> _enviar(
+  /// Devuelve el cuerpo de la respuesta ya decodificado (o null si viene vacío).
+  Future<dynamic> _enviar(
     String metodo,
     String token,
     String ruta,
@@ -586,7 +694,9 @@ class AdminServicio {
       // La API exige Content-Length en POST/PATCH, así que siempre va un cuerpo.
       ..body = jsonEncode(cuerpo ?? {});
     final respuesta = await http.Response.fromStream(await peticion.send());
-    if (respuesta.statusCode == 200) return;
+    if (respuesta.statusCode == 200) {
+      return respuesta.bodyBytes.isEmpty ? null : _json(respuesta);
+    }
     throw AdminServicioException(
       _mensaje(respuesta, 'No se pudo guardar el cambio'),
     );

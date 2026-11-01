@@ -35,6 +35,15 @@ const _colorLinea = RBColores.bordeCampo;
       return ('Localidad', Icons.place_rounded, RBColores.texto2);
     case 'ZonaSegura':
       return ('Zona segura', Icons.shield_rounded, RBColores.verde);
+    case 'Coordinacion':
+      return ('Cuentas coordinadas', Icons.gpp_maybe_rounded, RBColores.rojo);
+    case 'Incidente':
+      final codigo = (nodo.datos['categoria_codigo'] ?? '').toString();
+      return (
+        'Incidente',
+        iconoCategoria(codigo),
+        colorCategoria(codigo, colorHex: nodo.datos['color']?.toString()),
+      );
     default:
       return (nodo.tipo, Icons.circle, RBColores.placeholder);
   }
@@ -57,6 +66,10 @@ String _textoRelacion(AristaGrafo arista) {
       return 'su zona';
     case 'ALERTO_A':
       return 'alertó a';
+    case 'MIEMBRO_DE':
+      return 'miembro';
+    case 'AGRUPA':
+      return 'mismo hecho';
     default:
       return arista.tipo.toLowerCase();
   }
@@ -72,6 +85,10 @@ Color _colorRelacion(AristaGrafo arista) {
       return RBColores.azul;
     case 'ALERTO_A':
       return RBColores.petroleo;
+    case 'MIEMBRO_DE':
+      return RBColores.rojo;
+    case 'AGRUPA':
+      return RBColores.tinta;
     default:
       return _colorLinea;
   }
@@ -80,8 +97,8 @@ Color _colorRelacion(AristaGrafo arista) {
 /// Ícono de un elemento como cuadrado redondeado de su color; las categorías
 /// usan el mismo ícono que en el resto de la app.
 Widget _iconoNodo(NodoGrafo nodo, double tamano) {
-  if (nodo.tipo == 'Reporte' || nodo.tipo == 'Categoria') {
-    final campo = nodo.tipo == 'Reporte' ? 'categoria_codigo' : 'codigo';
+  if (nodo.tipo == 'Reporte' || nodo.tipo == 'Categoria' || nodo.tipo == 'Incidente') {
+    final campo = nodo.tipo == 'Categoria' ? 'codigo' : 'categoria_codigo';
     return IconoCategoria(
       codigo: (nodo.datos[campo] ?? '').toString(),
       colorHex: nodo.datos['color']?.toString(),
@@ -111,9 +128,10 @@ String _textoEstado(String? estado) => switch (estado) {
   _ => estado ?? '',
 };
 
-/// Pestaña "Grafo" del panel. Empieza con los hallazgos y, al elegir un
-/// elemento, lo pone al centro con sus conexiones en dos anillos (estilo
-/// Neo4j Bloom). Tocar otro elemento lo trae al centro.
+/// Pestaña "Grafo" del panel. Empieza con tres secciones que responden una
+/// pregunta cada una (cuentas sospechosas, reputación e incidentes agrupados) y,
+/// al elegir un elemento, lo pone al centro con sus conexiones en dos anillos
+/// (estilo Neo4j Bloom) para investigarlo.
 class PestanaGrafo extends StatefulWidget {
   const PestanaGrafo({super.key});
 
@@ -129,7 +147,13 @@ class _PestanaGrafoState extends State<PestanaGrafo>
     duration: const Duration(milliseconds: 650),
   );
 
-  InicioGrafo? _inicio;
+  /// 0 = sospechosos, 1 = reputación, 2 = incidentes.
+  int _seccion = 0;
+  ResumenGrafo? _resumen;
+  List<GrupoSospechoso>? _sospechosos;
+  List<VecinoReputacion>? _reputacion;
+  List<IncidenteGrafo>? _incidentes;
+  bool _reputacionAlta = false;
   FocoGrafo? _foco;
   final List<NodoGrafo> _rastro = [];
   String? _error;
@@ -179,14 +203,47 @@ class _PestanaGrafoState extends State<PestanaGrafo>
   }
 
   Future<void> _cargarInicio() => _ejecutar(() async {
-    final inicio = await _servicio.inicioGrafo(_token);
+    final resumen = await _servicio.resumenGrafo(_token);
     if (!mounted) return;
     setState(() {
-      _inicio = inicio;
+      _resumen = resumen;
       _foco = null;
       _rastro.clear();
     });
+    await _cargarSeccion();
   });
+
+  /// Carga la lista de la sección elegida (siempre fresca: cambia al moderar).
+  Future<void> _cargarSeccion() async {
+    switch (_seccion) {
+      case 0:
+        final grupos = await _servicio.cuentasSospechosas(_token);
+        if (mounted) setState(() => _sospechosos = grupos);
+      case 1:
+        final vecinos = await _servicio.reputacion(
+          _token,
+          orden: _reputacionAlta ? 'alta' : 'baja',
+        );
+        if (mounted) setState(() => _reputacion = vecinos);
+      default:
+        final lista = await _servicio.incidentes(_token);
+        if (mounted) setState(() => _incidentes = lista);
+    }
+  }
+
+  void _cambiarSeccion(int seccion) {
+    setState(() => _seccion = seccion);
+    _ejecutar(_cargarSeccion);
+  }
+
+  void _cambiarOrdenReputacion(bool alta) {
+    if (alta == _reputacionAlta) return;
+    setState(() {
+      _reputacionAlta = alta;
+      _reputacion = null;
+    });
+    _ejecutar(_cargarSeccion);
+  }
 
   Future<void> _enfocar(NodoGrafo nodo, {bool agregarAlRastro = true}) =>
       _ejecutar(() async {
@@ -227,6 +284,8 @@ class _PestanaGrafoState extends State<PestanaGrafo>
         await _cargarInicio();
       } else {
         await _enfocar(foco.nodoFoco, agregarAlRastro: false);
+        // La lista de la sección se recarga al volver al inicio.
+        _sospechosos = _reputacion = _incidentes = null;
       }
     } on AdminServicioException catch (e) {
       if (mounted) _avisar(e.mensaje);
@@ -465,68 +524,72 @@ class _PestanaGrafoState extends State<PestanaGrafo>
   }
 
   // ---------------------------------------------------------------------------
-  // Inicio: hallazgos y puntos de partida
+  // Inicio: las tres secciones del análisis
+
+  static const _secciones = [
+    (
+      'Sospechosos',
+      Icons.gpp_maybe_rounded,
+      'Grupos de cuentas que se confirman los reportes entre ellas mucho más que '
+          'a los demás: pueden ser cuentas falsas inflando reportes.',
+    ),
+    (
+      'Reputación',
+      Icons.verified_user_rounded,
+      'Puntaje de 0 a 100. Sube si lo confirman vecinos confiables y si sus '
+          'reportes terminan validados; baja con desmentidos y reportes descartados.',
+    ),
+    (
+      'Incidentes',
+      Icons.layers_rounded,
+      'Reportes del mismo hecho (misma categoría, cerca y casi a la misma hora) '
+          'juntados en un solo incidente. Se pueden moderar todos de una vez.',
+    ),
+  ];
 
   Widget _vistaInicio() {
-    final inicio = _inicio;
-    if (inicio == null) {
-      return const Center(
-        child: CircularProgressIndicator(color: RBColores.azul),
-      );
-    }
-    final vacio =
-        inicio.reportes.isEmpty &&
-        inicio.vecinos.isEmpty &&
-        inicio.lugares.isEmpty;
+    final resumen = _resumen;
+    final contadores = [
+      resumen?.sospechosos,
+      resumen?.bajaReputacion,
+      resumen?.incidentesAbiertos,
+    ];
     return RefreshIndicator(
       onRefresh: _cargarInicio,
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
         children: [
-          const Text(
-            'Explora cómo se conectan vecinos, reportes y lugares. '
-            'Toca cualquier elemento para ponerlo al centro.',
-            style: TextStyle(
-              fontSize: 14.5,
-              color: RBColores.texto2,
+          Row(
+            children: [
+              for (final (i, (nombre, icono, _)) in _secciones.indexed) ...[
+                if (i > 0) const SizedBox(width: 8),
+                Expanded(
+                  child: _botonSeccion(i, nombre, icono, contadores[i]),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 14),
+          Text(
+            _secciones[_seccion].$3,
+            style: const TextStyle(
+              fontSize: 14,
               height: 1.4,
+              color: RBColores.texto2,
             ),
           ),
-          const SizedBox(height: 16),
-          if (vacio)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 40),
-              child: Text(
-                'El grafo todavía no tiene datos. Toca ⟳ para copiarlos ahora.',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 15, color: RBColores.texto2),
-              ),
-            ),
-          if (inicio.hallazgos.isNotEmpty) ...[
-            _tituloSeccion('Para revisar'),
-            for (final h in inicio.hallazgos) _tarjetaHallazgo(h),
-            const SizedBox(height: 20),
-          ],
-          if (inicio.reportes.isNotEmpty) ...[
-            _tituloSeccion('Reportes recientes'),
-            _filaNodos(inicio.reportes),
-            const SizedBox(height: 20),
-          ],
-          if (inicio.vecinos.isNotEmpty) ...[
-            _tituloSeccion('Vecinos más activos'),
-            _filaNodos(inicio.vecinos),
-            const SizedBox(height: 20),
-          ],
-          if (inicio.lugares.isNotEmpty) ...[
-            _tituloSeccion('Lugares con más reportes'),
-            _filaNodos(inicio.lugares),
-          ],
-          if (inicio.sincronizadoEn != null)
+          const SizedBox(height: 14),
+          ...switch (_seccion) {
+            0 => _listaSospechosos(),
+            1 => _listaReputacion(),
+            _ => _listaIncidentes(),
+          },
+          if (resumen?.sincronizadoEn != null)
             Padding(
               padding: const EdgeInsets.only(top: 20),
               child: Text(
                 'Datos copiados el '
-                '${inicio.sincronizadoEn!.replaceFirst('T', ' a las ').substring(0, 21)}',
+                '${resumen!.sincronizadoEn!.replaceFirst('T', ' a las ').substring(0, 22)}',
                 textAlign: TextAlign.center,
                 style: const TextStyle(fontSize: 12.5, color: RBColores.texto2),
               ),
@@ -536,113 +599,447 @@ class _PestanaGrafoState extends State<PestanaGrafo>
     );
   }
 
-  Widget _tituloSeccion(String texto) => Padding(
-    padding: const EdgeInsets.only(bottom: 10, left: 4),
-    child: EtiquetaSeccion(texto),
-  );
-
-  Widget _tarjetaHallazgo(HallazgoGrafo h) {
-    final color = h.esAlerta ? RBColores.rojo : RBColores.azul;
-    final fondo = h.esAlerta ? RBColores.rojo50 : RBColores.azul50;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Material(
-        color: fondo,
+  Widget _botonSeccion(int indice, String nombre, IconData icono, int? contador) {
+    final activa = _seccion == indice;
+    return Material(
+      color: activa ? RBColores.azul : Colors.white,
+      borderRadius: BorderRadius.circular(RBRadios.tarjeta),
+      child: InkWell(
         borderRadius: BorderRadius.circular(RBRadios.tarjeta),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(RBRadios.tarjeta),
-          onTap: () => _enfocar(h.nodo),
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Row(
-              children: [
-                Container(
-                  width: 38,
-                  height: 38,
-                  decoration: BoxDecoration(
-                    color: color,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(
-                    h.esAlerta
-                        ? Icons.warning_amber_rounded
-                        : Icons.insights_rounded,
-                    size: 20,
-                    color: Colors.white,
+        onTap: activa ? null : () => _cambiarSeccion(indice),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
+          child: Column(
+            children: [
+              Icon(icono, size: 22, color: activa ? Colors.white : RBColores.azul),
+              const SizedBox(height: 4),
+              Text(
+                nombre,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: activa ? Colors.white : RBColores.tinta,
+                ),
+              ),
+              if (contador != null && contador > 0)
+                Text(
+                  indice == 1 ? '$contador con baja' : '$contador',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: activa
+                        ? Colors.white.withValues(alpha: 0.85)
+                        : (indice == 2 ? RBColores.azul : RBColores.rojo),
                   ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    h.texto,
-                    style: const TextStyle(
-                      fontSize: 14.5,
-                      height: 1.3,
-                      fontWeight: FontWeight.w600,
-                      color: RBColores.tinta,
-                    ),
-                  ),
-                ),
-                Icon(Icons.chevron_right_rounded, color: color),
-              ],
-            ),
+            ],
           ),
         ),
       ),
     );
   }
 
-  Widget _filaNodos(List<NodoGrafo> nodos) {
-    return SizedBox(
-      height: 124,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.only(bottom: 6),
-        itemCount: nodos.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 10),
-        itemBuilder: (_, i) {
-          final n = nodos[i];
-          final (tipo, _, _) = _estilo(n);
-          final subtitulo =
-              n.detalle ??
-              (n.tipo == 'Reporte'
-                  ? '${n.datos['categoria'] ?? ''}'
-                  : _textoEstado(n.estado));
-          return SizedBox(
-            width: 128,
-            child: TarjetaRB(
-              onTap: () => _enfocar(n),
-              padding: const EdgeInsets.all(12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _iconoNodo(n, 36),
-                  const Spacer(),
-                  Text(
-                    n.etiqueta,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 14.5,
-                      fontWeight: FontWeight.w700,
-                      color: RBColores.tinta,
+  Widget _vacio(String texto) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 36),
+    child: Column(
+      children: [
+        const Icon(Icons.check_circle_outline_rounded, size: 40, color: RBColores.verde),
+        const SizedBox(height: 10),
+        Text(
+          texto,
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 15, color: RBColores.texto2),
+        ),
+      ],
+    ),
+  );
+
+  Widget _cargandoLista() => const Padding(
+    padding: EdgeInsets.symmetric(vertical: 40),
+    child: Center(child: CircularProgressIndicator(color: RBColores.azul)),
+  );
+
+  // -- Sospechosos ------------------------------------------------------------
+
+  List<Widget> _listaSospechosos() {
+    final grupos = _sospechosos;
+    if (grupos == null) return [_cargandoLista()];
+    if (grupos.isEmpty) {
+      return [_vacio('No hay grupos de cuentas que se confirmen entre ellas.')];
+    }
+    return [for (final g in grupos) _tarjetaSospechoso(g)];
+  }
+
+  Widget _tarjetaSospechoso(GrupoSospechoso g) {
+    final alto = g.nivel == 'ALTO';
+    final activos = g.miembros.where((m) => m.estado != 'SUSPENDIDO').length;
+    return TarjetaRB(
+      margin: const EdgeInsets.only(bottom: 12),
+      colorBorde: alto ? RBColores.rojo : null,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: alto ? RBColores.rojo : RBColores.rojo50,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.gpp_maybe_rounded,
+                  color: alto ? Colors.white : RBColores.rojo,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${g.miembros.length} cuentas coordinadas',
+                      style: const TextStyle(
+                        fontSize: 16.5,
+                        fontWeight: FontWeight.w700,
+                        color: RBColores.tinta,
+                      ),
                     ),
-                  ),
-                  Text(
-                    subtitulo.isEmpty ? tipo : subtitulo,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 12.5,
-                      color: RBColores.texto2,
+                    Text(
+                      'Sospecha ${alto ? 'alta' : 'media'}',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: alto ? RBColores.rojo : RBColores.texto2,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'El ${(g.reciprocidad * 100).round()} % de las confirmaciones que dan '
+            'se quedan dentro del grupo (${g.confirmacionesInternas} entre ellas).',
+            style: const TextStyle(fontSize: 14, height: 1.4, color: RBColores.tinta),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [for (final m in g.miembros) _chipVecino(m)],
+          ),
+          _enlaceGrafo(g.nodo),
+          if (activos > 0)
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                style: FilledButton.styleFrom(backgroundColor: RBColores.rojo),
+                onPressed: () => _suspenderGrupo(g, activos),
+                icon: const Icon(Icons.block_rounded, size: 18),
+                label: Text('Suspender $activos cuentas'),
               ),
             ),
-          );
-        },
+        ],
       ),
+    );
+  }
+
+  Widget _chipVecino(NodoGrafo m) {
+    final suspendido = m.estado == 'SUSPENDIDO';
+    final puntaje = (m.datos['reputacion'] as num?)?.round();
+    return ActionChip(
+      onPressed: () => _enfocar(m),
+      avatar: Icon(
+        suspendido ? Icons.block_rounded : Icons.person_rounded,
+        size: 16,
+        color: suspendido ? RBColores.rojo : RBColores.azul,
+      ),
+      label: Text(
+        puntaje == null ? m.etiqueta : '${m.etiqueta} · $puntaje',
+        style: TextStyle(
+          fontSize: 12.5,
+          fontWeight: FontWeight.w600,
+          color: suspendido ? RBColores.rojo : RBColores.tinta,
+          decoration: suspendido ? TextDecoration.lineThrough : null,
+        ),
+      ),
+      backgroundColor: RBColores.fondo,
+      side: const BorderSide(color: RBColores.linea),
+      visualDensity: VisualDensity.compact,
+    );
+  }
+
+  Future<void> _suspenderGrupo(GrupoSospechoso g, int activos) async {
+    if (!await _confirmar(
+      'Suspender $activos cuentas',
+      'Ninguna de estas cuentas podrá entrar a la app y se cerrarán sus sesiones. '
+          'Puedes reactivarlas una por una desde Usuarios.',
+    )) {
+      return;
+    }
+    await _aplicar(() async {
+      final n = await _servicio.suspenderGrupoSospechoso(_token, g.id);
+      if (mounted) _avisar('$n cuentas suspendidas');
+    }, null);
+  }
+
+  // -- Reputación -------------------------------------------------------------
+
+  List<Widget> _listaReputacion() {
+    final vecinos = _reputacion;
+    return [
+      Row(
+        children: [
+          ChipFiltro(
+            etiqueta: 'Menos confiables',
+            activo: !_reputacionAlta,
+            onTap: () => _cambiarOrdenReputacion(false),
+          ),
+          const SizedBox(width: 8),
+          ChipFiltro(
+            etiqueta: 'Más confiables',
+            activo: _reputacionAlta,
+            onTap: () => _cambiarOrdenReputacion(true),
+          ),
+        ],
+      ),
+      const SizedBox(height: 12),
+      if (vecinos == null)
+        _cargandoLista()
+      else if (vecinos.isEmpty)
+        _vacio('Todavía no hay vecinos con reportes o votos.')
+      else
+        for (final v in vecinos) _filaReputacion(v),
+    ];
+  }
+
+  Color _colorPuntaje(int puntaje) => puntaje < 35
+      ? RBColores.rojo
+      : (puntaje < 65 ? const Color(0xFFB7791F) : RBColores.verde);
+
+  Widget _filaReputacion(VecinoReputacion v) {
+    final color = _colorPuntaje(v.puntaje);
+    final detalle = [
+      '${v.reportes} ${v.reportes == 1 ? 'reporte' : 'reportes'}',
+      if (v.buenos > 0) '${v.buenos} validados',
+      if (v.descartados > 0) '${v.descartados} descartados',
+      if (v.confirmaciones > 0) '${v.confirmaciones} confirmaciones',
+      if (v.desmentidos > 0) '${v.desmentidos} desmentidos',
+    ].join(' · ');
+    return TarjetaRB(
+      onTap: () => _enfocar(v.nodo),
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 48,
+            height: 48,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                CircularProgressIndicator(
+                  value: v.puntaje / 100,
+                  strokeWidth: 5,
+                  backgroundColor: RBColores.linea,
+                  color: color,
+                ),
+                Text(
+                  '${v.puntaje}',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                    color: color,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        v.nodo.etiqueta,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 15.5,
+                          fontWeight: FontWeight.w700,
+                          color: RBColores.tinta,
+                        ),
+                      ),
+                    ),
+                    if (v.sospechoso) ...[
+                      const SizedBox(width: 6),
+                      const Icon(Icons.gpp_maybe_rounded, size: 16, color: RBColores.rojo),
+                    ],
+                    if (v.nodo.estado == 'SUSPENDIDO') ...[
+                      const SizedBox(width: 6),
+                      const Icon(Icons.block_rounded, size: 16, color: RBColores.rojo),
+                    ],
+                  ],
+                ),
+                Text(
+                  detalle,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 13, color: RBColores.texto2),
+                ),
+              ],
+            ),
+          ),
+          const Icon(Icons.chevron_right_rounded, color: RBColores.placeholder),
+        ],
+      ),
+    );
+  }
+
+  // -- Incidentes -------------------------------------------------------------
+
+  List<Widget> _listaIncidentes() {
+    final lista = _incidentes;
+    if (lista == null) return [_cargandoLista()];
+    if (lista.isEmpty) {
+      return [_vacio('No hay incidentes abiertos con más de un reporte.')];
+    }
+    return [for (final i in lista) _tarjetaIncidente(i)];
+  }
+
+  Widget _tarjetaIncidente(IncidenteGrafo i) {
+    final detalle = [
+      '${i.reportes.length} reportes',
+      if (i.lugar != null && i.lugar!.isNotEmpty) i.lugar!,
+      if (i.ultimo != null) tiempoRelativoInicio(i.ultimo),
+    ].join(' · ');
+    return TarjetaRB(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              _iconoNodo(i.nodo, 44),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      i.categoria.isEmpty ? i.nodo.etiqueta : i.categoria,
+                      style: const TextStyle(
+                        fontSize: 16.5,
+                        fontWeight: FontWeight.w700,
+                        color: RBColores.tinta,
+                      ),
+                    ),
+                    Text(
+                      detalle,
+                      style: const TextStyle(fontSize: 13.5, color: RBColores.texto2),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final r in i.reportes)
+                ActionChip(
+                  onPressed: () => _enfocar(r),
+                  label: Text(
+                    '${r.etiqueta} · ${_textoEstado(r.estado)}',
+                    style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+                  ),
+                  backgroundColor: RBColores.fondo,
+                  side: const BorderSide(color: RBColores.linea),
+                  visualDensity: VisualDensity.compact,
+                ),
+            ],
+          ),
+          _enlaceGrafo(i.nodo),
+          _botonesIncidente(i),
+        ],
+      ),
+    );
+  }
+
+  /// "Ver en el grafo": abre el elemento en la vista de foco.
+  Widget _enlaceGrafo(NodoGrafo nodo) => Align(
+    alignment: Alignment.centerLeft,
+    child: TextButton.icon(
+      style: TextButton.styleFrom(
+        foregroundColor: RBColores.azul,
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+      ),
+      onPressed: () => _enfocar(nodo),
+      icon: const Icon(Icons.hub_outlined, size: 18),
+      label: const Text('Ver en el grafo'),
+    ),
+  );
+
+  /// Resolver o descartar todos los reportes del incidente. Sin íconos y con
+  /// poco relleno, para que el texto quepa en pantallas angostas.
+  Widget _botonesIncidente(IncidenteGrafo i) {
+    const relleno = EdgeInsets.symmetric(horizontal: 10, vertical: 14);
+    return Row(
+      children: [
+        Expanded(
+          child: FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: RBColores.verde,
+              padding: relleno,
+            ),
+            onPressed: () => _moderarIncidente(i, 'RESUELTO'),
+            child: const Text('Resolver', maxLines: 1),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: OutlinedButton(
+            style: OutlinedButton.styleFrom(
+              foregroundColor: RBColores.rojo,
+              side: const BorderSide(color: RBColores.rojo, width: 1.4),
+              padding: relleno,
+            ),
+            onPressed: () => _moderarIncidente(i, 'DESCARTADO'),
+            child: const Text('Descartar', maxLines: 1),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _moderarIncidente(IncidenteGrafo i, String estado) async {
+    final resolver = estado == 'RESUELTO';
+    if (!await _confirmar(
+      resolver ? 'Resolver el incidente' : 'Descartar el incidente',
+      resolver
+          ? 'Los ${i.vigentes} reportes vigentes de este hecho se marcarán como resueltos.'
+          : 'Los ${i.vigentes} reportes vigentes de este hecho dejarán de mostrarse en el mapa.',
+      color: resolver ? RBColores.verde : RBColores.rojo,
+    )) {
+      return;
+    }
+    await _aplicar(
+      () => _servicio.cambiarEstadoIncidente(
+        _token,
+        i.id,
+        estado,
+        motivo: resolver ? 'Resuelto desde el grafo' : 'Descartado desde el grafo',
+      ),
+      resolver ? 'Incidente resuelto' : 'Incidente descartado',
     );
   }
 
@@ -768,8 +1165,11 @@ class _PestanaGrafoState extends State<PestanaGrafo>
                 ),
               ),
             ),
-            const SizedBox(height: 3),
-            Container(
+            // El centro no lleva nombre: ya está en el rastro y en la ficha, y
+            // así no tapa los textos de las relaciones.
+            if (!esFoco) const SizedBox(height: 3),
+            if (!esFoco)
+              Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
               decoration: BoxDecoration(
                 color: Colors.white.withValues(alpha: 0.9),
@@ -809,6 +1209,16 @@ class _PestanaGrafoState extends State<PestanaGrafo>
             '${datos['desmentidos'] ?? 0} desmienten',
       if (n.tipo == 'ZonaSegura' && datos['radio'] != null)
         'Radio de ${datos['radio']} m',
+      if (n.tipo == 'Usuario' && datos['reputacion'] != null)
+        'Reputación ${(datos['reputacion'] as num).round()}/100 · '
+            '${datos['confirmaciones_recibidas'] ?? 0} confirmaciones y '
+            '${datos['desmentidos_recibidos'] ?? 0} desmentidos recibidos',
+      if (n.tipo == 'Coordinacion')
+        'El ${(((datos['reciprocidad'] as num?) ?? 0) * 100).round()} % de sus '
+            'confirmaciones quedan dentro del grupo '
+            '(${datos['confirmaciones_internas'] ?? 0} entre ellas)',
+      if (n.tipo == 'Incidente')
+        '${datos['total'] ?? 0} reportes del mismo hecho · ${datos['categoria'] ?? ''}',
       '$directas conexiones directas',
     ];
 
@@ -923,6 +1333,33 @@ class _PestanaGrafoState extends State<PestanaGrafo>
         ),
         label: Text(suspendido ? 'Reactivar cuenta' : 'Suspender cuenta'),
       );
+    } else if (n.tipo == 'Coordinacion') {
+      boton = FilledButton.icon(
+        style: FilledButton.styleFrom(backgroundColor: RBColores.rojo),
+        onPressed: () {
+          final miembros = _foco!.nodos.where((x) => x.tipo == 'Usuario').toList();
+          _suspenderGrupo(
+            GrupoSospechoso(nodo: n, miembros: miembros),
+            miembros.where((m) => m.estado != 'SUSPENDIDO').length,
+          );
+        },
+        icon: const Icon(Icons.block_rounded, size: 18),
+        label: const Text('Suspender el grupo'),
+      );
+    } else if (n.tipo == 'Incidente') {
+      final incidente = IncidenteGrafo(
+        nodo: n,
+        lugar: null,
+        vigentes: _foco!.nodos
+            .where(
+              (x) =>
+                  x.tipo == 'Reporte' &&
+                  (x.estado == 'PENDIENTE' || x.estado == 'VALIDADO'),
+            )
+            .length,
+        reportes: const [],
+      );
+      boton = _botonesIncidente(incidente);
     } else if (n.tipo == 'Reporte' && n.estado != 'DESCARTADO') {
       boton = OutlinedButton.icon(
         style: OutlinedButton.styleFrom(
@@ -981,11 +1418,11 @@ class _PestanaGrafoState extends State<PestanaGrafo>
     );
   }
 
-  Future<void> _aplicar(Future<void> Function() accion, String exito) async {
+  Future<void> _aplicar(Future<void> Function() accion, String? exito) async {
     try {
       await accion();
       if (!mounted) return;
-      _avisar(exito);
+      if (exito != null) _avisar(exito);
       // El grafo es una copia de MySQL: se rehace para que muestre el cambio.
       await _sincronizar();
     } on AdminServicioException catch (e) {

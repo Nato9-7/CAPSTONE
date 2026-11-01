@@ -10,7 +10,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPExcepti
 from pydantic import BaseModel
 import mysql.connector
 
-from app import push
+from app import incidentes, push
 from app.db import consultar, ejecutar, transaccion
 from app.seguridad import usuario_actual, usuario_opcional
 
@@ -150,14 +150,18 @@ def listar_categorias():
 
 @router.get("/")
 def listar_reportes(limite: int = Query(200, ge=1, le=500)):
-    """Reportes vigentes para dibujar en el mapa, del más reciente al más antiguo."""
-    return consultar(
+    """Incidentes vigentes para dibujar en el mapa, del más reciente al más antiguo.
+
+    Los reportes del mismo hecho se juntan en uno solo (ver app/incidentes.py):
+    cada elemento trae total_reportes e ids_reportes.
+    """
+    filas = consultar(
         """
         SELECT r.id_reporte, c.codigo AS categoria_codigo, c.nombre AS categoria,
                c.color_hex, ST_Latitude(r.ubicacion) AS latitud,
                ST_Longitude(r.ubicacion) AS longitud,
                r.direccion_referencia AS direccion, r.descripcion, r.estado,
-               r.fecha_creacion
+               r.fecha_creacion, r.total_confirmaciones, r.total_desmentidos
         FROM reporte r
         JOIN categoria_incidente c ON c.id_categoria = r.id_categoria
         WHERE r.estado IN ('PENDIENTE', 'VALIDADO')
@@ -168,6 +172,7 @@ def listar_reportes(limite: int = Query(200, ge=1, le=500)):
         """,
         (limite,),
     )
+    return incidentes.resumir(filas)
 
 
 @router.get("/cercanos")
@@ -208,10 +213,12 @@ def listar_reportes_cercanos(
         """,
         (punto_wkt, punto_wkt, radio_metros, limite),
     )
+    # Un elemento por incidente: varios vecinos reportando lo mismo es una sola alerta.
+    agrupados = incidentes.resumir(reportes)
     return {
         "radio_metros": radio_metros,
-        "total": len(reportes),
-        "reportes": reportes,
+        "total": len(agrupados),
+        "reportes": agrupados,
     }
 
 
@@ -380,7 +387,14 @@ def crear_reporte(
     # grupo: quien es miembro y además tiene una zona segura cerca recibe un solo
     # aviso, el del grupo. Un reporte privado no avisa a las zonas seguras.
     avisos_grupo = _notificar_grupos(id_reporte, ids_grupos, usuario["id_usuario"])
-    avisos = 0 if visibilidad == "GRUPO" else _notificar_zonas_seguras(id_reporte, punto_wkt, usuario["id_usuario"])
+    # Si otro vecino ya reportó el mismo hecho, quien ya recibió esa alerta no la
+    # recibe de nuevo: para la comunidad es el mismo incidente.
+    ya_avisados = [] if visibilidad == "GRUPO" else [
+        r["id_reporte"] for r in reportes_del_incidente(id_reporte) if r["id_reporte"] != id_reporte
+    ]
+    avisos = 0 if visibilidad == "GRUPO" else _notificar_zonas_seguras(
+        id_reporte, punto_wkt, usuario["id_usuario"], ya_avisados
+    )
     # El push sale después de responder, igual que los correos: no demora el reporte.
     if avisos or avisos_grupo:
         tareas.add_task(push.enviar_alertas_de_reporte, id_reporte)
@@ -462,14 +476,26 @@ def _notificar_grupos(id_reporte: int, ids_grupos: list[int], id_autor: int) -> 
         return 0
 
 
-def _notificar_zonas_seguras(id_reporte: int, punto_wkt: str, id_autor: int) -> int:
+def _notificar_zonas_seguras(
+    id_reporte: int, punto_wkt: str, id_autor: int, mismo_incidente: list[int] | None = None
+) -> int:
     """Avisa a los vecinos cuyo reporte cayo dentro de alguna de sus zonas seguras.
 
     Corre DESPUES de confirmar el reporte y a proposito fuera de su transaccion:
     si el cruce falla, el reporte ya quedo guardado y solo se pierde el aviso.
     De cada usuario se toma su zona mas cercana al incidente, para que no reciba
-    dos alertas del mismo hecho cuando sus zonas se superponen.
+    dos alertas del mismo hecho cuando sus zonas se superponen. Tampoco se avisa a
+    quien ya recibió la alerta por otro reporte del mismo incidente (`mismo_incidente`).
     """
+    mismo_incidente = mismo_incidente or []
+    filtro_incidente = ""
+    if mismo_incidente:
+        marcas = ", ".join(["%s"] * len(mismo_incidente))
+        filtro_incidente = f"""
+                      AND NOT EXISTS (
+                          SELECT 1 FROM notificacion n2
+                          WHERE n2.id_reporte IN ({marcas}) AND n2.id_usuario = z.id_usuario
+                      )"""
     try:
         with transaccion() as cursor:
             cursor.execute(
@@ -498,16 +524,46 @@ def _notificar_zonas_seguras(id_reporte: int, punto_wkt: str, id_autor: int) -> 
                       AND NOT EXISTS (
                           SELECT 1 FROM notificacion n
                           WHERE n.id_reporte = %s AND n.id_usuario = z.id_usuario
-                      )
+                      ){filtro_incidente}
                 ) AS candidatas
                 WHERE orden = 1
                 """,
-                (id_reporte, punto_wkt, punto_wkt, id_autor, punto_wkt, id_reporte),
+                (id_reporte, punto_wkt, punto_wkt, id_autor, punto_wkt, id_reporte, *mismo_incidente),
             )
             return cursor.rowcount or 0
     except mysql.connector.Error as error:
         log.error("No se pudieron generar las alertas de zona segura del reporte %s: %s", id_reporte, error)
         return 0
+
+
+# Al buscar el incidente de un reporte se revisa este entorno: más amplio que la
+# regla de agrupación, para alcanzar también los reportes encadenados.
+VENTANA_INCIDENTE_MINUTOS = 24 * 60
+VENTANA_INCIDENTE_METROS = 5000
+
+
+def reportes_del_incidente(id_reporte: int) -> list[dict]:
+    """El reporte y los vigentes y públicos del mismo incidente, del más antiguo al más nuevo."""
+    filas = consultar(
+        """
+        SELECT r.id_reporte, c.codigo AS categoria_codigo,
+               ST_Latitude(r.ubicacion) AS latitud, ST_Longitude(r.ubicacion) AS longitud,
+               r.fecha_creacion, r.descripcion, r.estado, r.id_usuario,
+               r.total_confirmaciones, r.total_desmentidos
+        FROM reporte base
+        JOIN reporte r ON r.id_categoria = base.id_categoria
+        JOIN categoria_incidente c ON c.id_categoria = r.id_categoria
+        WHERE base.id_reporte = %s
+          AND (r.id_reporte = base.id_reporte OR (
+                r.visibilidad = 'PUBLICO'
+                AND r.estado IN ('PENDIENTE', 'VALIDADO')
+                AND (r.fecha_expiracion IS NULL OR r.fecha_expiracion > NOW())))
+          AND ABS(TIMESTAMPDIFF(MINUTE, r.fecha_creacion, base.fecha_creacion)) <= %s
+          AND ST_Distance_Sphere(r.ubicacion, base.ubicacion) <= %s
+        """,
+        (id_reporte, VENTANA_INCIDENTE_MINUTOS, VENTANA_INCIDENTE_METROS),
+    )
+    return incidentes.grupo_de(id_reporte, filas)
 
 
 def _entidad_emergencia(id_entidad, id_comuna: int):
@@ -644,6 +700,26 @@ def detalle_reporte(
         "imagenes": [fila["url_archivo"] for fila in imagenes],
         "total_comentarios": int(comentarios[0]["total"]) if comentarios else 0,
         "emergencia": _entidad_emergencia(r["id_entidad"], r["id_comuna"]),
+        "incidente": _resumen_incidente(id_reporte) if r["visibilidad"] == "PUBLICO" else None,
+    }
+
+
+def _resumen_incidente(id_reporte: int) -> dict:
+    """Reportes del mismo incidente para el detalle; el autor va siempre con su alias."""
+    grupo = reportes_del_incidente(id_reporte) or [{"id_reporte": id_reporte}]
+    return {
+        "id_incidente": grupo[0]["id_reporte"],
+        "total_reportes": len(grupo),
+        "reportes": [
+            {
+                "id_reporte": g["id_reporte"],
+                "autor": alias_autor(g["id_reporte"]),
+                "descripcion": g.get("descripcion"),
+                "fecha_creacion": g.get("fecha_creacion"),
+                "es_este": g["id_reporte"] == id_reporte,
+            }
+            for g in grupo
+        ],
     }
 
 
