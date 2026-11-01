@@ -14,6 +14,7 @@ class TarjetaComentario extends StatelessWidget {
   final bool respuesta;
   final VoidCallback? onResponder;
   final VoidCallback? onEliminar;
+  final VoidCallback? onDenunciar;
   final ValueChanged<String>? onVerFoto;
 
   const TarjetaComentario({
@@ -22,6 +23,7 @@ class TarjetaComentario extends StatelessWidget {
     this.respuesta = false,
     this.onResponder,
     this.onEliminar,
+    this.onDenunciar,
     this.onVerFoto,
   });
 
@@ -35,6 +37,7 @@ class TarjetaComentario extends StatelessWidget {
     final acciones = [
       if (onResponder != null) _accion('Responder', RBColores.azul, onResponder!),
       if (onEliminar != null) _accion('Eliminar', RBColores.rojo, onEliminar!),
+      if (onDenunciar != null) _accion('Denunciar', RBColores.texto2, onDenunciar!),
     ];
 
     return Row(

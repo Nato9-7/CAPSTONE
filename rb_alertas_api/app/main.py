@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 from pathlib import Path
 from app import grafo
-from app.rutas import admin, comentarios, dispositivos, grupos, notificaciones, reportes, usuarios, zonas
+from app.rutas import admin, comentarios, denuncias, dispositivos, grupos, notificaciones, reportes, usuarios, zonas
 
 @asynccontextmanager
 async def ciclo_de_vida(app: FastAPI):
@@ -46,6 +46,7 @@ def ping():
 app.include_router(usuarios.router, prefix = "/api/usuarios")
 app.include_router(reportes.router, prefix = "/api/reportes")
 app.include_router(comentarios.router, prefix = "/api/reportes")
+app.include_router(denuncias.router, prefix = "/api/reportes")
 app.include_router(zonas.router, prefix = "/api/usuarios/zonas")
 app.include_router(notificaciones.router, prefix = "/api/usuarios/notificaciones")
 app.include_router(dispositivos.router, prefix = "/api/usuarios/dispositivos")
