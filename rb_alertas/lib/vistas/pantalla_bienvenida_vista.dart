@@ -4,6 +4,7 @@ import 'package:rb_alertas/servicios/auth_servicio.dart';
 import 'package:rb_alertas/servicios/push_servicio.dart';
 import 'package:rb_alertas/servicios/sesion.dart';
 import 'package:rb_alertas/tema/rb_tema.dart';
+import 'package:rb_alertas/vistas/admin_vista.dart';
 import 'package:rb_alertas/vistas/alertas_vista.dart';
 import 'package:rb_alertas/vistas/mapa_vista.dart';
 import 'package:rb_alertas/widgets/rb_componentes.dart';
@@ -41,11 +42,14 @@ class _PantallaBienvenidaVistaState extends State<PantallaBienvenidaVista> {
         ? PushServicio.reporteDeAviso(PushServicio.avisoInicial)
         : null;
     final irAAlertas = desdeAviso && idReporte == null;
+    // La cuenta admin solo usa el panel, también al volver con la sesión guardada.
+    final esAdmin = Sesion.token != null && Sesion.esAdmin;
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
-        builder: (context) =>
-            irAAlertas ? const AlertasVista() : const MapaVista(),
+        builder: (context) => esAdmin
+            ? const AdminVista()
+            : (irAAlertas ? const AlertasVista() : const MapaVista()),
       ),
     );
     if (idReporte != null) {

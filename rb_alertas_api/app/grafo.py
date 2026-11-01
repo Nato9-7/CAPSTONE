@@ -46,7 +46,10 @@ def _conexion():
     if _driver is None:
         from neo4j import GraphDatabase
 
-        _driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USUARIO, NEO4J_CLAVE))
+        # Sin avisos informativos (p. ej. "ese tipo de relación aún no existe" cuando no hay datos).
+        _driver = GraphDatabase.driver(
+            NEO4J_URI, auth=(NEO4J_USUARIO, NEO4J_CLAVE), notifications_min_severity="OFF"
+        )
     return _driver
 
 
