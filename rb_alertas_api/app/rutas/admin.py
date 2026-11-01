@@ -37,6 +37,21 @@ class CambioEstadoGrupo(BaseModel):
     activo: bool
 
 
+class RevisionDenuncias(BaseModel):
+    estado: Literal["ATENDIDA", "DESESTIMADA"]
+
+
+def _cerrar_denuncias(cursor, columna: str, id_objetivo: int, estado: str, id_admin: int) -> None:
+    """Marca como revisadas las denuncias pendientes de un reporte o comentario."""
+    cursor.execute(
+        f"""
+        UPDATE denuncia SET estado = %s, fecha_revision = NOW(), id_admin = %s
+        WHERE {columna} = %s AND estado = 'PENDIENTE'
+        """,
+        (estado, id_admin, id_objetivo),
+    )
+
+
 def _conteo_por_estado(tabla: str, estados: tuple) -> dict:
     filas = consultar(f"SELECT estado, COUNT(*) AS total FROM {tabla} GROUP BY estado")
     conteo = {estado: 0 for estado in estados}
@@ -219,6 +234,8 @@ def cambiar_estado_reporte(
             """,
             (id_reporte, fila["estado"], datos.estado, admin["id_usuario"], motivo),
         )
+        if datos.estado == "DESCARTADO":
+            _cerrar_denuncias(cursor, "id_reporte", id_reporte, "ATENDIDA", admin["id_usuario"])
     return {"id_reporte": id_reporte, "estado": datos.estado}
 
 
@@ -278,7 +295,11 @@ def listar_comentarios_reporte(id_reporte: int = PathParam(ge=1)):
 
 
 @router.patch("/comentarios/{id_comentario}/estado")
-def cambiar_estado_comentario(datos: CambioEstadoComentario, id_comentario: int = PathParam(ge=1)):
+def cambiar_estado_comentario(
+    datos: CambioEstadoComentario,
+    id_comentario: int = PathParam(ge=1),
+    admin: dict = Depends(usuario_admin),
+):
     """Oculta un comentario (deja de verse en la app) o lo vuelve a publicar."""
     with transaccion() as cursor:
         cursor.execute("SELECT estado FROM comentario WHERE id_comentario = %s FOR UPDATE", (id_comentario,))
@@ -290,6 +311,8 @@ def cambiar_estado_comentario(datos: CambioEstadoComentario, id_comentario: int 
         if fila["estado"] == datos.estado:
             raise HTTPException(status_code=409, detail=f"El comentario ya está {datos.estado.lower()}")
         cursor.execute("UPDATE comentario SET estado = %s WHERE id_comentario = %s", (datos.estado, id_comentario))
+        if datos.estado == "OCULTO":
+            _cerrar_denuncias(cursor, "id_comentario", id_comentario, "ATENDIDA", admin["id_usuario"])
     return {"id_comentario": id_comentario, "estado": datos.estado}
 
 
@@ -309,6 +332,7 @@ def eliminar_comentario(id_comentario: int = PathParam(ge=1), admin: dict = Depe
         archivos = [f["url_archivo"] for f in cursor.fetchall()]
         cursor.execute("DELETE FROM comentario_imagen WHERE id_comentario = %s", (id_comentario,))
         cursor.execute("UPDATE comentario SET estado = 'ELIMINADO' WHERE id_comentario = %s", (id_comentario,))
+        _cerrar_denuncias(cursor, "id_comentario", id_comentario, "ATENDIDA", admin["id_usuario"])
     for url in archivos:
         _borrar_archivo(url)
     log.warning("Comentario #%s eliminado por el admin #%s", id_comentario, admin["id_usuario"])
@@ -328,6 +352,84 @@ def suspender_autor_comentario(id_comentario: int = PathParam(ge=1)):
             raise HTTPException(status_code=409, detail="Quien escribió este comentario ya está suspendido")
         _suspender(cursor, usuario["id_usuario"])
     return {"id_comentario": id_comentario, "estado_autor": "SUSPENDIDO"}
+
+
+@router.get("/denuncias")
+def listar_denuncias(
+    estado: Literal["PENDIENTE", "ATENDIDA", "DESESTIMADA"] = "PENDIENTE",
+    limite: int = Query(100, ge=1, le=300),
+):
+    """Denuncias de los vecinos, juntas por lo denunciado (un reporte o un comentario):
+    cuántas hay, por qué motivos y lo que escribieron. Quién denunció no sale de la API."""
+    filas = consultar(
+        """
+        SELECT g.id_reporte AS id_reporte_denunciado, g.id_comentario, g.total, g.motivos,
+               g.detalles, g.ultima,
+               r.id_reporte, r.estado AS estado_reporte, r.descripcion,
+               cat.nombre AS categoria, cat.codigo AS categoria_codigo, cat.color_hex,
+               co.contenido, co.estado AS estado_comentario
+        FROM (
+            SELECT id_reporte, id_comentario, COUNT(*) AS total,
+                   GROUP_CONCAT(DISTINCT motivo ORDER BY motivo) AS motivos,
+                   GROUP_CONCAT(detalle ORDER BY fecha_creacion DESC SEPARATOR '\n') AS detalles,
+                   MAX(fecha_creacion) AS ultima
+            FROM denuncia
+            WHERE estado = %s
+            GROUP BY id_reporte, id_comentario
+        ) g
+        LEFT JOIN comentario co ON co.id_comentario = g.id_comentario
+        JOIN reporte r ON r.id_reporte = COALESCE(g.id_reporte, co.id_reporte)
+        JOIN categoria_incidente cat ON cat.id_categoria = r.id_categoria
+        ORDER BY g.total DESC, g.ultima DESC
+        LIMIT %s
+        """,
+        (estado, limite),
+    )
+    return [
+        {
+            "tipo": "COMENTARIO" if f["id_comentario"] else "REPORTE",
+            "id_reporte": f["id_reporte"],
+            "id_comentario": f["id_comentario"],
+            "total": int(f["total"]),
+            "motivos": f["motivos"].split(",") if f["motivos"] else [],
+            "detalles": f["detalles"].split("\n") if f["detalles"] else [],
+            "ultima": f["ultima"],
+            "categoria": f["categoria"],
+            "categoria_codigo": f["categoria_codigo"],
+            "color_hex": f["color_hex"],
+            "estado_reporte": f["estado_reporte"],
+            "descripcion": f["descripcion"],
+            "contenido": f["contenido"],
+            "estado_comentario": f["estado_comentario"],
+        }
+        for f in filas
+    ]
+
+
+@router.patch("/denuncias/{tipo}/{id_objetivo}")
+def revisar_denuncias(
+    datos: RevisionDenuncias,
+    tipo: Literal["reportes", "comentarios"],
+    id_objetivo: int = PathParam(ge=1),
+    admin: dict = Depends(usuario_admin),
+):
+    """Cierra las denuncias pendientes de un reporte o comentario. Desestimar un
+    comentario que se ocultó solo por las denuncias lo vuelve a publicar."""
+    columna = "id_reporte" if tipo == "reportes" else "id_comentario"
+    with transaccion() as cursor:
+        cursor.execute(
+            f"SELECT COUNT(*) AS total FROM denuncia WHERE {columna} = %s AND estado = 'PENDIENTE'",
+            (id_objetivo,),
+        )
+        if cursor.fetchone()["total"] == 0:
+            raise HTTPException(status_code=404, detail="No hay denuncias pendientes de esto")
+        _cerrar_denuncias(cursor, columna, id_objetivo, datos.estado, admin["id_usuario"])
+        if tipo == "comentarios" and datos.estado == "DESESTIMADA":
+            cursor.execute(
+                "UPDATE comentario SET estado = 'PUBLICADO' WHERE id_comentario = %s AND estado = 'OCULTO'",
+                (id_objetivo,),
+            )
+    return {"tipo": tipo, "id": id_objetivo, "estado": datos.estado}
 
 
 @router.get("/usuarios")

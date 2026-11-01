@@ -263,6 +263,61 @@ class ComentarioAdmin {
   }
 }
 
+/// Denuncias de los vecinos sobre un mismo reporte o comentario, juntas.
+/// Quién denunció no llega al panel.
+class DenunciaAdmin {
+  final bool esComentario;
+  final int idReporte;
+  final int? idComentario;
+  final int total;
+  final List<String> motivos;
+  final List<String> detalles;
+  final DateTime? ultima;
+  final String categoria;
+  final String categoriaCodigo;
+  final String? colorHex;
+  final String estadoReporte;
+  final String descripcion;
+  final String? contenido;
+  final String? estadoComentario;
+
+  DenunciaAdmin({
+    required this.esComentario,
+    required this.idReporte,
+    required this.idComentario,
+    required this.total,
+    required this.motivos,
+    required this.detalles,
+    required this.ultima,
+    required this.categoria,
+    required this.categoriaCodigo,
+    required this.colorHex,
+    required this.estadoReporte,
+    required this.descripcion,
+    required this.contenido,
+    required this.estadoComentario,
+  });
+
+  factory DenunciaAdmin.desdeJson(Map<String, dynamic> json) {
+    return DenunciaAdmin(
+      esComentario: json['tipo'] == 'COMENTARIO',
+      idReporte: (json['id_reporte'] as num).toInt(),
+      idComentario: (json['id_comentario'] as num?)?.toInt(),
+      total: (json['total'] as num?)?.toInt() ?? 0,
+      motivos: [for (final m in json['motivos'] as List? ?? []) m.toString()],
+      detalles: [for (final d in json['detalles'] as List? ?? []) d.toString()],
+      ultima: DateTime.tryParse(json['ultima']?.toString() ?? ''),
+      categoria: (json['categoria'] ?? '').toString(),
+      categoriaCodigo: (json['categoria_codigo'] ?? '').toString(),
+      colorHex: json['color_hex']?.toString(),
+      estadoReporte: (json['estado_reporte'] ?? '').toString(),
+      descripcion: (json['descripcion'] ?? '').toString(),
+      contenido: json['contenido']?.toString(),
+      estadoComentario: json['estado_comentario']?.toString(),
+    );
+  }
+}
+
 class UsuarioAdmin {
   final int id;
   final String nombres;
@@ -611,6 +666,24 @@ class AdminServicio {
     await _enviar('PATCH', token, '/api/admin/comentarios/$idComentario/estado', {
       'estado': estado,
     });
+  }
+
+  /// [estado]: PENDIENTE, ATENDIDA o DESESTIMADA.
+  Future<List<DenunciaAdmin>> denuncias(String token, {String estado = 'PENDIENTE'}) async {
+    final cuerpo = await _get(token, '/api/admin/denuncias', {'estado': estado});
+    return [
+      for (final d in cuerpo as List)
+        DenunciaAdmin.desdeJson(d as Map<String, dynamic>),
+    ];
+  }
+
+  /// Cierra las denuncias pendientes (ATENDIDA o DESESTIMADA). Desestimar un
+  /// comentario que se ocultó solo lo vuelve a publicar.
+  Future<void> revisarDenuncias(String token, DenunciaAdmin d, String estado) async {
+    final ruta = d.esComentario
+        ? '/api/admin/denuncias/comentarios/${d.idComentario}'
+        : '/api/admin/denuncias/reportes/${d.idReporte}';
+    await _enviar('PATCH', token, ruta, {'estado': estado});
   }
 
   Future<List<UsuarioAdmin>> usuarios(

@@ -7,12 +7,14 @@ import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart' show Distance, LatLng, LengthUnit;
 import 'package:rb_alertas/config/api_config.dart';
 import 'package:rb_alertas/servicios/comentario_servicio.dart';
+import 'package:rb_alertas/servicios/denuncia_servicio.dart';
 import 'package:rb_alertas/servicios/reporte_servicio.dart';
 import 'package:rb_alertas/servicios/sesion.dart';
 import 'package:rb_alertas/tema/rb_tema.dart';
 import 'package:rb_alertas/widgets/boton_voto.dart';
 import 'package:rb_alertas/widgets/categoria_visual.dart';
 import 'package:rb_alertas/widgets/comentarios.dart';
+import 'package:rb_alertas/widgets/denuncia.dart';
 import 'package:rb_alertas/widgets/rb_componentes.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -37,6 +39,7 @@ class DetalleIncidenteVista extends StatefulWidget {
 class _DetalleIncidenteVistaState extends State<DetalleIncidenteVista> {
   final _reporteServicio = ReporteServicio();
   final _comentarioServicio = ComentarioServicio();
+  final _denunciaServicio = DenunciaServicio();
   final _campoComentario = TextEditingController();
   final _focoComentario = FocusNode();
   final _llaveComentarios = GlobalKey();
@@ -403,6 +406,48 @@ class _DetalleIncidenteVistaState extends State<DetalleIncidenteVista> {
     }
   }
 
+  /// Denuncia el reporte o, con [comentario], uno de sus comentarios.
+  Future<void> _denunciar(DetalleReporte d, {Comentario? comentario}) async {
+    final token = Sesion.token;
+    if (token == null || token.isEmpty) {
+      _mostrarMensaje('Inicia sesión para denunciar');
+      return;
+    }
+    final denuncia = await pedirDenuncia(context, esComentario: comentario != null);
+    if (denuncia == null) return;
+    final (motivo, detalle) = denuncia;
+    try {
+      if (comentario == null) {
+        await _denunciaServicio.denunciarReporte(
+          token: token,
+          idReporte: d.id,
+          motivo: motivo,
+          detalle: detalle,
+        );
+        if (mounted) _mostrarMensaje('Gracias, revisaremos este reporte');
+      } else {
+        final oculto = await _denunciaServicio.denunciarComentario(
+          token: token,
+          idReporte: d.id,
+          idComentario: comentario.id,
+          motivo: motivo,
+          detalle: detalle,
+        );
+        if (!mounted) return;
+        _mostrarMensaje(
+          oculto
+              ? 'Gracias. El comentario quedó oculto mientras lo revisamos'
+              : 'Gracias, revisaremos este comentario',
+        );
+        if (oculto) await _cargarComentarios();
+      }
+    } on DenunciaServicioException catch (e) {
+      if (mounted) _mostrarMensaje(e.mensaje);
+    } catch (_) {
+      if (mounted) _mostrarMensaje('No se pudo conectar con el servidor');
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Interfaz
 
@@ -691,6 +736,12 @@ class _DetalleIncidenteVistaState extends State<DetalleIncidenteVista> {
             ],
           ),
         ),
+        if (!d.esAutor && !Sesion.esAdmin)
+          IconButton(
+            tooltip: 'Denunciar reporte',
+            onPressed: () => _denunciar(d),
+            icon: const Icon(Icons.flag_outlined, color: RBColores.texto2),
+          ),
       ],
     );
   }
@@ -1020,6 +1071,7 @@ class _DetalleIncidenteVistaState extends State<DetalleIncidenteVista> {
       respuesta: respuesta,
       onResponder: puedeResponder && c.publicado && !_publicando ? () => _responder(c) : null,
       onEliminar: c.esMio ? () => _eliminarComentario(d, c) : null,
+      onDenunciar: c.esMio || Sesion.esAdmin ? null : () => _denunciar(d, comentario: c),
       onVerFoto: (url) => verFotoComentario(context, url),
     );
   }
