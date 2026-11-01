@@ -71,6 +71,11 @@ class ReporteAdmin {
   final String autor;
   // Privado de un grupo vecinal: no sale en el mapa público.
   final bool soloGrupo;
+  final double? latitud;
+  final double? longitud;
+  // Comentarios publicados y ocultos por moderación.
+  final int comentarios;
+  final int comentariosOcultos;
 
   ReporteAdmin({
     required this.id,
@@ -88,7 +93,13 @@ class ReporteAdmin {
     required this.imagen,
     required this.autor,
     this.soloGrupo = false,
+    this.latitud,
+    this.longitud,
+    this.comentarios = 0,
+    this.comentariosOcultos = 0,
   });
+
+  bool get tieneUbicacion => latitud != null && longitud != null;
 
   factory ReporteAdmin.desdeJson(Map<String, dynamic> json) {
     return ReporteAdmin(
@@ -109,6 +120,10 @@ class ReporteAdmin {
       imagen: json['imagen']?.toString(),
       autor: (json['autor'] ?? '').toString(),
       soloGrupo: json['visibilidad'] == 'GRUPO',
+      latitud: (json['latitud'] as num?)?.toDouble(),
+      longitud: (json['longitud'] as num?)?.toDouble(),
+      comentarios: (json['total_comentarios'] as num?)?.toInt() ?? 0,
+      comentariosOcultos: (json['comentarios_ocultos'] as num?)?.toInt() ?? 0,
     );
   }
 }
@@ -244,6 +259,61 @@ class ComentarioAdmin {
       fechaCreacion: DateTime.tryParse(
         json['fecha_creacion']?.toString() ?? '',
       ),
+    );
+  }
+}
+
+/// Denuncias de los vecinos sobre un mismo reporte o comentario, juntas.
+/// Quién denunció no llega al panel.
+class DenunciaAdmin {
+  final bool esComentario;
+  final int idReporte;
+  final int? idComentario;
+  final int total;
+  final List<String> motivos;
+  final List<String> detalles;
+  final DateTime? ultima;
+  final String categoria;
+  final String categoriaCodigo;
+  final String? colorHex;
+  final String estadoReporte;
+  final String descripcion;
+  final String? contenido;
+  final String? estadoComentario;
+
+  DenunciaAdmin({
+    required this.esComentario,
+    required this.idReporte,
+    required this.idComentario,
+    required this.total,
+    required this.motivos,
+    required this.detalles,
+    required this.ultima,
+    required this.categoria,
+    required this.categoriaCodigo,
+    required this.colorHex,
+    required this.estadoReporte,
+    required this.descripcion,
+    required this.contenido,
+    required this.estadoComentario,
+  });
+
+  factory DenunciaAdmin.desdeJson(Map<String, dynamic> json) {
+    return DenunciaAdmin(
+      esComentario: json['tipo'] == 'COMENTARIO',
+      idReporte: (json['id_reporte'] as num).toInt(),
+      idComentario: (json['id_comentario'] as num?)?.toInt(),
+      total: (json['total'] as num?)?.toInt() ?? 0,
+      motivos: [for (final m in json['motivos'] as List? ?? []) m.toString()],
+      detalles: [for (final d in json['detalles'] as List? ?? []) d.toString()],
+      ultima: DateTime.tryParse(json['ultima']?.toString() ?? ''),
+      categoria: (json['categoria'] ?? '').toString(),
+      categoriaCodigo: (json['categoria_codigo'] ?? '').toString(),
+      colorHex: json['color_hex']?.toString(),
+      estadoReporte: (json['estado_reporte'] ?? '').toString(),
+      descripcion: (json['descripcion'] ?? '').toString(),
+      contenido: json['contenido']?.toString(),
+      estadoComentario: json['estado_comentario']?.toString(),
     );
   }
 }
@@ -568,6 +638,17 @@ class AdminServicio {
     ];
   }
 
+  /// Un reporte con sus datos de moderación, o null si ya no existe.
+  Future<ReporteAdmin?> reporte(String token, int idReporte) async {
+    final cuerpo = await _get(token, '/api/admin/reportes', {
+      'id_reporte': '$idReporte',
+    });
+    final lista = cuerpo as List;
+    return lista.isEmpty
+        ? null
+        : ReporteAdmin.desdeJson(lista.first as Map<String, dynamic>);
+  }
+
   Future<List<ComentarioAdmin>> comentarios(String token, int idReporte) async {
     final cuerpo = await _get(token, '/api/admin/reportes/$idReporte/comentarios');
     return [
@@ -585,6 +666,24 @@ class AdminServicio {
     await _enviar('PATCH', token, '/api/admin/comentarios/$idComentario/estado', {
       'estado': estado,
     });
+  }
+
+  /// [estado]: PENDIENTE, ATENDIDA o DESESTIMADA.
+  Future<List<DenunciaAdmin>> denuncias(String token, {String estado = 'PENDIENTE'}) async {
+    final cuerpo = await _get(token, '/api/admin/denuncias', {'estado': estado});
+    return [
+      for (final d in cuerpo as List)
+        DenunciaAdmin.desdeJson(d as Map<String, dynamic>),
+    ];
+  }
+
+  /// Cierra las denuncias pendientes (ATENDIDA o DESESTIMADA). Desestimar un
+  /// comentario que se ocultó solo lo vuelve a publicar.
+  Future<void> revisarDenuncias(String token, DenunciaAdmin d, String estado) async {
+    final ruta = d.esComentario
+        ? '/api/admin/denuncias/comentarios/${d.idComentario}'
+        : '/api/admin/denuncias/reportes/${d.idReporte}';
+    await _enviar('PATCH', token, ruta, {'estado': estado});
   }
 
   Future<List<UsuarioAdmin>> usuarios(
@@ -612,6 +711,26 @@ class AdminServicio {
       'estado': estado,
       'motivo': ?motivo,
     });
+  }
+
+  /// Elimina el reporte para siempre (con sus votos, comentarios y fotos).
+  Future<void> eliminarReporte(String token, int idReporte) async {
+    await _enviar('DELETE', token, '/api/admin/reportes/$idReporte', null);
+  }
+
+  /// Elimina un comentario (y su foto). No se puede deshacer.
+  Future<void> eliminarComentario(String token, int idComentario) async {
+    await _enviar('DELETE', token, '/api/admin/comentarios/$idComentario', null);
+  }
+
+  /// Suspende a quien escribió el comentario (sin revelar quién es).
+  Future<void> suspenderAutorComentario(String token, int idComentario) async {
+    await _enviar(
+      'POST',
+      token,
+      '/api/admin/comentarios/$idComentario/suspender-autor',
+      null,
+    );
   }
 
   Future<void> suspenderAutor(String token, int idReporte) async {

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:rb_alertas/config/api_config.dart';
 import 'package:rb_alertas/servicios/admin_servicio.dart';
+import 'package:rb_alertas/servicios/denuncia_servicio.dart';
 import 'package:rb_alertas/servicios/estado_alertas_servicio.dart';
 import 'package:rb_alertas/servicios/perfil_servicio.dart';
 import 'package:rb_alertas/servicios/sesion.dart';
@@ -117,7 +118,9 @@ class AdminVista extends StatefulWidget {
 class _AdminVistaState extends State<AdminVista> with SingleTickerProviderStateMixin {
   static const _secciones = [
     ('Resumen', Icons.dashboard_outlined, Icons.dashboard_rounded),
+    ('Mapa', Icons.map_outlined, Icons.map_rounded),
     ('Reportes', Icons.report_outlined, Icons.report_rounded),
+    ('Denuncias', Icons.flag_outlined, Icons.flag_rounded),
     ('Usuarios', Icons.people_outline_rounded, Icons.people_rounded),
     ('Grupos', Icons.groups_outlined, Icons.groups_rounded),
     ('Red', Icons.hub_outlined, Icons.hub_rounded),
@@ -125,13 +128,21 @@ class _AdminVistaState extends State<AdminVista> with SingleTickerProviderStateM
 
   late final TabController _pestanas = TabController(length: _secciones.length, vsync: this)
     ..addListener(() {
-      if (_indice != _pestanas.index) setState(() => _indice = _pestanas.index);
+      if (_indice != _pestanas.index) _cambiar(_pestanas.index);
     });
   int _indice = 0;
 
-  late final List<Widget> _paginas = [
-    _PestanaResumen(alAbrirRed: () => _ir(4)),
+  /// Cambia cada vez que se entra al mapa, para que se recargue con lo moderado.
+  int _versionMapa = 0;
+
+  List<Widget> get _paginas => [
+    _PestanaResumen(alAbrirRed: () => _ir(6)),
+    MapaVista(
+      key: ValueKey(_versionMapa),
+      alModerar: (idReporte) => _abrirModeracion(context, idReporte),
+    ),
     const _PestanaReportes(),
+    const _PestanaDenuncias(),
     const _PestanaUsuarios(),
     const _PestanaGrupos(),
     const SeccionRed(),
@@ -143,10 +154,18 @@ class _AdminVistaState extends State<AdminVista> with SingleTickerProviderStateM
     super.dispose();
   }
 
+  void _cambiar(int indice) {
+    setState(() {
+      if (indice == 1 && _indice != 1) _versionMapa++;
+      _indice = indice;
+    });
+  }
+
   void _ir(int indice) {
-    setState(() => _indice = indice);
+    _cambiar(indice);
     _pestanas.animateTo(indice);
   }
+
 
   Future<void> _cerrarSesion() async {
     final confirmar = await showDialog<bool>(
@@ -318,7 +337,14 @@ class _AdminVistaState extends State<AdminVista> with SingleTickerProviderStateM
           ),
         ),
         const SizedBox(height: 8),
-        Expanded(child: TabBarView(controller: _pestanas, children: _paginas)),
+        // Sin deslizar entre pestañas: el gesto se confundiría con mover los mapas.
+        Expanded(
+          child: TabBarView(
+            controller: _pestanas,
+            physics: const NeverScrollableScrollPhysics(),
+            children: _paginas,
+          ),
+        ),
       ],
     );
   }
@@ -621,6 +647,365 @@ class _PestanaResumenState extends State<_PestanaResumen>
   }
 }
 
+// Acciones de moderación de un reporte, compartidas por la lista de Reportes y
+// la ficha que se abre con "Moderar" desde el mapa. Cada una devuelve true si
+// cambió algo, para recargar lo que se está mostrando.
+
+Future<bool> _accionAdmin(
+  BuildContext context,
+  Future<void> Function() accion,
+  String exito,
+) async {
+  try {
+    await accion();
+    if (context.mounted) _avisar(context, exito);
+    return true;
+  } on AdminServicioException catch (e) {
+    if (context.mounted) _avisar(context, e.mensaje);
+  } catch (_) {
+    if (context.mounted) _avisar(context, 'No se pudo conectar con el servidor');
+  }
+  return false;
+}
+
+Future<bool> _cambiarEstadoReporte(
+  BuildContext context,
+  ReporteAdmin reporte,
+  String estado,
+) async {
+  final motivo = TextEditingController();
+  final (texto, color) = _estiloEstado(estado);
+  final confirmar = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text('Marcar como ${texto.toLowerCase()}'),
+      content: TextField(
+        controller: motivo,
+        maxLength: 200,
+        decoration: const InputDecoration(
+          labelText: 'Motivo (opcional)',
+          hintText: 'Queda en el historial del reporte',
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('Cancelar'),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: color),
+          onPressed: () => Navigator.pop(context, true),
+          child: const Text('Guardar'),
+        ),
+      ],
+    ),
+  );
+  if (confirmar != true || !context.mounted) return false;
+  return _accionAdmin(
+    context,
+    () => AdminServicio().cambiarEstadoReporte(
+      Sesion.token ?? '',
+      reporte.id,
+      estado,
+      motivo: motivo.text.trim().isEmpty ? null : motivo.text.trim(),
+    ),
+    'Reporte #${reporte.id} marcado como ${texto.toLowerCase()}',
+  );
+}
+
+Future<bool> _suspenderAutorReporte(BuildContext context, ReporteAdmin reporte) async {
+  final confirmar = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Suspender a quien reportó'),
+      content: Text(
+        'La cuenta de «${reporte.autor}» no podrá volver a entrar ni crear '
+        'reportes hasta que la reactives en la pestaña Usuarios. '
+        'Se cerrarán todas sus sesiones.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('Cancelar'),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: RBColores.rojo),
+          onPressed: () => Navigator.pop(context, true),
+          child: const Text('Suspender'),
+        ),
+      ],
+    ),
+  );
+  if (confirmar != true || !context.mounted) return false;
+  return _accionAdmin(
+    context,
+    () => AdminServicio().suspenderAutor(Sesion.token ?? '', reporte.id),
+    'Cuenta de «${reporte.autor}» suspendida',
+  );
+}
+
+/// Al volver siempre cuenta como cambio: se recargan los contadores de comentarios.
+Future<bool> _verComentariosReporte(BuildContext context, ReporteAdmin reporte) async {
+  await showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: RBColores.fondo,
+    builder: (_) => _HojaComentarios(reporte: reporte),
+  );
+  return true;
+}
+
+/// Eliminar no se puede deshacer: se pide escribir ELIMINAR para confirmar.
+Future<bool> _eliminarReporte(BuildContext context, ReporteAdmin reporte) async {
+  final confirmacion = TextEditingController();
+  final confirmar = await showDialog<bool>(
+    context: context,
+    builder: (context) => StatefulBuilder(
+      builder: (context, actualizar) => AlertDialog(
+        title: Text('Eliminar el reporte #${reporte.id}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Se borrará para siempre, junto con sus votos, comentarios, fotos y avisos. '
+              'No se puede deshacer.\n\n'
+              'Si solo es falso o ya no aplica, es mejor «Marcar descartado»: deja de verse '
+              'en el mapa pero queda el registro.',
+              style: TextStyle(height: 1.4),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: confirmacion,
+              autofocus: true,
+              onChanged: (_) => actualizar(() {}),
+              decoration: const InputDecoration(
+                labelText: 'Escribe ELIMINAR para confirmar',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: RBColores.rojo),
+            onPressed: confirmacion.text.trim().toUpperCase() == 'ELIMINAR'
+                ? () => Navigator.pop(context, true)
+                : null,
+            child: const Text('Eliminar'),
+          ),
+        ],
+      ),
+    ),
+  );
+  if (confirmar != true || !context.mounted) return false;
+  return _accionAdmin(
+    context,
+    () => AdminServicio().eliminarReporte(Sesion.token ?? '', reporte.id),
+    'Reporte #${reporte.id} eliminado',
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Mapa: "Moderar" en la tarjeta de un reporte abre su ficha encima del mapa.
+
+/// Devuelve true si se moderó algo, para que el mapa recargue sus pines.
+Future<bool> _abrirModeracion(BuildContext context, int idReporte) async {
+  var cambio = false;
+  await showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.white,
+    constraints: BoxConstraints(
+      maxWidth: 560,
+      maxHeight: MediaQuery.sizeOf(context).height * 0.85,
+    ),
+    builder: (_) => _HojaModerarReporte(
+      idReporte: idReporte,
+      alCambiar: () => cambio = true,
+    ),
+  );
+  return cambio;
+}
+
+class _HojaModerarReporte extends StatefulWidget {
+  final int idReporte;
+  final VoidCallback alCambiar;
+
+  const _HojaModerarReporte({required this.idReporte, required this.alCambiar});
+
+  @override
+  State<_HojaModerarReporte> createState() => _HojaModerarReporteState();
+}
+
+class _HojaModerarReporteState extends State<_HojaModerarReporte> {
+  ReporteAdmin? _reporte;
+  String? _error;
+  bool _cargando = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _cargar();
+  }
+
+  Future<void> _cargar() async {
+    setState(() => _error = null);
+    try {
+      final reporte = await AdminServicio().reporte(Sesion.token ?? '', widget.idReporte);
+      if (!mounted) return;
+      setState(() {
+        _reporte = reporte;
+        _cargando = false;
+        if (reporte == null) _error = 'Este reporte ya no existe';
+      });
+    } on AdminServicioException catch (e) {
+      if (mounted) _fallo(e.mensaje);
+    } catch (_) {
+      if (mounted) _fallo('No se pudo conectar con el servidor');
+    }
+  }
+
+  void _fallo(String mensaje) {
+    setState(() {
+      _error = mensaje;
+      _cargando = false;
+    });
+  }
+
+  Future<void> _moderar(Future<bool> accion) async {
+    if (!await accion || !mounted) return;
+    widget.alCambiar();
+    _cargar();
+  }
+
+  Future<void> _eliminar(ReporteAdmin r) async {
+    if (!await _eliminarReporte(context, r)) return;
+    widget.alCambiar();
+    if (mounted) Navigator.pop(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final r = _reporte;
+    if (_cargando || r == null) {
+      return SizedBox(
+        height: 240,
+        child: _cargando
+            ? const Center(child: CircularProgressIndicator(color: RBColores.azul))
+            : _mensajeCentro(_error ?? '', reintentar: _cargar),
+      );
+    }
+    final lugar = [r.direccion, r.zona].whereType<String>().where((p) => p.isNotEmpty).join(' · ');
+    return ListView(
+      shrinkWrap: true,
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+      children: [
+        Row(
+          children: [
+            IconoCategoria(codigo: r.categoriaCodigo, colorHex: r.colorHex, tamano: 44),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                '#${r.id} ${r.categoria}',
+                style: const TextStyle(
+                  fontFamily: RBFuentes.titulos,
+                  fontSize: 19,
+                  fontWeight: FontWeight.w800,
+                  color: RBColores.azul,
+                ),
+              ),
+            ),
+            IconButton(
+              tooltip: 'Cerrar',
+              onPressed: () => Navigator.pop(context),
+              icon: const Icon(Icons.close_rounded, color: RBColores.texto2),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 6,
+          runSpacing: 4,
+          children: [
+            _chipReporte(r.estado),
+            if (r.vencido && r.estado != 'EXPIRADO') _chipReporte('EXPIRADO'),
+            if (r.soloGrupo) const ChipSoloGrupo(),
+          ],
+        ),
+        if (r.imagen != null) ...[
+          const SizedBox(height: 12),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: Image.network(
+              ApiConfig.urlArchivo(r.imagen!),
+              height: 170,
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => const SizedBox.shrink(),
+            ),
+          ),
+        ],
+        const SizedBox(height: 12),
+        Text(r.descripcion, style: const TextStyle(fontSize: 14.5, height: 1.4, color: RBColores.tinta)),
+        const SizedBox(height: 8),
+        Text(
+          [
+            if (lugar.isNotEmpty) lugar,
+            '${r.autor} · ${_fecha(r.fechaCreacion?.toLocal())}',
+            '${r.confirmaciones} confirman · ${r.desmentidos} desmienten',
+          ].join('\n'),
+          style: const TextStyle(fontSize: 13, height: 1.45, color: RBColores.texto2),
+        ),
+        const SizedBox(height: 14),
+        OutlinedButton.icon(
+          onPressed: () => _moderar(_verComentariosReporte(context, r)),
+          icon: const Icon(Icons.forum_outlined, size: 19),
+          label: Text(
+            'Comentarios (${r.comentarios})'
+            '${r.comentariosOcultos > 0 ? ' · ${r.comentariosOcultos} ocultos' : ''}',
+          ),
+        ),
+        const SizedBox(height: 14),
+        const Text('Cambiar estado', style: TextStyle(fontWeight: FontWeight.w800)),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final estado in const ['VALIDADO', 'RESUELTO', 'DESCARTADO', 'PENDIENTE'])
+              if (estado != r.estado)
+                ChipFiltro(
+                  etiqueta: _estiloEstado(estado).$1,
+                  activo: false,
+                  onTap: () => _moderar(_cambiarEstadoReporte(context, r, estado)),
+                ),
+          ],
+        ),
+        const SizedBox(height: 18),
+        OutlinedButton.icon(
+          style: OutlinedButton.styleFrom(
+            foregroundColor: RBColores.rojo,
+            side: const BorderSide(color: RBColores.rojo, width: 1.4),
+          ),
+          onPressed: () => _moderar(_suspenderAutorReporte(context, r)),
+          icon: const Icon(Icons.block_rounded, size: 18),
+          label: const Text('Suspender a quien reportó'),
+        ),
+        const SizedBox(height: 8),
+        FilledButton.icon(
+          style: FilledButton.styleFrom(backgroundColor: RBColores.rojo),
+          onPressed: () => _eliminar(r),
+          icon: const Icon(Icons.delete_forever_rounded, size: 19),
+          label: const Text('Eliminar reporte'),
+        ),
+      ],
+    );
+  }
+}
+
 // -----------------------------------------------------------------------------
 // Reportes
 
@@ -682,96 +1067,9 @@ class _PestanaReportesState extends State<_PestanaReportes>
     _cargar();
   }
 
-  Future<void> _cambiarEstado(ReporteAdmin reporte, String estado) async {
-    final motivo = TextEditingController();
-    final (texto, color) = _estiloEstado(estado);
-    final confirmar = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Marcar como ${texto.toLowerCase()}'),
-        content: TextField(
-          controller: motivo,
-          maxLength: 200,
-          decoration: const InputDecoration(
-            labelText: 'Motivo (opcional)',
-            hintText: 'Queda en el historial del reporte',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: color),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Guardar'),
-          ),
-        ],
-      ),
-    );
-    if (confirmar != true) return;
-    await _ejecutar(
-      () => _servicio.cambiarEstadoReporte(
-        Sesion.token ?? '',
-        reporte.id,
-        estado,
-        motivo: motivo.text.trim().isEmpty ? null : motivo.text.trim(),
-      ),
-      'Reporte #${reporte.id} marcado como ${texto.toLowerCase()}',
-    );
-  }
-
-  Future<void> _suspenderAutor(ReporteAdmin reporte) async {
-    final confirmar = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Suspender a quien reportó'),
-        content: Text(
-          'La cuenta de «${reporte.autor}» no podrá volver a entrar ni crear '
-          'reportes hasta que la reactives en la pestaña Usuarios. '
-          'Se cerrarán todas sus sesiones.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: RBColores.rojo),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Suspender'),
-          ),
-        ],
-      ),
-    );
-    if (confirmar != true) return;
-    await _ejecutar(
-      () => _servicio.suspenderAutor(Sesion.token ?? '', reporte.id),
-      'Cuenta de «${reporte.autor}» suspendida',
-    );
-  }
-
-  Future<void> _verComentarios(ReporteAdmin reporte) {
-    return showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: RBColores.fondo,
-      builder: (_) => _HojaComentarios(reporte: reporte),
-    );
-  }
-
-  Future<void> _ejecutar(Future<void> Function() accion, String exito) async {
-    try {
-      await accion();
-      if (!mounted) return;
-      _avisar(context, exito);
-      _cargar();
-    } on AdminServicioException catch (e) {
-      if (mounted) _avisar(context, e.mensaje);
-    } catch (_) {
-      if (mounted) _avisar(context, 'No se pudo conectar con el servidor');
-    }
+  /// Aplica una acción de moderación y recarga la lista si cambió algo.
+  Future<void> _moderar(Future<bool> accion) async {
+    if (await accion && mounted) _cargar();
   }
 
   @override
@@ -911,9 +1209,10 @@ class _PestanaReportesState extends State<_PestanaReportes>
             ),
             icon: const Icon(Icons.more_vert, color: RBColores.texto2),
             onSelected: (accion) => switch (accion) {
-              'SUSPENDER_AUTOR' => _suspenderAutor(r),
-              'COMENTARIOS' => _verComentarios(r),
-              _ => _cambiarEstado(r, accion),
+              'SUSPENDER_AUTOR' => _moderar(_suspenderAutorReporte(context, r)),
+              'COMENTARIOS' => _moderar(_verComentariosReporte(context, r)),
+              'ELIMINAR' => _moderar(_eliminarReporte(context, r)),
+              _ => _moderar(_cambiarEstadoReporte(context, r, accion)),
             },
             itemBuilder: (_) => [
               for (final estado in const [
@@ -956,6 +1255,16 @@ class _PestanaReportesState extends State<_PestanaReportes>
                   ),
                 ),
               ),
+              const PopupMenuItem(
+                value: 'ELIMINAR',
+                child: Text(
+                  'Eliminar reporte',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    color: RBColores.rojo,
+                  ),
+                ),
+              ),
             ],
           ),
         ],
@@ -964,7 +1273,331 @@ class _PestanaReportesState extends State<_PestanaReportes>
   }
 }
 
-/// Comentarios de un reporte para moderar: ocultar o volver a publicar.
+// -----------------------------------------------------------------------------
+// Denuncias: lo que los vecinos denunciaron, junto por reporte o comentario.
+
+class _PestanaDenuncias extends StatefulWidget {
+  const _PestanaDenuncias();
+
+  @override
+  State<_PestanaDenuncias> createState() => _PestanaDenunciasState();
+}
+
+class _PestanaDenunciasState extends State<_PestanaDenuncias>
+    with AutomaticKeepAliveClientMixin {
+  static const _filtros = [
+    ('PENDIENTE', 'Pendientes'),
+    ('ATENDIDA', 'Atendidas'),
+    ('DESESTIMADA', 'Desestimadas'),
+  ];
+
+  final _servicio = AdminServicio();
+  List<DenunciaAdmin>? _denuncias;
+  String? _error;
+  String _estado = 'PENDIENTE';
+
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  void initState() {
+    super.initState();
+    _cargar();
+  }
+
+  Future<void> _cargar() async {
+    setState(() => _error = null);
+    try {
+      final denuncias = await _servicio.denuncias(Sesion.token ?? '', estado: _estado);
+      if (mounted) setState(() => _denuncias = denuncias);
+    } on AdminServicioException catch (e) {
+      if (mounted) setState(() => _error = e.mensaje);
+    } catch (_) {
+      if (mounted) setState(() => _error = 'No se pudo conectar con el servidor');
+    }
+  }
+
+  void _filtrar(String estado) {
+    setState(() {
+      _estado = estado;
+      _denuncias = null;
+    });
+    _cargar();
+  }
+
+  Future<bool> _confirmar(String titulo, String texto, String accion, {bool peligro = true}) async {
+    final r = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(titulo),
+        content: Text(texto, style: const TextStyle(height: 1.4)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: peligro ? RBColores.rojo : RBColores.azul),
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(accion),
+          ),
+        ],
+      ),
+    );
+    return r == true;
+  }
+
+  /// Confirma, ejecuta y recarga la lista.
+  Future<void> _hacer(
+    String titulo,
+    String texto,
+    String boton,
+    Future<void> Function(String token) accion,
+    String exito, {
+    bool peligro = true,
+  }) async {
+    if (!await _confirmar(titulo, texto, boton, peligro: peligro) || !mounted) return;
+    if (await _accionAdmin(context, () => accion(Sesion.token ?? ''), exito) && mounted) {
+      _cargar();
+    }
+  }
+
+  Future<void> _moderarReporte(DenunciaAdmin d) async {
+    // Descartar o eliminar el reporte desde la ficha atiende sus denuncias.
+    if (await _abrirModeracion(context, d.idReporte) && mounted) _cargar();
+  }
+
+  List<Widget> _acciones(DenunciaAdmin d) {
+    final oculto = d.estadoComentario == 'OCULTO';
+    final desestimar = TextButton(
+      onPressed: () => _hacer(
+        'Desestimar denuncias',
+        d.esComentario && oculto
+            ? 'El comentario no infringe las normas: vuelve a publicarse y las denuncias se cierran.'
+            : 'No hay nada que corregir: las denuncias se cierran y todo queda como está.',
+        'Desestimar',
+        (t) => _servicio.revisarDenuncias(t, d, 'DESESTIMADA'),
+        'Denuncias desestimadas',
+        peligro: false,
+      ),
+      child: const Text('Desestimar'),
+    );
+    if (!d.esComentario) {
+      return [
+        FilledButton.icon(
+          style: FilledButton.styleFrom(backgroundColor: RBColores.rojo),
+          onPressed: () => _moderarReporte(d),
+          icon: const Icon(Icons.shield_outlined, size: 18),
+          label: const Text('Moderar reporte'),
+        ),
+        TextButton(
+          onPressed: () => _hacer(
+            'Marcar como atendidas',
+            'Úsalo si ya lo resolviste de otra forma (por ejemplo, suspendiendo a quien lo creó).',
+            'Marcar atendidas',
+            (t) => _servicio.revisarDenuncias(t, d, 'ATENDIDA'),
+            'Denuncias atendidas',
+            peligro: false,
+          ),
+          child: const Text('Marcar atendidas'),
+        ),
+        desestimar,
+      ];
+    }
+    final id = d.idComentario!;
+    return [
+      FilledButton.icon(
+        style: FilledButton.styleFrom(backgroundColor: RBColores.rojo),
+        onPressed: () => _hacer(
+          'Eliminar comentario',
+          'Desaparece de la app para todos y se borra su foto. No se puede deshacer.',
+          'Eliminar',
+          (t) => _servicio.eliminarComentario(t, id),
+          'Comentario eliminado',
+        ),
+        icon: const Icon(Icons.delete_forever_rounded, size: 18),
+        label: const Text('Eliminar'),
+      ),
+      if (oculto)
+        OutlinedButton(
+          onPressed: () => _hacer(
+            'Dejar oculto',
+            'El comentario sigue oculto y las denuncias quedan atendidas.',
+            'Dejar oculto',
+            (t) => _servicio.revisarDenuncias(t, d, 'ATENDIDA'),
+            'Comentario oculto; denuncias atendidas',
+            peligro: false,
+          ),
+          child: const Text('Dejar oculto'),
+        )
+      else
+        OutlinedButton(
+          onPressed: () => _hacer(
+            'Ocultar comentario',
+            'Deja de verse en la app (puedes volver a publicarlo después).',
+            'Ocultar',
+            (t) => _servicio.cambiarEstadoComentario(t, id, 'OCULTO'),
+            'Comentario oculto',
+          ),
+          child: const Text('Ocultar'),
+        ),
+      OutlinedButton(
+        style: OutlinedButton.styleFrom(foregroundColor: RBColores.rojo),
+        onPressed: () => _hacer(
+          'Suspender a quien lo escribió',
+          'Su cuenta no podrá entrar ni publicar hasta que la reactives en Usuarios.',
+          'Suspender',
+          (t) => _servicio.suspenderAutorComentario(t, id),
+          'Cuenta suspendida',
+        ),
+        child: const Text('Suspender autor'),
+      ),
+      desestimar,
+    ];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return Column(
+      children: [
+        SizedBox(
+          height: 64,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            children: [
+              for (final (estado, etiqueta) in _filtros)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ChipFiltro(
+                    etiqueta: etiqueta,
+                    activo: _estado == estado,
+                    onTap: () => _filtrar(estado),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        Expanded(child: _lista()),
+      ],
+    );
+  }
+
+  Widget _lista() {
+    final denuncias = _denuncias;
+    if (denuncias == null) {
+      return _error == null
+          ? const Center(child: CircularProgressIndicator(color: RBColores.azul))
+          : _mensajeCentro(_error!, reintentar: _cargar);
+    }
+    return RefreshIndicator(
+      onRefresh: _cargar,
+      child: denuncias.isEmpty
+          ? _mensajeCentro(
+              _estado == 'PENDIENTE'
+                  ? 'No hay denuncias por revisar.'
+                  : 'No hay denuncias con este filtro.',
+            )
+          : ListView.separated(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 32),
+              itemCount: denuncias.length,
+              separatorBuilder: (_, _) => const SizedBox(height: 12),
+              itemBuilder: (_, i) => _tarjeta(denuncias[i]),
+            ),
+    );
+  }
+
+  Widget _tarjeta(DenunciaAdmin d) {
+    final texto = d.esComentario ? (d.contenido ?? '') : d.descripcion;
+    return TarjetaRB(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              IconoCategoria(codigo: d.categoriaCodigo, colorHex: d.colorHex, tamano: 44),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      d.esComentario
+                          ? 'Comentario en el reporte #${d.idReporte}'
+                          : 'Reporte #${d.idReporte} · ${d.categoria}',
+                      style: const TextStyle(
+                        fontSize: 15.5,
+                        fontWeight: FontWeight.w700,
+                        color: RBColores.tinta,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: [
+                        _chipCuenta(
+                          'SUSPENDIDO',
+                          texto: d.total == 1 ? '1 denuncia' : '${d.total} denuncias',
+                        ),
+                        if (d.esComentario && d.estadoComentario == 'OCULTO')
+                          _chipCuenta('OTRO', texto: 'Oculto')
+                        else if (d.esComentario && d.estadoComentario == 'ELIMINADO')
+                          _chipCuenta('OTRO', texto: 'Eliminado')
+                        else if (!d.esComentario)
+                          _chipReporte(d.estadoReporte),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: RBColores.fondo,
+              borderRadius: BorderRadius.circular(RBRadios.campo),
+            ),
+            child: Text(
+              texto.isEmpty ? '(sin texto)' : texto,
+              maxLines: 6,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 14.5, height: 1.4, color: RBColores.tinta),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Motivos: ${d.motivos.map(MotivoDenuncia.textoDe).join(' · ')}',
+            style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: RBColores.tinta),
+          ),
+          for (final detalle in d.detalles.take(3))
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                '«$detalle»',
+                style: const TextStyle(fontSize: 13, fontStyle: FontStyle.italic, color: RBColores.texto2),
+              ),
+            ),
+          const SizedBox(height: 6),
+          Text(
+            'Última denuncia: ${_fecha(d.ultima?.toLocal())}',
+            style: const TextStyle(fontSize: 12.5, color: RBColores.texto2),
+          ),
+          if (_estado == 'PENDIENTE') ...[
+            const SizedBox(height: 10),
+            Wrap(spacing: 8, runSpacing: 8, children: _acciones(d)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Comentarios de un reporte para moderar: ocultar, volver a publicar,
+/// eliminar o suspender a quien lo escribió.
 class _HojaComentarios extends StatefulWidget {
   final ReporteAdmin reporte;
 
@@ -1016,6 +1649,68 @@ class _HojaComentariosState extends State<_HojaComentarios> {
     } catch (_) {
       if (mounted) _avisar(context, 'No se pudo conectar con el servidor');
     }
+  }
+
+  Future<bool> _confirmar(String titulo, String texto, String accion) async {
+    final r = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(titulo),
+        content: Text(texto),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: RBColores.rojo),
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(accion),
+          ),
+        ],
+      ),
+    );
+    return r == true;
+  }
+
+  Future<void> _accion(Future<void> Function() accion, String exito) async {
+    try {
+      await accion();
+      if (!mounted) return;
+      _avisar(context, exito);
+      _cargar();
+    } on AdminServicioException catch (e) {
+      if (mounted) _avisar(context, e.mensaje);
+    } catch (_) {
+      if (mounted) _avisar(context, 'No se pudo conectar con el servidor');
+    }
+  }
+
+  Future<void> _eliminar(ComentarioAdmin c) async {
+    if (!await _confirmar(
+      'Eliminar comentario',
+      'Desaparece de la app para todos y se borra su foto. No se puede deshacer '
+          '(si solo quieres esconderlo por ahora, usa «Ocultar»).',
+      'Eliminar',
+    )) {
+      return;
+    }
+    await _accion(
+      () => _servicio.eliminarComentario(Sesion.token ?? '', c.id),
+      'Comentario eliminado',
+    );
+  }
+
+  Future<void> _suspenderAutor(ComentarioAdmin c) async {
+    if (!await _confirmar(
+      'Suspender a ${c.autor ?? 'quien lo escribió'}',
+      'No podrá volver a entrar a la app y se cerrarán sus sesiones. Puedes '
+          'reactivar la cuenta en la pestaña Usuarios.',
+      'Suspender',
+    )) {
+      return;
+    }
+    await _accion(
+      () => _servicio.suspenderAutorComentario(Sesion.token ?? '', c.id),
+      'Cuenta suspendida',
+    );
   }
 
   @override
@@ -1074,7 +1769,7 @@ class _HojaComentariosState extends State<_HojaComentarios> {
     final (texto, fondo, color) = switch (c.estado) {
       'PUBLICADO' => ('Publicado', RBColores.verde50, RBColores.verde),
       'OCULTO' => ('Oculto', RBColores.rojo50, RBColores.rojo),
-      _ => ('Eliminado por su autor', RBColores.linea, RBColores.texto2),
+      _ => ('Eliminado', RBColores.linea, RBColores.texto2),
     };
     return TarjetaRB(
       padding: EdgeInsets.fromLTRB(c.idPadre == null ? 16 : 32, 12, 6, 12),
@@ -1144,18 +1839,39 @@ class _HojaComentariosState extends State<_HojaComentarios> {
               ],
             ),
           ),
-          if (c.estado == 'PUBLICADO')
-            IconButton(
-              tooltip: 'Ocultar comentario',
-              onPressed: () => _cambiarEstado(c, 'OCULTO'),
-              icon: const Icon(Icons.visibility_off_outlined, color: RBColores.rojo),
-            )
-          else if (c.estado == 'OCULTO')
-            IconButton(
-              tooltip: 'Publicar de nuevo',
-              onPressed: () => _cambiarEstado(c, 'PUBLICADO'),
-              icon: const Icon(Icons.visibility_outlined, color: RBColores.verde),
-            ),
+          PopupMenuButton<String>(
+            tooltip: 'Moderar',
+            color: Colors.white,
+            surfaceTintColor: Colors.transparent,
+            icon: const Icon(Icons.more_vert, color: RBColores.texto2),
+            onSelected: (accion) => switch (accion) {
+              'OCULTAR' => _cambiarEstado(c, 'OCULTO'),
+              'PUBLICAR' => _cambiarEstado(c, 'PUBLICADO'),
+              'ELIMINAR' => _eliminar(c),
+              _ => _suspenderAutor(c),
+            },
+            itemBuilder: (_) => [
+              if (c.estado == 'PUBLICADO')
+                const PopupMenuItem(value: 'OCULTAR', child: Text('Ocultar')),
+              if (c.estado == 'OCULTO')
+                const PopupMenuItem(value: 'PUBLICAR', child: Text('Publicar de nuevo')),
+              if (c.estado != 'ELIMINADO')
+                const PopupMenuItem(
+                  value: 'ELIMINAR',
+                  child: Text(
+                    'Eliminar comentario',
+                    style: TextStyle(fontWeight: FontWeight.w700, color: RBColores.rojo),
+                  ),
+                ),
+              const PopupMenuItem(
+                value: 'SUSPENDER',
+                child: Text(
+                  'Suspender a quien lo escribió',
+                  style: TextStyle(color: RBColores.rojo),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );

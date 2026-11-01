@@ -1,3 +1,5 @@
+import logging
+from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path as PathParam, Query
@@ -7,11 +9,12 @@ from app import grafo
 from app.db import consultar, transaccion
 from app.rutas.comentarios import comentarios_de_reporte, mapa_alias
 from app.rutas.grupos import MAXIMO_GRUPOS_CREADOS
-from app.rutas.reportes import alias_autor
+from app.rutas.reportes import CARPETA_UPLOADS, alias_autor
 from app.seguridad import CORREOS_ADMIN, revocar_sesiones_usuario, usuario_admin
 
 # Todas las rutas exigen sesión de una cuenta admin (ver seguridad.CORREOS_ADMIN).
 router = APIRouter(dependencies=[Depends(usuario_admin)])
+log = logging.getLogger("rb_alertas.admin")
 
 ESTADOS_REPORTE = ("PENDIENTE", "VALIDADO", "DESCARTADO", "RESUELTO", "EXPIRADO")
 ESTADOS_USUARIO = ("PENDIENTE", "ACTIVO", "SUSPENDIDO", "ELIMINADO")
@@ -32,6 +35,21 @@ class CambioEstadoComentario(BaseModel):
 
 class CambioEstadoGrupo(BaseModel):
     activo: bool
+
+
+class RevisionDenuncias(BaseModel):
+    estado: Literal["ATENDIDA", "DESESTIMADA"]
+
+
+def _cerrar_denuncias(cursor, columna: str, id_objetivo: int, estado: str, id_admin: int) -> None:
+    """Marca como revisadas las denuncias pendientes de un reporte o comentario."""
+    cursor.execute(
+        f"""
+        UPDATE denuncia SET estado = %s, fecha_revision = NOW(), id_admin = %s
+        WHERE {columna} = %s AND estado = 'PENDIENTE'
+        """,
+        (estado, id_admin, id_objetivo),
+    )
 
 
 def _conteo_por_estado(tabla: str, estados: tuple) -> dict:
@@ -81,13 +99,22 @@ def resumen():
 def listar_reportes(
     estado: Literal["PENDIENTE", "VALIDADO", "DESCARTADO", "RESUELTO", "EXPIRADO"] | None = None,
     limite: int = Query(100, ge=1, le=300),
+    id_reporte: int | None = Query(None, ge=1),
 ):
     """Todos los reportes (no solo los vigentes), del más reciente al más antiguo.
+    Con id_reporte trae solo ese (para moderarlo desde el mapa del panel).
 
     Igual que en el resto de la API, el autor se muestra con su alias: el panel
     puede suspender a quien reportó (ver suspender_autor) sin conocer su nombre.
     """
-    filtro, parametros = ("WHERE r.estado = %s", (estado,)) if estado else ("", ())
+    condiciones, parametros = [], []
+    if estado:
+        condiciones.append("r.estado = %s")
+        parametros.append(estado)
+    if id_reporte:
+        condiciones.append("r.id_reporte = %s")
+        parametros.append(id_reporte)
+    filtro = "WHERE " + " AND ".join(condiciones) if condiciones else ""
     filas = consultar(
         f"""
         SELECT r.id_reporte, c.nombre AS categoria, c.codigo AS categoria_codigo, c.color_hex,
@@ -96,11 +123,20 @@ def listar_reportes(
                r.fecha_creacion, r.fecha_expiracion,
                (r.fecha_expiracion IS NOT NULL AND r.fecha_expiracion <= NOW()) AS vencido,
                r.total_confirmaciones, r.total_desmentidos,
+               ST_Latitude(r.ubicacion) AS latitud, ST_Longitude(r.ubicacion) AS longitud,
                (
                    SELECT i.url_archivo FROM reporte_imagen i
                    WHERE i.id_reporte = r.id_reporte
                    ORDER BY i.orden LIMIT 1
-               ) AS imagen
+               ) AS imagen,
+               (
+                   SELECT COUNT(*) FROM comentario co
+                   WHERE co.id_reporte = r.id_reporte AND co.estado = 'PUBLICADO'
+               ) AS total_comentarios,
+               (
+                   SELECT COUNT(*) FROM comentario co
+                   WHERE co.id_reporte = r.id_reporte AND co.estado = 'OCULTO'
+               ) AS comentarios_ocultos
         FROM reporte r
         JOIN categoria_incidente c ON c.id_categoria = r.id_categoria
         LEFT JOIN comuna cm ON cm.id_comuna = r.id_comuna
@@ -115,6 +151,60 @@ def listar_reportes(
         fila["vencido"] = bool(fila["vencido"])
         fila["autor"] = alias_autor(fila["id_reporte"])
     return filas
+
+
+def _borrar_archivo(url: str | None) -> bool:
+    """Borra del disco una evidencia ("/uploads/...") sin salir de la carpeta de uploads."""
+    if not url or not url.startswith("/uploads/"):
+        return False
+    base = Path(CARPETA_UPLOADS).resolve()
+    ruta = (base / url.removeprefix("/uploads/")).resolve()
+    if base not in ruta.parents:
+        return False
+    try:
+        ruta.unlink(missing_ok=True)
+        return True
+    except OSError as error:
+        log.warning("No se pudo borrar %s: %s", ruta, error)
+        return False
+
+
+@router.delete("/reportes/{id_reporte}")
+def eliminar_reporte(id_reporte: int = PathParam(ge=1), admin: dict = Depends(usuario_admin)):
+    """Elimina el reporte para siempre: sus votos, comentarios, avisos e historial se borran
+    en cascada (claves foráneas ON DELETE CASCADE) y sus fotos se borran del disco.
+
+    Como el historial del reporte desaparece con él, la eliminación queda en el registro
+    de la API (quién, cuándo y qué reporte).
+    """
+    with transaccion() as cursor:
+        cursor.execute(
+            "SELECT id_reporte, estado, id_categoria FROM reporte WHERE id_reporte = %s FOR UPDATE",
+            (id_reporte,),
+        )
+        reporte = cursor.fetchone()
+        if reporte is None:
+            raise HTTPException(status_code=404, detail="Reporte no encontrado")
+        cursor.execute("SELECT url_archivo FROM reporte_imagen WHERE id_reporte = %s", (id_reporte,))
+        archivos = [f["url_archivo"] for f in cursor.fetchall()]
+        cursor.execute(
+            """
+            SELECT i.url_archivo FROM comentario_imagen i
+            JOIN comentario c ON c.id_comentario = i.id_comentario
+            WHERE c.id_reporte = %s
+            """,
+            (id_reporte,),
+        )
+        archivos += [f["url_archivo"] for f in cursor.fetchall()]
+        cursor.execute("DELETE FROM reporte WHERE id_reporte = %s", (id_reporte,))
+    # Los archivos se borran después de confirmar: si la BD fallara, las fotos siguen ahí.
+    borrados = sum(_borrar_archivo(url) for url in archivos)
+    log.warning(
+        "Reporte #%s (estado %s) eliminado por el admin #%s; %s archivos borrados",
+        id_reporte, reporte["estado"], admin["id_usuario"], borrados,
+    )
+    _resincronizar()
+    return {"id_reporte": id_reporte, "eliminado": True, "archivos_borrados": borrados}
 
 
 @router.patch("/reportes/{id_reporte}/estado")
@@ -144,6 +234,8 @@ def cambiar_estado_reporte(
             """,
             (id_reporte, fila["estado"], datos.estado, admin["id_usuario"], motivo),
         )
+        if datos.estado == "DESCARTADO":
+            _cerrar_denuncias(cursor, "id_reporte", id_reporte, "ATENDIDA", admin["id_usuario"])
     return {"id_reporte": id_reporte, "estado": datos.estado}
 
 
@@ -203,7 +295,11 @@ def listar_comentarios_reporte(id_reporte: int = PathParam(ge=1)):
 
 
 @router.patch("/comentarios/{id_comentario}/estado")
-def cambiar_estado_comentario(datos: CambioEstadoComentario, id_comentario: int = PathParam(ge=1)):
+def cambiar_estado_comentario(
+    datos: CambioEstadoComentario,
+    id_comentario: int = PathParam(ge=1),
+    admin: dict = Depends(usuario_admin),
+):
     """Oculta un comentario (deja de verse en la app) o lo vuelve a publicar."""
     with transaccion() as cursor:
         cursor.execute("SELECT estado FROM comentario WHERE id_comentario = %s FOR UPDATE", (id_comentario,))
@@ -211,11 +307,129 @@ def cambiar_estado_comentario(datos: CambioEstadoComentario, id_comentario: int 
         if fila is None:
             raise HTTPException(status_code=404, detail="Comentario no encontrado")
         if fila["estado"] == "ELIMINADO":
-            raise HTTPException(status_code=409, detail="Quien lo escribió eliminó este comentario")
+            raise HTTPException(status_code=409, detail="Este comentario ya fue eliminado")
         if fila["estado"] == datos.estado:
             raise HTTPException(status_code=409, detail=f"El comentario ya está {datos.estado.lower()}")
         cursor.execute("UPDATE comentario SET estado = %s WHERE id_comentario = %s", (datos.estado, id_comentario))
+        if datos.estado == "OCULTO":
+            _cerrar_denuncias(cursor, "id_comentario", id_comentario, "ATENDIDA", admin["id_usuario"])
     return {"id_comentario": id_comentario, "estado": datos.estado}
+
+
+@router.delete("/comentarios/{id_comentario}")
+def eliminar_comentario(id_comentario: int = PathParam(ge=1), admin: dict = Depends(usuario_admin)):
+    """Elimina un comentario mal intencionado: queda como ELIMINADO (igual que cuando lo
+    borra su autor, así las respuestas no quedan colgando) y su foto se borra del disco,
+    porque estando oculta igual se podía abrir con su enlace."""
+    with transaccion() as cursor:
+        cursor.execute("SELECT estado FROM comentario WHERE id_comentario = %s FOR UPDATE", (id_comentario,))
+        fila = cursor.fetchone()
+        if fila is None:
+            raise HTTPException(status_code=404, detail="Comentario no encontrado")
+        if fila["estado"] == "ELIMINADO":
+            raise HTTPException(status_code=409, detail="Este comentario ya fue eliminado")
+        cursor.execute("SELECT url_archivo FROM comentario_imagen WHERE id_comentario = %s", (id_comentario,))
+        archivos = [f["url_archivo"] for f in cursor.fetchall()]
+        cursor.execute("DELETE FROM comentario_imagen WHERE id_comentario = %s", (id_comentario,))
+        cursor.execute("UPDATE comentario SET estado = 'ELIMINADO' WHERE id_comentario = %s", (id_comentario,))
+        _cerrar_denuncias(cursor, "id_comentario", id_comentario, "ATENDIDA", admin["id_usuario"])
+    for url in archivos:
+        _borrar_archivo(url)
+    log.warning("Comentario #%s eliminado por el admin #%s", id_comentario, admin["id_usuario"])
+    return {"id_comentario": id_comentario, "estado": "ELIMINADO"}
+
+
+@router.post("/comentarios/{id_comentario}/suspender-autor")
+def suspender_autor_comentario(id_comentario: int = PathParam(ge=1)):
+    """Suspende a quien escribió el comentario sin revelar su identidad en el panel."""
+    with transaccion() as cursor:
+        cursor.execute("SELECT id_usuario FROM comentario WHERE id_comentario = %s", (id_comentario,))
+        comentario = cursor.fetchone()
+        if comentario is None:
+            raise HTTPException(status_code=404, detail="Comentario no encontrado")
+        usuario = _usuario_moderable(cursor, comentario["id_usuario"])
+        if usuario["estado"] == "SUSPENDIDO":
+            raise HTTPException(status_code=409, detail="Quien escribió este comentario ya está suspendido")
+        _suspender(cursor, usuario["id_usuario"])
+    return {"id_comentario": id_comentario, "estado_autor": "SUSPENDIDO"}
+
+
+@router.get("/denuncias")
+def listar_denuncias(
+    estado: Literal["PENDIENTE", "ATENDIDA", "DESESTIMADA"] = "PENDIENTE",
+    limite: int = Query(100, ge=1, le=300),
+):
+    """Denuncias de los vecinos, juntas por lo denunciado (un reporte o un comentario):
+    cuántas hay, por qué motivos y lo que escribieron. Quién denunció no sale de la API."""
+    filas = consultar(
+        """
+        SELECT g.id_reporte AS id_reporte_denunciado, g.id_comentario, g.total, g.motivos,
+               g.detalles, g.ultima,
+               r.id_reporte, r.estado AS estado_reporte, r.descripcion,
+               cat.nombre AS categoria, cat.codigo AS categoria_codigo, cat.color_hex,
+               co.contenido, co.estado AS estado_comentario
+        FROM (
+            SELECT id_reporte, id_comentario, COUNT(*) AS total,
+                   GROUP_CONCAT(DISTINCT motivo ORDER BY motivo) AS motivos,
+                   GROUP_CONCAT(detalle ORDER BY fecha_creacion DESC SEPARATOR '\n') AS detalles,
+                   MAX(fecha_creacion) AS ultima
+            FROM denuncia
+            WHERE estado = %s
+            GROUP BY id_reporte, id_comentario
+        ) g
+        LEFT JOIN comentario co ON co.id_comentario = g.id_comentario
+        JOIN reporte r ON r.id_reporte = COALESCE(g.id_reporte, co.id_reporte)
+        JOIN categoria_incidente cat ON cat.id_categoria = r.id_categoria
+        ORDER BY g.total DESC, g.ultima DESC
+        LIMIT %s
+        """,
+        (estado, limite),
+    )
+    return [
+        {
+            "tipo": "COMENTARIO" if f["id_comentario"] else "REPORTE",
+            "id_reporte": f["id_reporte"],
+            "id_comentario": f["id_comentario"],
+            "total": int(f["total"]),
+            "motivos": f["motivos"].split(",") if f["motivos"] else [],
+            "detalles": f["detalles"].split("\n") if f["detalles"] else [],
+            "ultima": f["ultima"],
+            "categoria": f["categoria"],
+            "categoria_codigo": f["categoria_codigo"],
+            "color_hex": f["color_hex"],
+            "estado_reporte": f["estado_reporte"],
+            "descripcion": f["descripcion"],
+            "contenido": f["contenido"],
+            "estado_comentario": f["estado_comentario"],
+        }
+        for f in filas
+    ]
+
+
+@router.patch("/denuncias/{tipo}/{id_objetivo}")
+def revisar_denuncias(
+    datos: RevisionDenuncias,
+    tipo: Literal["reportes", "comentarios"],
+    id_objetivo: int = PathParam(ge=1),
+    admin: dict = Depends(usuario_admin),
+):
+    """Cierra las denuncias pendientes de un reporte o comentario. Desestimar un
+    comentario que se ocultó solo por las denuncias lo vuelve a publicar."""
+    columna = "id_reporte" if tipo == "reportes" else "id_comentario"
+    with transaccion() as cursor:
+        cursor.execute(
+            f"SELECT COUNT(*) AS total FROM denuncia WHERE {columna} = %s AND estado = 'PENDIENTE'",
+            (id_objetivo,),
+        )
+        if cursor.fetchone()["total"] == 0:
+            raise HTTPException(status_code=404, detail="No hay denuncias pendientes de esto")
+        _cerrar_denuncias(cursor, columna, id_objetivo, datos.estado, admin["id_usuario"])
+        if tipo == "comentarios" and datos.estado == "DESESTIMADA":
+            cursor.execute(
+                "UPDATE comentario SET estado = 'PUBLICADO' WHERE id_comentario = %s AND estado = 'OCULTO'",
+                (id_objetivo,),
+            )
+    return {"tipo": tipo, "id": id_objetivo, "estado": datos.estado}
 
 
 @router.get("/usuarios")
