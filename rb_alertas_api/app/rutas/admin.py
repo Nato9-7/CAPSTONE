@@ -388,10 +388,13 @@ def cambiar_estado_grupo(datos: CambioEstadoGrupo, id_grupo: int = PathParam(ge=
 # -----------------------------------------------------------------------------
 # Grafo (Neo4j). Ver app/grafo.py: los usuarios aparecen con seudónimo.
 #
-# El panel trabaja con "foco": se elige un elemento y se muestra con sus
-# conexiones en dos anillos. /grafo/inicio da los hallazgos y los puntos de partida.
+# Tres secciones, cada una responde una pregunta del administrador:
+#   - Cuentas sospechosas: ¿hay grupos que se confirman entre ellos para inflar reportes?
+#   - Reputación: ¿de quién me puedo fiar? (ver app/analisis_grafo.py)
+#   - Incidentes: ¿estos reportes son el mismo hecho? (ver app/incidentes.py)
+# Además, cualquier elemento se puede poner "en foco" para ver sus conexiones.
 
-TIPOS_NODO = ("Usuario", "Reporte", "Categoria", "Comuna", "Localidad", "ZonaSegura")
+TIPOS_NODO = ("Usuario", "Reporte", "Categoria", "Comuna", "Localidad", "ZonaSegura", "Coordinacion", "Incidente")
 MAXIMO_RELACIONES_FOCO = 90
 
 
@@ -400,6 +403,10 @@ def _etiqueta(tipo: str, datos: dict) -> str:
         return datos.get("alias") or f"Vecino {datos.get('id')}"
     if tipo == "Reporte":
         return f"#{datos.get('id')}"
+    if tipo == "Coordinacion":
+        return f"Grupo de {datos.get('tamano', '?')} cuentas"
+    if tipo == "Incidente":
+        return f"Incidente #{datos.get('id')}"
     return str(datos.get("nombre") or datos.get("id"))
 
 
@@ -414,77 +421,197 @@ def _grafo_o_503(funcion):
         raise HTTPException(status_code=503, detail=str(error))
 
 
-@router.get("/grafo/inicio")
-def inicio_grafo():
-    """Hallazgos (lo que conviene revisar) y elementos desde donde empezar a explorar."""
+@router.get("/grafo/resumen")
+def resumen_grafo():
+    """Cuántos casos hay en cada sección, para los contadores de la pestaña."""
 
-    def consultar_inicio():
-        hallazgos = []
-        for p in grafo.consultar_grafo(
+    def consultar_resumen():
+        fila = grafo.consultar_grafo(
             """
-            MATCH (a:Usuario)-[:VOTO {tipo: 'CONFIRMA'}]->(:Reporte)<-[:CREO]-(b:Usuario),
-                  (b)-[:VOTO {tipo: 'CONFIRMA'}]->(:Reporte)<-[:CREO]-(a)
-            WHERE a.id < b.id
-            RETURN DISTINCT properties(a) AS a, b.alias AS otro LIMIT 8
+            CALL () { MATCH (c:Coordinacion) RETURN count(c) AS sospechosos }
+            CALL () { MATCH (u:Usuario) WHERE u.reputacion < 35 RETURN count(u) AS baja_reputacion }
+            CALL () { MATCH (i:Incidente)-[:AGRUPA]->(r:Reporte)
+                      WHERE r.estado IN ['PENDIENTE', 'VALIDADO'] AND NOT r.vencido
+                      RETURN count(DISTINCT i) AS incidentes_abiertos }
+            RETURN sospechosos, baja_reputacion, incidentes_abiertos
             """
-        ):
-            hallazgos.append({
-                "nivel": "alerta",
-                "texto": f"{p['a']['alias']} y {p['otro']} se confirman los reportes mutuamente",
-                "nodo": _nodo("Usuario", p["a"]),
-            })
-        for d in grafo.consultar_grafo(
+        )[0]
+        return {**fila, "sincronizacion": grafo.ultima_sincronizacion}
+
+    return _grafo_o_503(consultar_resumen)
+
+
+@router.get("/grafo/sospechosos")
+def cuentas_sospechosas():
+    """Grupos de cuentas que se confirman los reportes entre ellas, del más sospechoso al menos."""
+
+    def consultar_sospechosos():
+        filas = grafo.consultar_grafo(
             """
-            MATCH (u:Usuario)-[:CREO]->(r:Reporte)
-            WITH u, count(r) AS total, sum(CASE r.estado WHEN 'DESCARTADO' THEN 1 ELSE 0 END) AS descartados
-            WHERE descartados >= 2
-            RETURN properties(u) AS u, descartados, total ORDER BY descartados DESC LIMIT 8
-            """
-        ):
-            hallazgos.append({
-                "nivel": "alerta",
-                "texto": f"{d['u']['alias']} tiene {d['descartados']} de {d['total']} reportes descartados",
-                "nodo": _nodo("Usuario", d["u"]),
-            })
-        lugares = grafo.consultar_grafo(
-            """
-            MATCH (r:Reporte)-[:OCURRIO_EN]->(l)
-            WHERE r.fecha_creacion >= toString(localdatetime() - duration('P30D'))
-            RETURN labels(l)[0] AS tipo, properties(l) AS l, count(r) AS total
-            ORDER BY total DESC LIMIT 6
+            MATCH (c:Coordinacion)<-[:MIEMBRO_DE]-(u:Usuario)
+            WITH c, u ORDER BY u.alias
+            WITH c, collect(properties(u)) AS miembros
+            RETURN properties(c) AS grupo, miembros
+            ORDER BY c.reciprocidad DESC, c.confirmaciones_internas DESC
             """
         )
-        for l in lugares[:3]:
-            hallazgos.append({
-                "nivel": "info",
-                "texto": f"{l['l']['nombre']}: {l['total']} reportes en los últimos 30 días",
-                "nodo": _nodo(l["tipo"], l["l"]),
-            })
+        return [
+            {
+                **_nodo("Coordinacion", f["grupo"]),
+                "miembros": [_nodo("Usuario", m) for m in f["miembros"]],
+            }
+            for f in filas
+        ]
 
-        reportes = grafo.consultar_grafo(
-            "MATCH (r:Reporte) RETURN properties(r) AS r ORDER BY r.fecha_creacion DESC LIMIT 8"
-        )
-        vecinos = grafo.consultar_grafo(
-            """
-            MATCH (u:Usuario)-[x:CREO|VOTO]->()
-            WITH u, count(x) AS actividad ORDER BY actividad DESC LIMIT 8
-            RETURN properties(u) AS u, actividad
-            """
-        )
-        return {
-            "hallazgos": hallazgos,
-            "reportes": [_nodo("Reporte", r["r"]) for r in reportes],
-            "vecinos": [{**_nodo("Usuario", v["u"]), "detalle": f"{v['actividad']} acciones"} for v in vecinos],
-            "lugares": [{**_nodo(l["tipo"], l["l"]), "detalle": f"{l['total']} reportes"} for l in lugares],
-            "sincronizacion": grafo.ultima_sincronizacion,
-        }
+    return _grafo_o_503(consultar_sospechosos)
 
-    return _grafo_o_503(consultar_inicio)
+
+@router.post("/grafo/sospechosos/{id_grupo}/suspender")
+def suspender_sospechosos(id_grupo: int = PathParam(ge=1)):
+    """Suspende todas las cuentas del grupo (salvo las administradoras) y rehace el grafo."""
+    miembros = _grafo_o_503(lambda: grafo.consultar_grafo(
+        "MATCH (:Coordinacion {id: $id})<-[:MIEMBRO_DE]-(u:Usuario) RETURN u.id AS id",
+        id=id_grupo,
+    ))
+    if not miembros:
+        raise HTTPException(status_code=404, detail="Ese grupo ya no está entre los sospechosos")
+    suspendidas = 0
+    with transaccion() as cursor:
+        for m in miembros:
+            cursor.execute("SELECT email, estado FROM usuario WHERE id_usuario = %s FOR UPDATE", (m["id"],))
+            usuario = cursor.fetchone()
+            if usuario is None or usuario["estado"] in ("SUSPENDIDO", "ELIMINADO"):
+                continue
+            if usuario["email"].strip().lower() in CORREOS_ADMIN:
+                continue
+            _suspender(cursor, m["id"])
+            suspendidas += 1
+    _resincronizar()
+    return {"id_grupo": id_grupo, "suspendidas": suspendidas}
+
+
+@router.get("/grafo/reputacion")
+def reputacion(
+    orden: Literal["baja", "alta"] = "baja",
+    limite: int = Query(30, ge=1, le=200),
+):
+    """Vecinos ordenados por reputación (por defecto, los menos confiables primero)."""
+
+    def consultar_reputacion():
+        direccion = "ASC" if orden == "baja" else "DESC"
+        filas = grafo.consultar_grafo(
+            f"""
+            MATCH (u:Usuario) WHERE NOT u.es_admin
+            OPTIONAL MATCH (u)-[:CREO]->(r:Reporte)
+            OPTIONAL MATCH (u)-[:MIEMBRO_DE]->(c:Coordinacion)
+            WITH u, count(DISTINCT r) AS reportes, c IS NOT NULL AS sospechoso
+            WHERE reportes > 0 OR u.confirmaciones_recibidas > 0
+            RETURN properties(u) AS u, reportes, sospechoso
+            ORDER BY u.reputacion {direccion}, reportes DESC LIMIT $limite
+            """,
+            limite=limite,
+        )
+        return [
+            {**_nodo("Usuario", f["u"]), "reportes": f["reportes"], "sospechoso": f["sospechoso"]}
+            for f in filas
+        ]
+
+    return _grafo_o_503(consultar_reputacion)
+
+
+@router.get("/grafo/incidentes")
+def incidentes_agrupados(
+    abiertos: bool = True,
+    limite: int = Query(30, ge=1, le=200),
+):
+    """Incidentes con más de un reporte, del más reciente al más antiguo."""
+
+    def consultar_incidentes():
+        filas = grafo.consultar_grafo(
+            """
+            MATCH (i:Incidente)-[:AGRUPA]->(r:Reporte)
+            OPTIONAL MATCH (r)-[:OCURRIO_EN]->(lugar)
+            WITH i, r, lugar ORDER BY r.fecha_creacion
+            WITH i, collect(properties(r)) AS reportes, head(collect(lugar.nombre)) AS lugar,
+                 sum(CASE WHEN r.estado IN ['PENDIENTE', 'VALIDADO'] AND NOT r.vencido THEN 1 ELSE 0 END) AS vigentes
+            WHERE NOT $abiertos OR vigentes > 0
+            RETURN properties(i) AS i, reportes, lugar, vigentes
+            ORDER BY i.fin DESC LIMIT $limite
+            """,
+            abiertos=abiertos,
+            limite=limite,
+        )
+        return [
+            {
+                **_nodo("Incidente", f["i"]),
+                "lugar": f["lugar"],
+                "vigentes": f["vigentes"],
+                "reportes": [_nodo("Reporte", r) for r in f["reportes"]],
+            }
+            for f in filas
+        ]
+
+    return _grafo_o_503(consultar_incidentes)
+
+
+class CambioEstadoIncidente(BaseModel):
+    estado: Literal["VALIDADO", "DESCARTADO", "RESUELTO"]
+    motivo: str | None = Field(None, max_length=200)
+
+
+@router.patch("/incidentes/{id_reporte}/estado")
+def cambiar_estado_incidente(
+    datos: CambioEstadoIncidente,
+    id_reporte: int = PathParam(ge=1),
+    admin: dict = Depends(usuario_admin),
+):
+    """Aplica el estado a todos los reportes vigentes del incidente de id_reporte.
+
+    El incidente se recalcula en MySQL al momento (no se usa la copia del grafo), así
+    incluye también los reportes que llegaron después de la última sincronización.
+    """
+    from app.rutas.reportes import reportes_del_incidente
+
+    grupo = reportes_del_incidente(id_reporte)
+    if not grupo:
+        raise HTTPException(status_code=404, detail="Reporte no encontrado")
+    motivo = (datos.motivo or "").strip()
+    motivo = (
+        f"Panel de administración (incidente #{grupo[0]['id_reporte']}): {motivo}" if motivo
+        else f"Incidente #{grupo[0]['id_reporte']} moderado desde el panel de administración"
+    )
+    cambiados = []
+    with transaccion() as cursor:
+        for r in grupo:
+            cursor.execute("SELECT estado FROM reporte WHERE id_reporte = %s FOR UPDATE", (r["id_reporte"],))
+            fila = cursor.fetchone()
+            if fila is None or fila["estado"] == datos.estado:
+                continue
+            cursor.execute("UPDATE reporte SET estado = %s WHERE id_reporte = %s", (datos.estado, r["id_reporte"]))
+            cursor.execute(
+                """
+                INSERT INTO reporte_estado_historial (
+                    id_reporte, estado_anterior, estado_nuevo, id_usuario_responsable, motivo
+                ) VALUES (%s, %s, %s, %s, %s)
+                """,
+                (r["id_reporte"], fila["estado"], datos.estado, admin["id_usuario"], motivo),
+            )
+            cambiados.append(r["id_reporte"])
+    _resincronizar()
+    return {"id_incidente": grupo[0]["id_reporte"], "estado": datos.estado, "reportes": cambiados}
+
+
+def _resincronizar() -> None:
+    """Tras moderar, el grafo se rehace para reflejar el cambio (si Neo4j no está, no importa)."""
+    try:
+        grafo.sincronizar()
+    except Exception:  # noqa: BLE001 - el cambio en MySQL ya quedó hecho
+        pass
 
 
 @router.get("/grafo/nodo/{tipo}/{id_nodo}")
 def foco_grafo(
-    tipo: Literal["Usuario", "Reporte", "Categoria", "Comuna", "Localidad", "ZonaSegura"],
+    tipo: Literal["Usuario", "Reporte", "Categoria", "Comuna", "Localidad", "ZonaSegura", "Coordinacion", "Incidente"],
     id_nodo: int = PathParam(ge=1),
 ):
     """El elemento en foco y lo conectado hasta 2 pasos, con el anillo de cada nodo (0, 1 o 2)."""

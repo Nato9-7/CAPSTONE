@@ -16,7 +16,8 @@ import os
 import threading
 from datetime import datetime
 
-from app.db import consultar
+from app import analisis_grafo, incidentes
+from app.db import consultar, transaccion
 
 log = logging.getLogger("rb_alertas.grafo")
 
@@ -82,13 +83,28 @@ def _filas_mysql() -> dict[str, list[dict]]:
 
     reportes = consultar(
         """
-        SELECT id_reporte, id_usuario, id_categoria, id_comuna, id_localidad, estado,
-               LEFT(descripcion, 120) AS descripcion, fecha_creacion,
-               (fecha_expiracion IS NOT NULL AND fecha_expiracion <= NOW()) AS vencido,
-               total_confirmaciones, total_desmentidos
-        FROM reporte
+        SELECT r.id_reporte, r.id_usuario, r.id_categoria, r.id_comuna, r.id_localidad, r.estado,
+               LEFT(r.descripcion, 120) AS descripcion, r.fecha_creacion,
+               (r.fecha_expiracion IS NOT NULL AND r.fecha_expiracion <= NOW()) AS vencido,
+               r.total_confirmaciones, r.total_desmentidos, c.codigo AS categoria_codigo,
+               ST_Latitude(r.ubicacion) AS latitud, ST_Longitude(r.ubicacion) AS longitud
+        FROM reporte r
+        JOIN categoria_incidente c ON c.id_categoria = r.id_categoria
         """
     )
+    votos = consultar("SELECT id_reporte, id_usuario, tipo_voto, fecha_voto FROM reporte_voto")
+
+    # Análisis de la red (ver app/analisis_grafo.py) y reportes del mismo hecho
+    # (ver app/incidentes.py). Se calcula con las fechas todavía como datetime.
+    coordinaciones = analisis_grafo.detectar_coordinacion(reportes, votos)
+    sospechosos = {m for g in coordinaciones for m in g["miembros"]}
+    reputacion = analisis_grafo.calcular_reputacion(
+        [u["id_usuario"] for u in usuarios], reportes, votos, sospechosos
+    )
+    for u in usuarios:
+        u.update(reputacion.get(u["id_usuario"], {}))
+    grupos_incidentes = [g for g in incidentes.agrupar(reportes) if len(g) > 1]
+
     for r in reportes:
         r["fecha_creacion"] = _texto_fecha(r["fecha_creacion"])
         r["vencido"] = bool(r["vencido"])
@@ -96,17 +112,25 @@ def _filas_mysql() -> dict[str, list[dict]]:
     return {
         "usuarios": usuarios,
         "reportes": reportes,
+        "coordinaciones": coordinaciones,
+        "incidentes": [
+            {
+                "id": g[0]["id_reporte"],
+                "ids": [r["id_reporte"] for r in g],
+                "total": len(g),
+                "inicio": _texto_fecha(g[0]["fecha_creacion"]),
+                "fin": _texto_fecha(g[-1]["fecha_creacion"]),
+            }
+            for g in grupos_incidentes
+        ],
         "categorias": consultar("SELECT id_categoria, nombre, codigo, color_hex FROM categoria_incidente"),
         "comunas": consultar("SELECT id_comuna, nombre FROM comuna WHERE id_comuna IN (SELECT DISTINCT id_comuna FROM reporte)"),
         "localidades": consultar(
             "SELECT id_localidad, id_comuna, nombre FROM localidad "
             "WHERE id_localidad IN (SELECT DISTINCT id_localidad FROM reporte WHERE id_localidad IS NOT NULL)"
         ),
-        "votos": [
-            {**v, "fecha_voto": _texto_fecha(v["fecha_voto"])}
-            for v in consultar("SELECT id_reporte, id_usuario, tipo_voto, fecha_voto FROM reporte_voto")
-        ],
-        "zonas": _opcional("SELECT id_zona_segura, id_usuario, tipo, nombre, radio_metros, activa FROM zona_segura"),
+        "votos": [{**v, "fecha_voto": _texto_fecha(v["fecha_voto"])} for v in votos],
+        "zonas": _opcional("SELECT id_zona_segura, id_usuario, nombre, radio_metros, activa FROM zona_segura"),
         "avisos": _opcional(
             "SELECT id_reporte, id_zona_segura, distancia_metros FROM notificacion "
             "WHERE id_zona_segura IS NOT NULL AND id_reporte IS NOT NULL"
@@ -141,7 +165,11 @@ _CYPHER_RECONSTRUIR = [
        CREATE (:Localidad {id: l.id_localidad, nombre: l.nombre})-[:PERTENECE_A]->(c)""",
     """UNWIND $usuarios AS u
        CREATE (:Usuario {id: u.id_usuario, alias: u.alias, estado: u.estado, verificado: u.email_verificado,
-                         es_admin: u.es_admin, fecha_creacion: u.fecha_creacion})""",
+                         es_admin: u.es_admin, fecha_creacion: u.fecha_creacion,
+                         reputacion: u.puntaje, respaldo: u.respaldo, historial: u.historial,
+                         confianza: u.confianza, confirmaciones_recibidas: u.confirmaciones_recibidas,
+                         desmentidos_recibidos: u.desmentidos_recibidos, reportes_buenos: u.reportes_buenos,
+                         reportes_descartados: u.reportes_descartados})""",
     """UNWIND $reportes AS r
        MATCH (u:Usuario {id: r.id_usuario})
        MATCH (cat:Categoria {id: r.id_categoria})
@@ -161,11 +189,30 @@ _CYPHER_RECONSTRUIR = [
        CREATE (u)-[:VOTO {tipo: v.tipo_voto, fecha: v.fecha_voto}]->(r)""",
     """UNWIND $zonas AS z
        MATCH (u:Usuario {id: z.id_usuario})
-       CREATE (u)-[:TIENE_ZONA]->(:ZonaSegura {id: z.id_zona_segura, tipo: z.tipo, nombre: z.nombre,
+       CREATE (u)-[:TIENE_ZONA]->(:ZonaSegura {id: z.id_zona_segura, nombre: z.nombre,
                                               radio: z.radio_metros, activa: z.activa = 1})""",
     """UNWIND $avisos AS a
        MATCH (r:Reporte {id: a.id_reporte}), (z:ZonaSegura {id: a.id_zona_segura})
        CREATE (r)-[:ALERTO_A {distancia: a.distancia_metros}]->(z)""",
+    # Cuentas que se confirman entre ellas (posible coordinación).
+    """UNWIND $coordinaciones AS g
+       CREATE (c:Coordinacion {id: g.id, nivel: g.nivel, reciprocidad: g.reciprocidad,
+                               confirmaciones_internas: g.confirmaciones_internas,
+                               confirmaciones_totales: g.confirmaciones_totales, tamano: size(g.miembros)})
+       WITH c, g
+       UNWIND g.miembros AS id_miembro
+       MATCH (u:Usuario {id: id_miembro})
+       CREATE (u)-[:MIEMBRO_DE]->(c)""",
+    # Reportes del mismo hecho.
+    """UNWIND $incidentes AS i
+       MATCH (primero:Reporte {id: i.id})
+       CREATE (inc:Incidente {id: i.id, total: i.total, inicio: i.inicio, fin: i.fin,
+                              categoria: primero.categoria, categoria_codigo: primero.categoria_codigo,
+                              color: primero.color})
+       WITH inc, i
+       UNWIND i.ids AS id_reporte
+       MATCH (r:Reporte {id: id_reporte})
+       CREATE (inc)-[:AGRUPA]->(r)""",
 ]
 
 _CYPHER_INDICES = [
@@ -175,7 +222,27 @@ _CYPHER_INDICES = [
     "CREATE INDEX comuna_id IF NOT EXISTS FOR (n:Comuna) ON (n.id)",
     "CREATE INDEX localidad_id IF NOT EXISTS FOR (n:Localidad) ON (n.id)",
     "CREATE INDEX zona_id IF NOT EXISTS FOR (n:ZonaSegura) ON (n.id)",
+    "CREATE INDEX coordinacion_id IF NOT EXISTS FOR (n:Coordinacion) ON (n.id)",
+    "CREATE INDEX incidente_id IF NOT EXISTS FOR (n:Incidente) ON (n.id)",
 ]
+
+
+def _guardar_reputacion(usuarios: list[dict]) -> None:
+    """Deja el puntaje en usuario.puntaje_reputacion para que el resto de la API lo use.
+
+    Si la columna no existe o falla, el grafo se arma igual (solo se registra el error).
+    """
+    import mysql.connector
+
+    try:
+        with transaccion() as cursor:
+            cursor.executemany(
+                "UPDATE usuario SET puntaje_reputacion = %s "
+                "WHERE id_usuario = %s AND NOT (puntaje_reputacion <=> %s)",
+                [(u["puntaje"], u["id_usuario"], u["puntaje"]) for u in usuarios if "puntaje" in u],
+            )
+    except mysql.connector.Error as error:
+        log.warning("No se pudo guardar la reputación en MySQL: %s", error.msg)
 
 
 def sincronizar() -> dict:
@@ -185,6 +252,7 @@ def sincronizar() -> dict:
     with _bloqueo:
         try:
             datos = _filas_mysql()
+            _guardar_reputacion(datos["usuarios"])
             driver = _conexion()
             try:
                 for indice in _CYPHER_INDICES:

@@ -627,6 +627,10 @@ class _DetalleIncidenteVistaState extends State<DetalleIncidenteVista> {
           const SizedBox(height: 20),
           _media(d),
         ],
+        if (d.esIncidenteAgrupado) ...[
+          const SizedBox(height: 22),
+          _mismoIncidente(d),
+        ],
         const SizedBox(height: 22),
         const Divider(height: 1),
         const SizedBox(height: 16),
@@ -688,6 +692,96 @@ class _DetalleIncidenteVistaState extends State<DetalleIncidenteVista> {
           ),
         ),
       ],
+    );
+  }
+
+  /// Otros vecinos reportaron el mismo hecho: la API los junta en un solo
+  /// incidente (misma categoría, cerca y casi a la misma hora).
+  Widget _mismoIncidente(DetalleReporte d) {
+    final otros = d.reportesDelIncidente.where((r) => !r.esEste).toList();
+    return TarjetaRB(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: const BoxDecoration(
+                  color: RBColores.azul50,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.groups_rounded, size: 20, color: RBColores.azul),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Lo reportaron ${d.reportesDelIncidente.length} vecinos',
+                  style: const TextStyle(
+                    fontSize: 16.5,
+                    fontWeight: FontWeight.w700,
+                    color: RBColores.tinta,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Es el mismo incidente: se muestra una sola vez en el mapa y no se '
+            'repite la alerta a quien ya la recibió.',
+            style: TextStyle(fontSize: 14, height: 1.4, color: RBColores.texto2),
+          ),
+          const SizedBox(height: 6),
+          for (final r in otros)
+            InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => DetalleIncidenteVista(idReporte: r.id),
+                ),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Row(
+                  children: [
+                    const AvatarSuricata(tamano: 34),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            [
+                              r.autor,
+                              if (r.fechaCreacion != null)
+                                tiempoRelativoInicio(r.fechaCreacion),
+                            ].join(' · '),
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                              color: RBColores.tinta,
+                            ),
+                          ),
+                          if (r.descripcion.isNotEmpty)
+                            Text(
+                              r.descripcion,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 14, color: RBColores.texto2),
+                            ),
+                        ],
+                      ),
+                    ),
+                    const Icon(Icons.chevron_right_rounded, color: RBColores.placeholder),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 
