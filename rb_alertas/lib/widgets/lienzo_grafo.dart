@@ -53,6 +53,8 @@ const coloresComunidad = [
       return (Icons.shield_rounded, RBColores.verde);
     case 'Coordinacion':
       return (Icons.gpp_maybe_rounded, RBColores.rojo);
+    case 'Grupo':
+      return (Icons.groups_rounded, RBColores.petroleo);
     default:
       return (Icons.circle, RBColores.placeholder);
   }
@@ -74,6 +76,8 @@ Color colorRelacionRed(AristaGrafo a) {
     case 'AGRUPA':
       return RBColores.tinta;
     case 'ALERTO_A':
+    case 'INTEGRA':
+    case 'COMPARTIDO_EN':
       return RBColores.petroleo;
     default:
       return RBColores.bordeCampo;
@@ -216,7 +220,7 @@ class _LienzoGrafoState extends State<LienzoGrafo> with SingleTickerProviderStat
   double radio(String clave, String tipo) {
     final base = switch (tipo) {
       'Usuario' => 15.0,
-      'Coordinacion' || 'Incidente' => 17.0,
+      'Coordinacion' || 'Incidente' || 'Grupo' => 17.0,
       'Comuna' || 'Localidad' || 'Categoria' => 13.0,
       _ => 11.0,
     };
