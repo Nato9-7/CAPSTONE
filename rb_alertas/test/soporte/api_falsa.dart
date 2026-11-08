@@ -12,7 +12,7 @@ MockClient clienteApiFalsa() {
     if (peticion.url.host.contains('openstreetmap')) {
       return http.Response.bytes(_teselaGris, 200, headers: {'content-type': 'image/png'});
     }
-    final cuerpo = _responder(peticion.method, ruta);
+    final cuerpo = _responder(peticion.method, ruta, peticion.url.queryParameters);
     if (cuerpo == null) {
       return http.Response(jsonEncode({'detail': 'No encontrado'}), 404);
     }
@@ -31,7 +31,7 @@ final _teselaGris = base64Decode(
 final _ahora = DateTime.now();
 String _hace(Duration d) => _ahora.subtract(d).toIso8601String();
 
-Object? _responder(String metodo, String ruta) {
+Object? _responder(String metodo, String ruta, [Map<String, String> consulta = const {}]) {
   if (ruta == '/api/reportes/categorias') return _categorias;
   if (ruta == '/api/reportes/') return _reportesMapa;
   if (ruta == '/api/reportes/cercanos') {
@@ -56,6 +56,10 @@ Object? _responder(String metodo, String ruta) {
   if (ruta == '/api/admin/grupos') return _gruposAdmin;
   if (RegExp(r'^/api/admin/grupos/\d+/reportes$').hasMatch(ruta)) return _reportesGrupoAdmin;
   if (ruta == '/api/admin/grafo/inicio') return _inicioGrafo;
+  if (ruta == '/api/admin/grafo/resumen') return _resumenGrafo;
+  if (ruta == '/api/admin/grafo/sospechosos') return const [];
+  if (ruta == '/api/admin/grafo/zonas') return _zonasCalientes(consulta['categoria']);
+  if (ruta == '/api/admin/grafo/red') return _redGrafo(consulta['modo'], consulta['categoria']);
   return null;
 }
 
@@ -408,3 +412,85 @@ final _inicioGrafo = {
   'lugares': [_nodo('Comuna', 1, 'Puerto Montt', {}, detalle: '33 reportes')],
   'sincronizacion': {'fecha': _hace(const Duration(minutes: 5))},
 };
+
+final _resumenGrafo = {
+  'sospechosos': 0,
+  'baja_reputacion': 0,
+  'incidentes_abiertos': 0,
+  'sincronizacion': {'fecha': _hace(const Duration(minutes: 5))},
+};
+
+/// Reportes por lugar y categoría para "Dónde ocurre más" (como lo cuenta la API).
+const _reportesPorLugar = [
+  ('Localidad', 5, 'Mirasol', 'Puerto Montt', {'ROBO': 7, 'ACCIDENTE': 2, 'VIAL': 1}),
+  ('Localidad', 12, 'Alerce Norte', 'Puerto Montt', {'ROBO': 4, 'SOSPECHOSO': 1}),
+  ('Localidad', 3, 'Centro', 'Puerto Montt', {'ACCIDENTE': 5, 'ROBO': 2, 'SOSPECHOSO': 2}),
+  ('Localidad', 9, 'Pelluco', 'Puerto Montt', {'ROBO': 3, 'MASCOTA': 2}),
+  ('Comuna', 2, 'Puerto Varas', null, {'ACCIDENTE': 3}),
+];
+
+List<Map<String, Object?>> _zonasCalientes(String? categoria) {
+  final lugares = <Map<String, Object?>>[];
+  for (final (tipo, id, nombre, comuna, conteo) in _reportesPorLugar) {
+    final porCategoria = [
+      for (final c in _categorias)
+        if (conteo.containsKey(c['codigo']) && (categoria == null || c['codigo'] == categoria))
+          {
+            'id': c['id_categoria'],
+            'codigo': c['codigo'],
+            'nombre': c['nombre'],
+            'color': c['color_hex'],
+            'total': conteo[c['codigo']],
+          },
+    ]..sort((a, b) => (b['total'] as int).compareTo(a['total'] as int));
+    if (porCategoria.isEmpty) continue;
+    final total = porCategoria.fold<int>(0, (suma, c) => suma + (c['total'] as int));
+    // En Mirasol varios vecinos reportaron el mismo robo: más reportes que hechos.
+    final reportes = nombre == 'Mirasol' ? total + 3 : total;
+    lugares.add({
+      ..._nodo(tipo, id, nombre, {
+        'nombre': nombre,
+        'comuna': comuna,
+        'total': total,
+        'reportes': reportes,
+        'por_categoria': porCategoria,
+      }),
+      'total': total,
+    });
+  }
+  lugares.sort((a, b) => (b['total'] as int).compareTo(a['total'] as int));
+  final maximo = lugares.isEmpty ? 1 : lugares.first['total'] as int;
+  for (final l in lugares) {
+    (l['datos'] as Map)['intensidad'] = (l['total'] as int) / maximo;
+  }
+  return lugares;
+}
+
+Map<String, Object?> _redGrafo(String? modo, String? categoria) {
+  if (modo != 'zonas') return {'nodos': const [], 'aristas': const []};
+  final lugares = _zonasCalientes(categoria);
+  final categorias = <String, Map<String, Object?>>{};
+  final aristas = <Map<String, Object?>>[];
+  for (final l in lugares) {
+    for (final c in ((l['datos'] as Map)['por_categoria'] as List).cast<Map<String, Object?>>()) {
+      final clave = 'Categoria:${c['id']}';
+      final cat = categorias.putIfAbsent(
+        clave,
+        () => _nodo('Categoria', c['id'] as int, c['nombre'] as String, {
+          'codigo': c['codigo'],
+          'nombre': c['nombre'],
+          'color': c['color'],
+          'total': 0,
+        }),
+      );
+      final datos = cat['datos'] as Map;
+      datos['total'] = (datos['total'] as int) + (c['total'] as int);
+      aristas.add({'origen': l['clave'], 'destino': clave, 'tipo': 'OCURREN', 'datos': {'peso': c['total']}});
+    }
+  }
+  return {
+    'nodos': [...lugares, ...categorias.values],
+    'aristas': aristas,
+    'sincronizacion': {'fecha': _hace(const Duration(minutes: 5))},
+  };
+}
