@@ -38,6 +38,8 @@ Object? _responder(String metodo, String ruta) {
     return {'radio_metros': 2000, 'total': _cercanos.length, 'reportes': _cercanos};
   }
   if (ruta == '/api/reportes/mios') return _misReportes;
+  if (ruta == '/api/reportes/calor') return {'dias': 60, 'puntos': _calor};
+  if (ruta == '/api/reportes/zonas-riesgo') return {'dias': 60, 'zonas': _zonasRiesgo};
   if (RegExp(r'^/api/reportes/\d+$').hasMatch(ruta)) return _detalle;
   if (RegExp(r'^/api/reportes/\d+/comentarios$').hasMatch(ruta)) return _comentarios;
   if (ruta == '/api/usuarios/perfil') return _perfil;
@@ -408,3 +410,68 @@ final _inicioGrafo = {
   'lugares': [_nodo('Comuna', 1, 'Puerto Montt', {}, detalle: '33 reportes')],
   'sincronizacion': {'fecha': _hace(const Duration(minutes: 5))},
 };
+
+// Zonas de riesgo alrededor del centro inicial del mapa (Puerto Montt).
+final _zonasRiesgo = [
+  {
+    'tipo': 'SEGURIDAD',
+    'nivel': 'ALTO',
+    'latitud': -41.4672,
+    'longitud': -72.9395,
+    'radio_metros': 320,
+    'total_incidentes': 6,
+    'incidentes_de_noche': 5,
+    'por_categoria': [
+      {'codigo': 'ROBO', 'nombre': 'Robo o asalto', 'color_hex': '#6D28D9', 'total': 5},
+      {'codigo': 'SOSPECHOSO', 'nombre': 'Actividad sospechosa', 'color_hex': '#475569', 'total': 1},
+    ],
+    'ultimo_incidente': _hace(const Duration(days: 2)),
+    'recomendacion': 'Evita transitar por aquí, sobre todo de noche. Si debes pasar, hazlo acompañado, '
+        'por calles iluminadas y sin exponer tu celular.',
+  },
+  {
+    'tipo': 'SEGURIDAD',
+    'nivel': 'MEDIO',
+    'latitud': -41.4735,
+    'longitud': -72.9500,
+    'radio_metros': 180,
+    'total_incidentes': 2,
+    'incidentes_de_noche': 0,
+    'por_categoria': [
+      {'codigo': 'ROBO', 'nombre': 'Robo o asalto', 'color_hex': '#6D28D9', 'total': 2},
+    ],
+    'ultimo_incidente': _hace(const Duration(days: 9)),
+    'recomendacion': 'Transita con precaución por aquí. Si debes pasar, hazlo acompañado, '
+        'por calles iluminadas y sin exponer tu celular.',
+  },
+  {
+    'tipo': 'VIAL',
+    'nivel': 'MEDIO',
+    'latitud': -41.4650,
+    'longitud': -72.9480,
+    'radio_metros': 200,
+    'total_incidentes': 3,
+    'incidentes_de_noche': 1,
+    'por_categoria': [
+      {'codigo': 'ACCIDENTE', 'nombre': 'Accidente de tránsito', 'color_hex': '#C62828', 'total': 3},
+    ],
+    'ultimo_incidente': _hace(const Duration(days: 4)),
+    'recomendacion': 'Se han reportado problemas en la vía: reduce la velocidad y cruza solo por pasos peatonales.',
+  },
+];
+
+// Celdas del mapa de calor: un foco fuerte en la zona roja y otros más suaves.
+final _calor = [
+  for (final (lat, lng, peso) in [
+    (-41.4672, -72.9395, 6),
+    (-41.4680, -72.9382, 4),
+    (-41.4662, -72.9408, 3),
+    (-41.4735, -72.9500, 2),
+    (-41.4650, -72.9480, 3),
+    (-41.4600, -72.9300, 1),
+    (-41.4760, -72.9350, 1),
+    (-41.4710, -72.9250, 2),
+    (-41.4550, -72.9450, 1),
+  ])
+    {'latitud': lat, 'longitud': lng, 'peso': peso, 'seguridad': peso},
+];

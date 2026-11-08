@@ -13,9 +13,11 @@ import 'package:rb_alertas/vistas/perfil_vista.dart';
 import 'package:rb_alertas/vistas/reportar_incidente_vista.dart';
 import 'package:rb_alertas/widgets/barra_navegacion_inferior.dart';
 import 'package:rb_alertas/widgets/boton_voto.dart';
+import 'package:rb_alertas/widgets/capa_calor.dart';
 import 'package:rb_alertas/widgets/categoria_visual.dart';
 import 'package:rb_alertas/widgets/panel_emergencias.dart';
 import 'package:rb_alertas/widgets/rb_componentes.dart';
+import 'package:rb_alertas/widgets/zonas_riesgo_mapa.dart';
 
 class MapaVista extends StatefulWidget {
   /// Punto donde se abre el mapa (por ejemplo, el reporte recién enviado).
@@ -57,6 +59,20 @@ class _MapaVistaState extends State<MapaVista> {
   DetalleReporte? _vistaPrevia;
   bool _votando = false;
 
+  /// Lugares donde se repiten robos o accidentes, en los últimos [_diasZonas].
+  static const _diasZonas = 60;
+  List<ZonaRiesgo> _zonas = [];
+  bool _verZonas = true;
+  ZonaRiesgo? _zonaSeleccionada;
+
+  /// Mapa de calor: de lejos (zoom menor a [_zoomCalor]) se ve el calor y de
+  /// cerca los círculos con su recomendación. En el panel se puede dejar el
+  /// calor siempre a la vista con su botón.
+  static const _zoomCalor = 14.0;
+  List<PuntoCalor> _calor = [];
+  late double _zoom = widget.centrarEn != null ? 16 : 14.5;
+  bool _calorSiempre = false;
+
   bool get _modoAdmin => widget.alModerar != null;
 
   @override
@@ -64,6 +80,8 @@ class _MapaVistaState extends State<MapaVista> {
     super.initState();
     _cargarReportes();
     _cargarCategorias();
+    _cargarZonas();
+    _cargarCalor();
     _ubicacionSiHayPermiso();
   }
 
@@ -112,6 +130,72 @@ class _MapaVistaState extends State<MapaVista> {
     }
   }
 
+  Future<void> _cargarZonas() async {
+    try {
+      final zonas = await _reporteServicio.obtenerZonasRiesgo(dias: _diasZonas);
+      if (mounted) setState(() => _zonas = zonas);
+    } catch (_) {
+      // Sin zonas el mapa funciona igual: solo no se marcan.
+    }
+  }
+
+  /// Calor de la categoría filtrada; sin filtro, robos, accidentes y similares.
+  Future<void> _cargarCalor() async {
+    final categoria = _codigoFiltro;
+    try {
+      final calor = await _reporteServicio.obtenerCalor(dias: _diasZonas, categoria: categoria);
+      if (mounted && categoria == _codigoFiltro) setState(() => _calor = calor);
+    } catch (_) {
+      // Sin calor el mapa funciona igual.
+    }
+  }
+
+  bool get _lejos => _zoom < _zoomCalor;
+
+  bool get _mostrarCalor => _verZonas && _calor.isNotEmpty && (_lejos || _calorSiempre);
+
+  /// Los círculos se dibujan de cerca; en el panel, siempre.
+  bool get _mostrarCirculos => !_lejos || _modoAdmin;
+
+  /// Solo redibuja cuando se cruza el zoom en que cambia calor por círculos.
+  void _alMoverMapa(MapCamera camara, bool _) {
+    final antes = _lejos;
+    _zoom = camara.zoom;
+    if (antes != _lejos && mounted) {
+      setState(() {
+        if (_lejos && !_modoAdmin) _zonaSeleccionada = null;
+      });
+    }
+  }
+
+  /// Zonas a la vista: si se filtra por una categoría, solo las de su tipo
+  /// (robos -> seguridad, accidentes -> vial; mascotas -> ninguna).
+  List<ZonaRiesgo> get _zonasVisibles {
+    if (!_verZonas) return const [];
+    final filtro = _codigoFiltro;
+    if (filtro == null) return _zonas;
+    final tipo = tipoRiesgoCategoria(filtro);
+    return _zonas.where((z) => z.tipo == tipo).toList();
+  }
+
+  /// Zona de seguridad donde está el usuario, para avisarle.
+  ZonaRiesgo? get _zonaDondeEstoy {
+    final yo = _miUbicacion;
+    if (yo == null) return null;
+    for (final z in _zonasVisibles) {
+      if (zonaContiene(z, yo)) return z;
+    }
+    return null;
+  }
+
+  void _seleccionarZona(ZonaRiesgo zona) {
+    setState(() {
+      _cerrarVistaPrevia();
+      _filtrosAbiertos = false;
+      _zonaSeleccionada = zona;
+    });
+  }
+
   /// Muestra el punto azul sin pedir permiso al abrir la app: solo si el
   /// usuario ya lo había dado antes (por ejemplo, al reportar).
   Future<void> _ubicacionSiHayPermiso() async {
@@ -158,6 +242,7 @@ class _MapaVistaState extends State<MapaVista> {
       _seleccionado = reporte;
       _vistaPrevia = null;
       _filtrosAbiertos = false;
+      _zonaSeleccionada = null;
     });
     await _cargarVistaPrevia(reporte.id);
   }
@@ -233,6 +318,8 @@ class _MapaVistaState extends State<MapaVista> {
     );
     if (punto == null || !mounted) return;
     await _cargarReportes();
+    _cargarZonas();
+    _cargarCalor();
     if (_mapaListo) _mapController.move(punto, 16);
   }
 
@@ -253,6 +340,11 @@ class _MapaVistaState extends State<MapaVista> {
   @override
   Widget build(BuildContext context) {
     final seleccionado = _seleccionado;
+    final zonaSeleccionada = _zonaSeleccionada;
+    final zonasVisibles = _zonasVisibles;
+    final circulos = _mostrarCirculos ? zonasVisibles : const <ZonaRiesgo>[];
+    final zonaDondeEstoy = _zonaDondeEstoy;
+    final mostrarCalor = _mostrarCalor;
     // Botones compactos para que el mapa quede a la vista.
     const altoBoton = 46.0;
     CategoriaIncidente? categoriaFiltro;
@@ -270,17 +362,32 @@ class _MapaVistaState extends State<MapaVista> {
               initialCenter: widget.centrarEn ?? _centroInicial,
               initialZoom: widget.centrarEn != null ? 16 : 14.5,
               onMapReady: () => _mapaListo = true,
+              onPositionChanged: _alMoverMapa,
               onTap: (_, punto) {
-                if (_seleccionado != null || _filtrosAbiertos) {
+                if (_seleccionado != null || _filtrosAbiertos || _zonaSeleccionada != null) {
                   setState(() {
                     _cerrarVistaPrevia();
                     _filtrosAbiertos = false;
+                    _zonaSeleccionada = null;
                   });
+                  return;
+                }
+                // Tocar dentro de un círculo abre su zona.
+                for (final z in circulos) {
+                  if (zonaContiene(z, punto)) return _seleccionarZona(z);
                 }
               },
             ),
             children: [
               capaMapaBase(),
+              if (mostrarCalor) CapaCalor(puntos: _calor),
+              if (circulos.isNotEmpty) ...[
+                capaZonasRiesgo(circulos),
+                // Antes que los pines, para que los reportes queden encima.
+                MarkerLayer(
+                  markers: [for (final z in circulos) marcadorZona(z, () => _seleccionarZona(z))],
+                ),
+              ],
               MarkerLayer(
                 markers: [
                   if (_miUbicacion != null)
@@ -344,11 +451,43 @@ class _MapaVistaState extends State<MapaVista> {
                 children: [
                   _BarraBusqueda(onAvatar: _modoAdmin ? null : _irAPerfil),
                   const SizedBox(height: 8),
-                  _BotonFiltrar(
-                    categoria: categoriaFiltro,
-                    abierto: _filtrosAbiertos,
-                    onTap: () => setState(() => _filtrosAbiertos = !_filtrosAbiertos),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      _BotonFiltrar(
+                        categoria: categoriaFiltro,
+                        abierto: _filtrosAbiertos,
+                        onTap: () => setState(() => _filtrosAbiertos = !_filtrosAbiertos),
+                      ),
+                      BotonZonasRiesgo(
+                        activo: _verZonas,
+                        cantidad: zonasVisibles.length,
+                        onTap: () => setState(() {
+                          _verZonas = !_verZonas;
+                          if (!_verZonas) _zonaSeleccionada = null;
+                        }),
+                      ),
+                      // En el panel, el calor se puede dejar fijo a cualquier zoom.
+                      if (_modoAdmin && _verZonas)
+                        BotonMapaCalor(
+                          activo: _calorSiempre,
+                          onTap: () => setState(() => _calorSiempre = !_calorSiempre),
+                        ),
+                    ],
                   ),
+                  if (mostrarCalor && seleccionado == null && zonaSeleccionada == null && !_filtrosAbiertos) ...[
+                    const SizedBox(height: 8),
+                    LeyendaCalor(
+                      texto: categoriaFiltro == null
+                          ? 'Robos y accidentes · $_diasZonas días'
+                          : '${etiquetaCortaCategoria(categoriaFiltro.codigo, categoriaFiltro.nombre)} · $_diasZonas días',
+                    ),
+                  ],
+                  if (zonaDondeEstoy != null && zonaSeleccionada == null && seleccionado == null && !_filtrosAbiertos) ...[
+                    const SizedBox(height: 8),
+                    AvisoZonaRiesgo(zona: zonaDondeEstoy, onTap: () => _seleccionarZona(zonaDondeEstoy)),
+                  ],
                   if (_filtrosAbiertos) ...[
                     const SizedBox(height: 8),
                     _PanelFiltros(
@@ -358,6 +497,8 @@ class _MapaVistaState extends State<MapaVista> {
                         setState(() {
                           _codigoFiltro = codigo;
                           _filtrosAbiertos = false;
+                          _calor = [];
+                          _cargarCalor();
                           if (codigo != null && _seleccionado?.categoriaCodigo != codigo) {
                             _cerrarVistaPrevia();
                           }
@@ -372,7 +513,7 @@ class _MapaVistaState extends State<MapaVista> {
 
           const Positioned(left: 6, bottom: 2, child: AtribucionMapa()),
 
-          if (seleccionado == null) ...[
+          if (seleccionado == null && zonaSeleccionada == null) ...[
             Positioned(
               right: 12,
               bottom: _modoAdmin ? 20 : 20 + altoBoton + 10,
@@ -422,7 +563,18 @@ class _MapaVistaState extends State<MapaVista> {
                   ],
                 ),
               ),
-          ] else
+          ] else if (zonaSeleccionada != null)
+            Positioned(
+              left: 12,
+              right: 12,
+              bottom: 12,
+              child: TarjetaZonaRiesgo(
+                zona: zonaSeleccionada,
+                dias: _diasZonas,
+                onCerrar: () => setState(() => _zonaSeleccionada = null),
+              ),
+            )
+          else if (seleccionado != null)
             Positioned(
               left: 12,
               right: 12,
