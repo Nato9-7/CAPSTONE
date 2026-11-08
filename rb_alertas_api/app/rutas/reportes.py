@@ -10,7 +10,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPExcepti
 from pydantic import BaseModel
 import mysql.connector
 
-from app import incidentes, push
+from app import incidentes, push, zonas_riesgo
 from app.db import consultar, ejecutar, transaccion
 from app.seguridad import usuario_actual, usuario_opcional
 
@@ -220,6 +220,51 @@ def listar_reportes_cercanos(
         "total": len(agrupados),
         "reportes": agrupados,
     }
+
+
+def _reportes_recientes(dias: int) -> list[dict]:
+    """Reportes públicos de los últimos `dias` para zonas de riesgo y mapa de calor.
+
+    Incluye los ya resueltos o expirados (un robo de hace dos semanas sigue
+    diciendo algo del lugar), pero no los descartados por la comunidad.
+    """
+    return consultar(
+        """
+        SELECT r.id_reporte, c.codigo AS categoria_codigo, c.nombre AS categoria, c.color_hex,
+               ST_Latitude(r.ubicacion) AS latitud, ST_Longitude(r.ubicacion) AS longitud,
+               r.fecha_creacion
+        FROM reporte r
+        JOIN categoria_incidente c ON c.id_categoria = r.id_categoria
+        WHERE r.estado <> 'DESCARTADO'
+          AND r.visibilidad = 'PUBLICO'
+          AND r.fecha_creacion >= NOW() - INTERVAL %s DAY
+        ORDER BY r.fecha_creacion DESC
+        LIMIT 3000
+        """,
+        (dias,),
+    )
+
+
+@router.get("/zonas-riesgo")
+def listar_zonas_riesgo(dias: int = Query(60, ge=7, le=365)):
+    """Zonas donde se repiten robos, asaltos o accidentes, para marcarlas en el mapa.
+
+    Ver app/zonas_riesgo.py.
+    """
+    return {"dias": dias, "zonas": zonas_riesgo.calcular(_reportes_recientes(dias))}
+
+
+@router.get("/calor")
+def mapa_de_calor(
+    dias: int = Query(60, ge=1, le=365),
+    categoria: str | None = Query(None, pattern=r"^[A-Z_]{1,40}$"),
+):
+    """Hechos por celda de ~110 m para dibujar el mapa de calor.
+
+    Sin `categoria`, robos, accidentes y demás categorías de riesgo; con ella,
+    solo esa. Los reportes del mismo hecho cuentan una vez.
+    """
+    return {"dias": dias, "puntos": zonas_riesgo.puntos_calor(_reportes_recientes(dias), categoria)}
 
 
 @router.get("/mios")

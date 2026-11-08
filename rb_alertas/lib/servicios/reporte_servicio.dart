@@ -402,6 +402,79 @@ class Evidencia {
   Evidencia({required this.nombreArchivo, required this.bytes});
 }
 
+/// Lugar donde se repiten robos, asaltos o accidentes (GET /api/reportes/zonas-riesgo).
+class ZonaRiesgo {
+  /// 'SEGURIDAD' (robos, asaltos...) o 'VIAL' (accidentes, problemas en la vía).
+  final String tipo;
+
+  /// 'ALTO' o 'MEDIO'.
+  final String nivel;
+  final double latitud;
+  final double longitud;
+  final double radioMetros;
+  final int totalIncidentes;
+  final int incidentesDeNoche;
+  final List<({String codigo, String nombre, String? colorHex, int total})> porCategoria;
+  final DateTime? ultimoIncidente;
+  final String recomendacion;
+
+  ZonaRiesgo({
+    required this.tipo,
+    required this.nivel,
+    required this.latitud,
+    required this.longitud,
+    required this.radioMetros,
+    required this.totalIncidentes,
+    required this.incidentesDeNoche,
+    required this.porCategoria,
+    required this.ultimoIncidente,
+    required this.recomendacion,
+  });
+
+  bool get esSeguridad => tipo == 'SEGURIDAD';
+  bool get esAlto => nivel == 'ALTO';
+
+  factory ZonaRiesgo.desdeJson(Map<String, dynamic> json) => ZonaRiesgo(
+        tipo: json['tipo'] as String,
+        nivel: json['nivel'] as String,
+        latitud: (json['latitud'] as num).toDouble(),
+        longitud: (json['longitud'] as num).toDouble(),
+        radioMetros: (json['radio_metros'] as num).toDouble(),
+        totalIncidentes: (json['total_incidentes'] as num).toInt(),
+        incidentesDeNoche: (json['incidentes_de_noche'] as num? ?? 0).toInt(),
+        porCategoria: [
+          for (final c in (json['por_categoria'] as List? ?? const []).cast<Map<String, dynamic>>())
+            (
+              codigo: c['codigo'] as String,
+              nombre: c['nombre'] as String,
+              colorHex: c['color_hex'] as String?,
+              total: (c['total'] as num).toInt(),
+            ),
+        ],
+        ultimoIncidente: DateTime.tryParse(json['ultimo_incidente']?.toString() ?? ''),
+        recomendacion: json['recomendacion'] as String? ?? '',
+      );
+}
+
+/// Celda del mapa de calor (GET /api/reportes/calor): cuántos hechos hubo ahí.
+class PuntoCalor {
+  final double latitud;
+  final double longitud;
+  final int peso;
+
+  /// Cuántos de esos hechos son robos, asaltos y similares.
+  final int seguridad;
+
+  const PuntoCalor({required this.latitud, required this.longitud, required this.peso, this.seguridad = 0});
+
+  factory PuntoCalor.desdeJson(Map<String, dynamic> json) => PuntoCalor(
+        latitud: (json['latitud'] as num).toDouble(),
+        longitud: (json['longitud'] as num).toDouble(),
+        peso: (json['peso'] as num).toInt(),
+        seguridad: (json['seguridad'] as num? ?? 0).toInt(),
+      );
+}
+
 class ReporteServicio {
   static const String baseUrl = ApiConfig.baseUrl;
 
@@ -418,6 +491,41 @@ class ReporteServicio {
     }
     throw ReporteServicioException(
       _mensajeDeError(respuesta, 'No se pudieron cargar las categorías'),
+    );
+  }
+
+  /// Zonas donde se repiten robos y accidentes en los últimos [dias].
+  Future<List<ZonaRiesgo>> obtenerZonasRiesgo({int dias = 60}) async {
+    final respuesta = await http.get(
+      Uri.parse('$baseUrl/api/reportes/zonas-riesgo?dias=$dias'),
+    );
+    if (respuesta.statusCode == 200) {
+      final cuerpo = jsonDecode(utf8.decode(respuesta.bodyBytes)) as Map<String, dynamic>;
+      return (cuerpo['zonas'] as List)
+          .map((z) => ZonaRiesgo.desdeJson(z as Map<String, dynamic>))
+          .toList();
+    }
+    throw ReporteServicioException(
+      _mensajeDeError(respuesta, 'No se pudieron cargar las zonas de riesgo'),
+    );
+  }
+
+  /// Mapa de calor: sin [categoria], robos, accidentes y demás de riesgo.
+  Future<List<PuntoCalor>> obtenerCalor({int dias = 60, String? categoria}) async {
+    final respuesta = await http.get(
+      Uri.parse('$baseUrl/api/reportes/calor').replace(queryParameters: {
+        'dias': '$dias',
+        'categoria': ?categoria,
+      }),
+    );
+    if (respuesta.statusCode == 200) {
+      final cuerpo = jsonDecode(utf8.decode(respuesta.bodyBytes)) as Map<String, dynamic>;
+      return (cuerpo['puntos'] as List)
+          .map((p) => PuntoCalor.desdeJson(p as Map<String, dynamic>))
+          .toList();
+    }
+    throw ReporteServicioException(
+      _mensajeDeError(respuesta, 'No se pudo cargar el mapa de calor'),
     );
   }
 
