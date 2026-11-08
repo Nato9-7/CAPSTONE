@@ -809,21 +809,37 @@ class AdminServicio {
     ];
   }
 
-  /// La red del explorador. [modo]: "vecinos" (quién apoya a quién) o
-  /// "completa" (vecinos y reportes con las [capas] pedidas). [dias] limita
-  /// a la actividad reciente; null es toda la historia.
+  /// La red del explorador. [modo]: "vecinos" (quién apoya a quién),
+  /// "completa" (vecinos y reportes con las [capas] pedidas) o "zonas" (dónde
+  /// ocurre más; [categoria] deja solo una, p. ej. "ROBO"). [dias] limita a la
+  /// actividad reciente; null es toda la historia.
   Future<RedGrafo> red(
     String token, {
     String modo = 'vecinos',
     int? dias,
     Set<String> capas = const {},
+    String? categoria,
   }) async {
     final cuerpo = await _get(token, '/api/admin/grafo/red', {
       'modo': modo,
       if (dias != null) 'dias': '$dias',
       'capas': capas.join(','),
+      'categoria': ?categoria,
     });
     return RedGrafo.desdeJson(cuerpo as Map<String, dynamic>);
+  }
+
+  /// Lugares con más reportes, del que tiene más al que menos. Cada lugar trae
+  /// en sus datos `total`, `intensidad` (0 a 1), `comuna` y `por_categoria`.
+  Future<List<NodoGrafo>> zonasCalientes(String token, {String? categoria, int? dias}) async {
+    final cuerpo = await _get(token, '/api/admin/grafo/zonas', {
+      'categoria': ?categoria,
+      if (dias != null) 'dias': '$dias',
+    });
+    return [
+      for (final z in cuerpo as List)
+        NodoGrafo.desdeJson(z as Map<String, dynamic>),
+    ];
   }
 
   Future<List<NodoGrafo>> buscarEnGrafo(String token, String texto) async {

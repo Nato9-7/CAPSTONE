@@ -46,9 +46,14 @@ const coloresComunidad = [
       final codigo = (n.datos['codigo'] ?? '').toString();
       return (iconoCategoria(codigo), colorCategoria(codigo, colorHex: n.datos['color']?.toString()));
     case 'Comuna':
-      return (Icons.location_city_rounded, RBColores.petroleo);
     case 'Localidad':
-      return (Icons.place_rounded, RBColores.texto2);
+      final icono = n.tipo == 'Comuna' ? Icons.location_city_rounded : Icons.place_rounded;
+      // Vista "Dónde ocurre más": de ámbar (pocos reportes) a rojo (el lugar con más).
+      final intensidad = (n.datos['intensidad'] as num?)?.toDouble();
+      if (intensidad != null) {
+        return (icono, Color.lerp(colorAmbarRed, RBColores.rojo, intensidad.clamp(0.0, 1.0))!);
+      }
+      return (icono, n.tipo == 'Comuna' ? RBColores.petroleo : RBColores.texto2);
     case 'ZonaSegura':
       return (Icons.shield_rounded, RBColores.verde);
     case 'Coordinacion':
@@ -94,7 +99,8 @@ class ControladorLienzo {
 /// Red dibujada con una simulación de fuerzas: los elementos se repelen y las
 /// relaciones los atraen como resortes, así lo conectado queda junto.
 ///
-/// - Tamaño del nodo: su actividad (cuántas relaciones tiene).
+/// - Tamaño del nodo: su actividad (cuántas relaciones tiene) o, si trae un
+///   `total` (lugares y categorías en "Dónde ocurre más"), cuántos reportes suma.
 /// - Grosor de la línea: su peso (p. ej. cuántas veces confirmó).
 /// - Zoom con la rueda del mouse o con dos dedos; arrastrar para moverse.
 /// - Tocar un nodo lo selecciona; doble toque pide ampliar sus conexiones.
@@ -144,6 +150,7 @@ class _LienzoGrafoState extends State<LienzoGrafo> with SingleTickerProviderStat
   final Map<String, Offset> _pos = {};
   final Map<String, Offset> _vel = {};
   Map<String, int> _grado = {};
+  Map<String, double> _total = {};
   int _pasosRestantes = 0;
   Size _vista = Size.zero;
   bool _encuadreInicial = true;
@@ -189,6 +196,10 @@ class _LienzoGrafoState extends State<LienzoGrafo> with SingleTickerProviderStat
     _pos.removeWhere((c, _) => !claves.contains(c));
     _vel.removeWhere((c, _) => !claves.contains(c));
     _grado = {};
+    _total = {
+      for (final n in widget.nodos)
+        if (n.datos['total'] is num) n.clave: (n.datos['total'] as num).toDouble(),
+    };
     for (final a in widget.aristas) {
       _grado[a.origen] = (_grado[a.origen] ?? 0) + 1;
       _grado[a.destino] = (_grado[a.destino] ?? 0) + 1;
@@ -224,6 +235,8 @@ class _LienzoGrafoState extends State<LienzoGrafo> with SingleTickerProviderStat
       'Comuna' || 'Localidad' || 'Categoria' => 13.0,
       _ => 11.0,
     };
+    final total = _total[clave];
+    if (total != null) return base + math.min(30, math.sqrt(total) * 4.5);
     return base + math.min(16, math.sqrt((_grado[clave] ?? 0).toDouble()) * 3.2);
   }
 
@@ -417,6 +430,7 @@ class _PintorRed extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final tipos = {for (final n in nodos) n.clave: n.tipo};
+    final porClave = {for (final n in nodos) n.clave: n};
 
     // Relaciones: primero las atenuadas, encima las resaltadas.
     for (final atenuadas in [true, false]) {
@@ -426,7 +440,9 @@ class _PintorRed extends CustomPainter {
         final activa = _visible(a.origen) && _visible(a.destino);
         if (activa == atenuadas) continue;
         final peso = ((a.datos['peso'] as num?) ?? 1).toDouble();
-        final color = colorRelacionRed(a);
+        // "Ocurren": la línea va del color de la categoría (robo, accidente…).
+        final destino = porClave[a.destino];
+        final color = a.tipo == 'OCURREN' && destino != null ? estiloNodoRed(destino).$2 : colorRelacionRed(a);
         final grosor = (1.3 + math.sqrt(peso) * 1.6).clamp(1.3, 7.0) / math.max(escala, 0.6);
         final pincel = Paint()
           ..color = color.withValues(alpha: activa ? 0.75 : 0.08)

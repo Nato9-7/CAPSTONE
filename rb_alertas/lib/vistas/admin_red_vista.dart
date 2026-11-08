@@ -2,8 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:rb_alertas/servicios/admin_servicio.dart';
+import 'package:rb_alertas/servicios/reporte_servicio.dart';
 import 'package:rb_alertas/servicios/sesion.dart';
 import 'package:rb_alertas/tema/rb_tema.dart';
+import 'package:rb_alertas/widgets/categoria_visual.dart';
 import 'package:rb_alertas/widgets/lienzo_grafo.dart';
 import 'package:rb_alertas/widgets/rb_componentes.dart';
 
@@ -78,6 +80,10 @@ class _SeccionRedState extends State<SeccionRed> with AutomaticKeepAliveClientMi
   final Set<String> _capas = {'lugares', 'incidentes', 'sospechosos', 'grupos'};
   bool _comunidades = false;
 
+  /// "Dónde ocurre más": código de la categoría elegida (null = todas).
+  String? _categoria;
+  List<CategoriaIncidente> _categoriasDisponibles = [];
+
   /// Pantalla angosta (celular): filtros en una hoja aparte y leyenda plegada.
   bool _compacto = false;
   bool _verLeyenda = false;
@@ -91,6 +97,7 @@ class _SeccionRedState extends State<SeccionRed> with AutomaticKeepAliveClientMi
   List<GrupoSospechoso>? _sospechosos;
   List<VecinoReputacion>? _reputacion;
   List<IncidenteGrafo>? _incidentes;
+  List<NodoGrafo>? _zonas;
   bool _reputacionAlta = false;
 
   bool _cargando = false;
@@ -108,6 +115,15 @@ class _SeccionRedState extends State<SeccionRed> with AutomaticKeepAliveClientMi
   void initState() {
     super.initState();
     _cargarTodo();
+    _cargarCategorias();
+  }
+
+  /// Para el filtro de "Dónde ocurre más". Si falla, solo queda la opción "Todas".
+  Future<void> _cargarCategorias() async {
+    try {
+      final categorias = await ReporteServicio().obtenerCategorias();
+      if (mounted) setState(() => _categoriasDisponibles = categorias);
+    } catch (_) {}
   }
 
   // ---------------------------------------------------------------------------
@@ -141,6 +157,7 @@ class _SeccionRedState extends State<SeccionRed> with AutomaticKeepAliveClientMi
       modo: _modo,
       dias: _periodos[_periodo].$1,
       capas: _capas,
+      categoria: _modo == 'zonas' ? _categoria : null,
     );
     if (!mounted) return;
     setState(() {
@@ -168,10 +185,26 @@ class _SeccionRedState extends State<SeccionRed> with AutomaticKeepAliveClientMi
       case 1:
         final v = await _servicio.reputacion(_token, orden: _reputacionAlta ? 'alta' : 'baja');
         if (mounted) setState(() => _reputacion = v);
-      default:
+      case 2:
         final i = await _servicio.incidentes(_token);
         if (mounted) setState(() => _incidentes = i);
+      default:
+        final z = await _servicio.zonasCalientes(_token, categoria: _categoria, dias: _periodos[_periodo].$1);
+        if (mounted) setState(() => _zonas = z);
     }
+  }
+
+  /// Al cambiar la categoría o el período, la red y el ranking de zonas se rehacen juntos.
+  Future<void> _recargarZonas() => _ejecutar(() async {
+    await Future.wait([
+      if (_modo == 'zonas') _cargarRedSinAviso(),
+      if (_seccion == 3) _cargarSeccion(),
+    ]);
+  });
+
+  void _elegirCategoria(String? codigo) {
+    setState(() => _categoria = codigo);
+    _recargarZonas();
   }
 
   /// Suma a la red lo que no estaba (sin repetir nodos ni relaciones).
@@ -670,8 +703,25 @@ class _SeccionRedState extends State<SeccionRed> with AutomaticKeepAliveClientMi
                   _cargarRed();
                 },
               ),
+              ChipFiltro(
+                etiqueta: 'Dónde ocurre más',
+                icono: Icon(
+                  Icons.local_fire_department_rounded,
+                  size: 18,
+                  color: _modo == 'zonas' ? Colors.white : RBColores.rojo,
+                ),
+                activo: _modo == 'zonas',
+                onTap: () {
+                  setState(() => _modo = 'zonas');
+                  _cargarRed();
+                },
+              ),
             ],
           ),
+          if (_modo == 'zonas') ...[
+            const SizedBox(height: 8),
+            _filtroCategorias(alElegir: _elegirCategoria),
+          ],
           const SizedBox(height: 4),
           _lineaTiempo(),
         ],
@@ -681,7 +731,7 @@ class _SeccionRedState extends State<SeccionRed> with AutomaticKeepAliveClientMi
 
   /// Celular: vista, línea de tiempo y capas en una hoja que sube desde abajo.
   Future<void> _abrirFiltros() async {
-    final antes = (_modo, _periodo, {..._capas});
+    final antes = (_modo, _periodo, {..._capas}, _categoria);
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
@@ -712,8 +762,19 @@ class _SeccionRedState extends State<SeccionRed> with AutomaticKeepAliveClientMi
                       activo: _modo == 'completa',
                       onTap: () => cambiar(() => _modo = 'completa'),
                     ),
+                    ChipFiltro(
+                      etiqueta: 'Dónde ocurre más',
+                      activo: _modo == 'zonas',
+                      onTap: () => cambiar(() => _modo = 'zonas'),
+                    ),
                   ],
                 ),
+                if (_modo == 'zonas') ...[
+                  const SizedBox(height: 16),
+                  const Text('Categoría', style: TextStyle(fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 8),
+                  _filtroCategorias(alElegir: (codigo) => cambiar(() => _categoria = codigo)),
+                ],
                 const SizedBox(height: 16),
                 const Text('Línea de tiempo', style: TextStyle(fontWeight: FontWeight.w800)),
                 Slider(
@@ -749,10 +810,11 @@ class _SeccionRedState extends State<SeccionRed> with AutomaticKeepAliveClientMi
         },
       ),
     );
-    final despues = (_modo, _periodo, _capas);
+    final despues = (_modo, _periodo, _capas, _categoria);
     if (antes.$1 != despues.$1 || antes.$2 != despues.$2 || !antes.$3.containsAll(despues.$3) ||
-        !despues.$3.containsAll(antes.$3)) {
+        !despues.$3.containsAll(antes.$3) || antes.$4 != despues.$4) {
       _cargarRed();
+      if (_seccion == 3 && (antes.$2 != despues.$2 || antes.$4 != despues.$4)) _ejecutar(_cargarSeccion);
     }
   }
 
@@ -771,7 +833,10 @@ class _SeccionRedState extends State<SeccionRed> with AutomaticKeepAliveClientMi
             label: _periodos[_periodo].$2,
             activeColor: RBColores.azul,
             onChanged: (v) => setState(() => _periodo = v.round()),
-            onChangeEnd: (_) => _cargarRed(),
+            onChangeEnd: (_) {
+              _cargarRed();
+              if (_seccion == 3) _ejecutar(_cargarSeccion);
+            },
           ),
         ),
         SizedBox(
@@ -912,7 +977,16 @@ class _SeccionRedState extends State<SeccionRed> with AutomaticKeepAliveClientMi
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
-        children: _comunidades
+        children: _modo == 'zonas' && !_comunidades
+            ? [
+                punto(colorAmbarRed, 'Lugar con pocos hechos'),
+                punto(RBColores.rojo, 'Lugar con más hechos'),
+                const Text('Más grande = más hechos', style: TextStyle(fontSize: 11, color: RBColores.texto2)),
+                const SizedBox(height: 4),
+                const Text('Línea del color de la categoría;', style: TextStyle(fontSize: 11, color: RBColores.texto2)),
+                const Text('más gruesa = más hechos ahí', style: TextStyle(fontSize: 11, color: RBColores.texto2)),
+              ]
+            : _comunidades
             ? [
                 const Text('Cada color es una comunidad', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700)),
                 const Text('(vecinos conectados entre sí)', style: TextStyle(fontSize: 11, color: RBColores.texto2)),
@@ -1156,6 +1230,40 @@ class _SeccionRedState extends State<SeccionRed> with AutomaticKeepAliveClientMi
           ),
           const SizedBox(height: 8),
         ];
+      case 'Comuna':
+      case 'Localidad':
+      case 'Categoria':
+        if (d['total'] is! num) return const [];
+        final porCategoria = [for (final c in (d['por_categoria'] as List? ?? [])) (c as Map).cast<String, dynamic>()];
+        final total = entero('total');
+        final reportes = entero('reportes');
+        return [
+          Text(
+            '$total ${total == 1 ? 'hecho' : 'hechos'}'
+            '${_categoria != null && n.tipo != 'Categoria' ? ' de esta categoría' : ''}'
+            ' · ${_periodos[_periodo].$2.toLowerCase()}',
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: RBColores.tinta),
+          ),
+          // Varios vecinos pueden reportar el mismo hecho: cuenta una vez.
+          if (reportes > total)
+            Text(
+              'Reportados $reportes veces por los vecinos',
+              style: const TextStyle(color: RBColores.texto2),
+            ),
+          if (d['comuna'] != null)
+            Text('Comuna de ${d['comuna']}', style: const TextStyle(color: RBColores.texto2)),
+          if (porCategoria.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            for (final c in porCategoria) _filaCategoria(c, total),
+          ],
+          const SizedBox(height: 4),
+          const Text(
+            'Los reportes del mismo hecho cuentan una vez y los descartados no cuentan. '
+            'Usa «Ver solo sus conexiones» para ver los reportes.',
+            style: TextStyle(fontSize: 12.5, color: RBColores.texto2),
+          ),
+          const SizedBox(height: 8),
+        ];
       case 'ZonaSegura':
         return [if (d['radio'] != null) Text('Radio de ${d['radio']} m'), const SizedBox(height: 8)];
       case 'Grupo':
@@ -1257,6 +1365,7 @@ class _SeccionRedState extends State<SeccionRed> with AutomaticKeepAliveClientMi
     ('Sospechosos', Icons.gpp_maybe_rounded),
     ('Reputación', Icons.verified_user_rounded),
     ('Incidentes', Icons.layers_rounded),
+    ('Zonas', Icons.local_fire_department_rounded),
   ];
 
   static const _explicaciones = [
@@ -1266,11 +1375,14 @@ class _SeccionRedState extends State<SeccionRed> with AutomaticKeepAliveClientMi
         'validados; baja con desmentidos y reportes descartados.',
     'Reportes del mismo hecho (misma categoría, a menos de 300 m y 3 horas) que la app '
         'muestra como un solo incidente.',
+    'Los lugares con más hechos en el período de la línea de tiempo (si varios vecinos '
+        'reportan el mismo robo, cuenta una vez). Elige una categoría para ver, por '
+        'ejemplo, dónde hay más robos.',
   ];
 
   Widget _panelHallazgos() {
     final r = _resumen;
-    final contadores = [r?.sospechosos, r?.bajaReputacion, r?.incidentesAbiertos];
+    final contadores = [r?.sospechosos, r?.bajaReputacion, r?.incidentesAbiertos, null];
     return Container(
       color: Colors.white,
       child: RefreshIndicator(
@@ -1297,7 +1409,8 @@ class _SeccionRedState extends State<SeccionRed> with AutomaticKeepAliveClientMi
             ...switch (_seccion) {
               0 => _listaSospechosos(),
               1 => _listaReputacion(),
-              _ => _listaIncidentes(),
+              2 => _listaIncidentes(),
+              _ => _listaZonas(),
             },
           ],
         ),
@@ -1613,6 +1726,169 @@ class _SeccionRedState extends State<SeccionRed> with AutomaticKeepAliveClientMi
             ],
           ),
         ),
+    ];
+  }
+
+  // -- Dónde ocurre más ---------------------------------------------------------
+
+  /// Chips "Todas" + una por categoría. Se usa en la barra, en la hoja de
+  /// filtros del celular y arriba del ranking de zonas.
+  Widget _filtroCategorias({required ValueChanged<String?> alElegir}) {
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: [
+        ChipFiltro(etiqueta: 'Todas', activo: _categoria == null, onTap: () => alElegir(null)),
+        for (final c in _categoriasDisponibles)
+          ChipFiltro(
+            etiqueta: etiquetaCortaCategoria(c.codigo, c.nombre),
+            icono: Icon(
+              iconoCategoria(c.codigo),
+              size: 16,
+              color: _categoria == c.codigo ? Colors.white : colorCategoria(c.codigo, colorHex: c.colorHex),
+            ),
+            activo: _categoria == c.codigo,
+            onTap: () => alElegir(c.codigo),
+          ),
+      ],
+    );
+  }
+
+  /// Una categoría dentro de un lugar: nombre, cuántos y una barra proporcional.
+  Widget _filaCategoria(Map<String, dynamic> c, int totalLugar) {
+    final codigo = (c['codigo'] ?? '').toString();
+    final total = (c['total'] as num?)?.toInt() ?? 0;
+    final color = colorCategoria(codigo, colorHex: c['color']?.toString());
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(iconoCategoria(codigo), size: 16, color: color),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  (c['nombre'] ?? codigo).toString(),
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                ),
+              ),
+              Text('$total', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800)),
+            ],
+          ),
+          const SizedBox(height: 4),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: totalLugar == 0 ? 0 : total / totalLugar,
+              minHeight: 6,
+              color: color,
+              backgroundColor: RBColores.fondo,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _listaZonas() {
+    final lista = _zonas;
+    return [
+      _filtroCategorias(alElegir: _elegirCategoria),
+      const SizedBox(height: 12),
+      if (lista == null)
+        _cargandoLista
+      else if (lista.isEmpty)
+        _vacio('No hay reportes con lugar en este período.\nPrueba con otra categoría o un período más largo.')
+      else
+        for (final (posicion, z) in lista.indexed)
+          TarjetaRB(
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+            colorBorde: posicion == 0 ? RBColores.rojo : null,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    SizedBox(
+                      width: 26,
+                      child: Text(
+                        '${posicion + 1}',
+                        style: const TextStyle(
+                          fontFamily: RBFuentes.titulos,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                          color: RBColores.texto2,
+                        ),
+                      ),
+                    ),
+                    _iconoNodo(z, 34),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(z.etiqueta, style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w700)),
+                          if (z.datos['comuna'] != null)
+                            Text('${z.datos['comuna']}', style: const TextStyle(fontSize: 12.5, color: RBColores.texto2)),
+                        ],
+                      ),
+                    ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          '${(z.datos['total'] as num?)?.toInt() ?? 0}',
+                          style: const TextStyle(
+                            fontFamily: RBFuentes.titulos,
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                            color: RBColores.rojo,
+                          ),
+                        ),
+                        Text(
+                          (z.datos['total'] as num?)?.toInt() == 1 ? 'hecho' : 'hechos',
+                          style: const TextStyle(fontSize: 11.5, color: RBColores.texto2),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                // Las categorías más frecuentes del lugar.
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 4,
+                  children: [
+                    for (final c in (z.datos['por_categoria'] as List? ?? []).take(3))
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            iconoCategoria((c as Map)['codigo'].toString()),
+                            size: 15,
+                            color: colorCategoria(c['codigo'].toString(), colorHex: c['color']?.toString()),
+                          ),
+                          const SizedBox(width: 3),
+                          Text(
+                            '${etiquetaCortaCategoria(c['codigo'].toString(), (c['nombre'] ?? '').toString())} ${c['total']}',
+                            style: const TextStyle(fontSize: 12.5, color: RBColores.tinta),
+                          ),
+                        ],
+                      ),
+                  ],
+                ),
+                TextButton.icon(
+                  style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 4)),
+                  onPressed: () => _mostrarEnRed(z, aviso: 'Resaltado: ${z.etiqueta} y sus reportes'),
+                  icon: const Icon(Icons.hub_outlined, size: 18),
+                  label: const Text('Ver sus reportes en la red'),
+                ),
+              ],
+            ),
+          ),
     ];
   }
 }

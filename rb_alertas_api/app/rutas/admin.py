@@ -891,11 +891,102 @@ def _comunidades(red: dict) -> None:
         n["comunidad"] = orden.get(raiz(n["clave"]))
 
 
+# -- Dónde ocurre más ----------------------------------------------------------
+# Lugares (localidad o, si no tiene, comuna) con cuántos reportes de cada categoría
+# tuvieron. Los descartados no cuentan: eran falsos o no correspondían.
+
+CODIGO_CATEGORIA = r"^[A-Z_]{1,40}$"
+
+
+def _desde(dias: int | None) -> str | None:
+    if not dias:
+        return None
+    from datetime import datetime, timedelta
+
+    return (datetime.now() - timedelta(days=dias)).isoformat()
+
+
+def _zonas_calientes(categoria: str | None, desde: str | None) -> list[dict]:
+    """Lugares con su total de hechos y el desglose por categoría, del que tiene más al que menos.
+
+    Cuenta hechos, no reportes: si cinco vecinos reportaron el mismo robo, el
+    grafo los tiene bajo un mismo Incidente y suma uno (igual que las zonas de
+    riesgo del mapa). Un reporte sin Incidente es un hecho por sí solo.
+    `reportes` guarda el total de reportes para mostrarlo como referencia.
+    """
+    filas = grafo.consultar_grafo(
+        """
+        MATCH (r:Reporte)-[:OCURRIO_EN]->(lugar), (r)-[:ES_DE]->(cat:Categoria)
+        WHERE r.estado <> 'DESCARTADO'
+          AND ($desde IS NULL OR r.fecha_creacion >= $desde)
+          AND ($categoria IS NULL OR cat.codigo = $categoria)
+        OPTIONAL MATCH (inc:Incidente)-[:AGRUPA]->(r)
+        WITH lugar, cat, count(DISTINCT coalesce(inc.id, r.id)) AS total, count(r) AS reportes
+        OPTIONAL MATCH (lugar)-[:PERTENECE_A]->(comuna:Comuna)
+        RETURN labels(lugar)[0] AS tipo, properties(lugar) AS lugar, comuna.nombre AS comuna,
+               properties(cat) AS categoria, total, reportes
+        """,
+        categoria=categoria,
+        desde=desde,
+    )
+    lugares: dict[str, dict] = {}
+    for f in filas:
+        clave = f"{f['tipo']}:{f['lugar']['id']}"
+        lugar = lugares.setdefault(clave, {"tipo": f["tipo"], "datos": f["lugar"], "comuna": f["comuna"], "total": 0, "reportes": 0, "por_categoria": []})
+        lugar["total"] += f["total"]
+        lugar["reportes"] += f["reportes"]
+        lugar["por_categoria"].append({
+            "id": f["categoria"]["id"],
+            "codigo": f["categoria"].get("codigo"),
+            "nombre": f["categoria"].get("nombre"),
+            "color": f["categoria"].get("color"),
+            "total": f["total"],
+            "reportes": f["reportes"],
+        })
+    lista = sorted(lugares.values(), key=lambda l: (-l["total"], str(l["datos"].get("nombre"))))
+    maximo = lista[0]["total"] if lista else 1
+    for lugar in lista:
+        lugar["por_categoria"].sort(key=lambda c: -c["total"])
+        # 0 a 1: qué tan "caliente" es el lugar comparado con el que tiene más.
+        lugar["intensidad"] = round(lugar["total"] / maximo, 3)
+    return lista
+
+
+def _nodo_lugar(lugar: dict) -> dict:
+    datos = {
+        **lugar["datos"],
+        "total": lugar["total"],
+        "reportes": lugar["reportes"],
+        "intensidad": lugar["intensidad"],
+        "comuna": lugar["comuna"],
+        "por_categoria": lugar["por_categoria"],
+    }
+    return _nodo(lugar["tipo"], datos)
+
+
+@router.get("/grafo/zonas")
+def zonas_calientes(
+    categoria: str | None = Query(None, pattern=CODIGO_CATEGORIA),
+    dias: int | None = Query(None, ge=1, le=3650),
+    limite: int = Query(20, ge=1, le=200),
+):
+    """Ranking de los lugares con más reportes (de una categoría, p. ej. ROBO, o de todas)."""
+
+    def consultar_zonas():
+        return [
+            {**_nodo_lugar(l), "total": l["total"], "reportes": l["reportes"], "comuna": l["comuna"], "por_categoria": l["por_categoria"]}
+            for l in _zonas_calientes(categoria, _desde(dias))[:limite]
+        ]
+
+    return _grafo_o_503(consultar_zonas)
+
+
 @router.get("/grafo/red")
 def red_completa(
-    modo: Literal["vecinos", "completa"] = "vecinos",
+    modo: Literal["vecinos", "completa", "zonas"] = "vecinos",
     dias: int | None = Query(None, ge=1, le=3650),
     capas: str = Query("lugares,incidentes,sospechosos,grupos", max_length=100),
+    categoria: str | None = Query(None, pattern=CODIGO_CATEGORIA),
     limite: int = Query(300, ge=10, le=1000),
 ):
     """La red para el explorador del panel.
@@ -904,16 +995,30 @@ def red_completa(
       peso de cada unión es cuántas veces lo hizo.
     - modo=completa: vecinos y reportes, más las capas pedidas (lugares, categorias,
       zonas, incidentes, sospechosos, grupos).
+    - modo=zonas: dónde ocurre más. Lugares unidos a las categorías de lo que pasó
+      ahí; el peso es cuántos hechos hubo (no reportes). `categoria` (p. ej. ROBO) deja solo esa.
     `dias` limita a la actividad de los últimos N días (sin él, toda la historia).
     """
     pedidas = {c.strip() for c in capas.split(",") if c.strip()}
-    desde = None
-    if dias:
-        from datetime import datetime, timedelta
-
-        desde = (datetime.now() - timedelta(days=dias)).isoformat()
+    desde = _desde(dias)
 
     def consultar_red():
+        if modo == "zonas":
+            lugares = _zonas_calientes(categoria, desde)[:limite]
+            nodos = [_nodo_lugar(l) for l in lugares]
+            categorias: dict[str, dict] = {}
+            aristas = []
+            for lugar, nodo in zip(lugares, nodos):
+                for c in lugar["por_categoria"]:
+                    clave = f"Categoria:{c['id']}"
+                    cat = categorias.setdefault(clave, _nodo("Categoria", {
+                        "id": c["id"], "codigo": c["codigo"], "nombre": c["nombre"], "color": c["color"], "total": 0,
+                    }))
+                    cat["datos"]["total"] += c["total"]
+                    aristas.append({"origen": nodo["clave"], "destino": clave, "tipo": "OCURREN", "datos": {"peso": c["total"]}})
+            red = {"nodos": nodos + list(categorias.values()), "aristas": aristas}
+            _comunidades(red)
+            return {**red, "sincronizacion": grafo.ultima_sincronizacion}
         if modo == "vecinos":
             filas = grafo.consultar_grafo(
                 """
