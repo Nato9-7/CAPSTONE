@@ -1,4 +1,4 @@
-"""Copia de los datos de RB Alertas en Neo4j, para el panel de administración.
+"""Copia periódica de MySQL a Neo4j para el panel de administración.
 
 MySQL sigue siendo la base principal: aquí solo se arma, cada cierto tiempo, un grafo
 con quién reportó qué, quién votó qué, dónde pasó y a qué zonas seguras avisó. Sirve
@@ -6,8 +6,7 @@ para ver patrones que en una tabla no se notan (cuentas que se confirman entre s
 quien acumula reportes descartados, lugares con muchos incidentes).
 
 En el grafo no se guardan nombres, correos, RUT ni teléfonos: cada usuario aparece con
-un seudónimo fijo ("Vecino 3fa2c1"). Si NEO4J_URI no está definido, la API funciona
-igual y solo el grafo responde que no está disponible.
+un seudónimo fijo ("Vecino 3fa2c1").
 """
 
 import hashlib
@@ -16,54 +15,28 @@ import os
 import threading
 from datetime import datetime
 
-from app import analisis_grafo, incidentes
+import mysql.connector
+
 from app.db import consultar, transaccion
+from app.seguridad import es_correo_admin
+from app.servicios import analisis_grafo, incidentes
+from app.servicios.grafo.conexion import BASE_DE_DATOS, GrafoNoDisponible, grafo_configurado, obtener_driver
 
 log = logging.getLogger("rb_alertas.grafo")
 
-NEO4J_URI = os.getenv("NEO4J_URI", "")
-NEO4J_USUARIO = os.getenv("NEO4J_USER", "neo4j")
-NEO4J_CLAVE = os.getenv("NEO4J_PASSWORD", "")
-MINUTOS_ENTRE_SINCRONIZACIONES = int(os.getenv("GRAFO_MINUTOS_SINCRONIZACION", "10"))
 
-_driver = None
+def _minutos_entre_sincronizaciones() -> int:
+    try:
+        return max(1, int(os.getenv("GRAFO_MINUTOS_SINCRONIZACION", "10")))
+    except ValueError:
+        log.warning("GRAFO_MINUTOS_SINCRONIZACION no es un entero válido; se usan 10 minutos")
+        return 10
+
+
+MINUTOS_ENTRE_SINCRONIZACIONES = _minutos_entre_sincronizaciones()
+
 _bloqueo = threading.Lock()
 ultima_sincronizacion: dict = {"fecha": None, "error": None, "totales": None}
-
-
-class GrafoNoDisponible(Exception):
-    pass
-
-
-def grafo_configurado() -> bool:
-    return bool(NEO4J_URI and NEO4J_CLAVE)
-
-
-def _conexion():
-    global _driver
-    if not grafo_configurado():
-        raise GrafoNoDisponible("El grafo no está configurado en el servidor (faltan las variables NEO4J_*)")
-    if _driver is None:
-        from neo4j import GraphDatabase
-
-        # Sin avisos informativos (p. ej. "ese tipo de relación aún no existe" cuando no hay datos).
-        _driver = GraphDatabase.driver(
-            NEO4J_URI, auth=(NEO4J_USUARIO, NEO4J_CLAVE), notifications_min_severity="OFF"
-        )
-    return _driver
-
-
-def consultar_grafo(cypher: str, **parametros) -> list[dict]:
-    from neo4j.exceptions import Neo4jError, ServiceUnavailable
-
-    try:
-        registros, _, _ = _conexion().execute_query(cypher, parametros, database_="neo4j")
-    except ServiceUnavailable as error:
-        raise GrafoNoDisponible("No se pudo conectar con Neo4j") from error
-    except Neo4jError as error:
-        log.error("Consulta al grafo falló: %s", error)
-        raise GrafoNoDisponible("La consulta al grafo falló") from error
-    return [registro.data() for registro in registros]
 
 
 def seudonimo(id_usuario: int) -> str:
@@ -71,16 +44,24 @@ def seudonimo(id_usuario: int) -> str:
     return "Vecino " + hashlib.sha256(f"vecino:{id_usuario}".encode()).hexdigest()[:6]
 
 
-# -----------------------------------------------------------------------------
-# Sincronización MySQL -> Neo4j
+def _texto_fecha(valor) -> str | None:
+    return valor.isoformat() if isinstance(valor, datetime) else valor
 
-def _filas_mysql() -> dict[str, list[dict]]:
-    from app.seguridad import CORREOS_ADMIN
 
+def _opcional(sql: str) -> list[dict]:
+    """Tablas que pueden no existir en una base antigua: el grafo se arma igual sin ellas."""
+    try:
+        return consultar(sql)
+    except mysql.connector.Error as error:
+        log.warning("Se omite una tabla al armar el grafo: %s", error.msg)
+        return []
+
+
+def _usuarios_y_reportes() -> tuple[list[dict], list[dict], list[dict]]:
     usuarios = consultar("SELECT id_usuario, email, estado, email_verificado, fecha_creacion FROM usuario")
     for u in usuarios:
         u["alias"] = seudonimo(u["id_usuario"])
-        u["es_admin"] = u.pop("email").strip().lower() in CORREOS_ADMIN
+        u["es_admin"] = es_correo_admin(u.pop("email"))
         u["email_verificado"] = bool(u["email_verificado"])
         u["fecha_creacion"] = _texto_fecha(u["fecha_creacion"])
 
@@ -96,9 +77,28 @@ def _filas_mysql() -> dict[str, list[dict]]:
         """
     )
     votos = consultar("SELECT id_reporte, id_usuario, tipo_voto, fecha_voto FROM reporte_voto")
+    return usuarios, reportes, votos
 
-    # Análisis de la red (ver app/analisis_grafo.py) y reportes del mismo hecho
-    # (ver app/incidentes.py). Se calcula con las fechas todavía como datetime.
+
+def _incidentes_para_grafo(reportes: list[dict]) -> list[dict]:
+    return [
+        {
+            "id": g[0]["id_reporte"],
+            "ids": [r["id_reporte"] for r in g],
+            "total": len(g),
+            "inicio": _texto_fecha(g[0]["fecha_creacion"]),
+            "fin": _texto_fecha(g[-1]["fecha_creacion"]),
+        }
+        for g in incidentes.agrupar(reportes)
+        if len(g) > 1
+    ]
+
+
+def _filas_mysql() -> dict[str, list[dict]]:
+    usuarios, reportes, votos = _usuarios_y_reportes()
+
+    # Análisis de la red y reportes del mismo hecho: se calculan con las fechas
+    # todavía como datetime.
     coordinaciones = analisis_grafo.detectar_coordinacion(reportes, votos)
     sospechosos = {m for g in coordinaciones for m in g["miembros"]}
     reputacion = analisis_grafo.calcular_reputacion(
@@ -106,7 +106,7 @@ def _filas_mysql() -> dict[str, list[dict]]:
     )
     for u in usuarios:
         u.update(reputacion.get(u["id_usuario"], {}))
-    grupos_incidentes = [g for g in incidentes.agrupar(reportes) if len(g) > 1]
+    lista_incidentes = _incidentes_para_grafo(reportes)
 
     for r in reportes:
         r["fecha_creacion"] = _texto_fecha(r["fecha_creacion"])
@@ -116,16 +116,7 @@ def _filas_mysql() -> dict[str, list[dict]]:
         "usuarios": usuarios,
         "reportes": reportes,
         "coordinaciones": coordinaciones,
-        "incidentes": [
-            {
-                "id": g[0]["id_reporte"],
-                "ids": [r["id_reporte"] for r in g],
-                "total": len(g),
-                "inicio": _texto_fecha(g[0]["fecha_creacion"]),
-                "fin": _texto_fecha(g[-1]["fecha_creacion"]),
-            }
-            for g in grupos_incidentes
-        ],
+        "incidentes": lista_incidentes,
         "categorias": consultar("SELECT id_categoria, nombre, codigo, color_hex FROM categoria_incidente"),
         "comunas": consultar("SELECT id_comuna, nombre FROM comuna WHERE id_comuna IN (SELECT DISTINCT id_comuna FROM reporte)"),
         "localidades": consultar(
@@ -134,7 +125,6 @@ def _filas_mysql() -> dict[str, list[dict]]:
         ),
         "votos": [{**v, "fecha_voto": _texto_fecha(v["fecha_voto"])} for v in votos],
         "zonas": _opcional("SELECT id_zona_segura, id_usuario, nombre, radio_metros, activa FROM zona_segura"),
-        # Grupos de vecinos: quién los integra y qué reportes se compartieron en ellos.
         "grupos": _opcional("SELECT id_grupo, nombre, activo, radio_metros FROM grupo"),
         "miembros_grupo": _opcional("SELECT id_grupo, id_usuario, rol FROM grupo_miembro"),
         "reportes_grupo": _opcional("SELECT id_grupo, id_reporte FROM grupo_reporte"),
@@ -143,21 +133,6 @@ def _filas_mysql() -> dict[str, list[dict]]:
             "WHERE id_zona_segura IS NOT NULL AND id_reporte IS NOT NULL"
         ),
     }
-
-
-def _opcional(sql: str) -> list[dict]:
-    """Tablas que pueden no existir en una base antigua: el grafo se arma igual sin ellas."""
-    import mysql.connector
-
-    try:
-        return consultar(sql)
-    except mysql.connector.Error as error:
-        log.warning("Se omite una tabla al armar el grafo: %s", error.msg)
-        return []
-
-
-def _texto_fecha(valor) -> str | None:
-    return valor.isoformat() if isinstance(valor, datetime) else valor
 
 
 # Se borra y se vuelve a armar todo en una sola transacción: con el volumen de
@@ -232,15 +207,12 @@ _CYPHER_RECONSTRUIR = [
 ]
 
 _CYPHER_INDICES = [
-    "CREATE INDEX usuario_id IF NOT EXISTS FOR (n:Usuario) ON (n.id)",
-    "CREATE INDEX reporte_id IF NOT EXISTS FOR (n:Reporte) ON (n.id)",
-    "CREATE INDEX categoria_id IF NOT EXISTS FOR (n:Categoria) ON (n.id)",
-    "CREATE INDEX comuna_id IF NOT EXISTS FOR (n:Comuna) ON (n.id)",
-    "CREATE INDEX localidad_id IF NOT EXISTS FOR (n:Localidad) ON (n.id)",
-    "CREATE INDEX zona_id IF NOT EXISTS FOR (n:ZonaSegura) ON (n.id)",
-    "CREATE INDEX coordinacion_id IF NOT EXISTS FOR (n:Coordinacion) ON (n.id)",
-    "CREATE INDEX incidente_id IF NOT EXISTS FOR (n:Incidente) ON (n.id)",
-    "CREATE INDEX grupo_id IF NOT EXISTS FOR (n:Grupo) ON (n.id)",
+    f"CREATE INDEX {nombre}_id IF NOT EXISTS FOR (n:{etiqueta}) ON (n.id)"
+    for nombre, etiqueta in (
+        ("usuario", "Usuario"), ("reporte", "Reporte"), ("categoria", "Categoria"), ("comuna", "Comuna"),
+        ("localidad", "Localidad"), ("zona", "ZonaSegura"), ("coordinacion", "Coordinacion"),
+        ("incidente", "Incidente"), ("grupo", "Grupo"),
+    )
 ]
 
 
@@ -249,8 +221,6 @@ def _guardar_reputacion(usuarios: list[dict]) -> None:
 
     Si la columna no existe o falla, el grafo se arma igual (solo se registra el error).
     """
-    import mysql.connector
-
     try:
         with transaccion() as cursor:
             cursor.executemany(
@@ -262,24 +232,28 @@ def _guardar_reputacion(usuarios: list[dict]) -> None:
         log.warning("No se pudo guardar la reputación en MySQL: %s", error.msg)
 
 
-def sincronizar() -> dict:
-    """Rehace el grafo con los datos actuales de MySQL. Devuelve cuántos nodos de cada tipo quedaron."""
+def _reconstruir_en_neo4j(datos: dict) -> None:
     from neo4j.exceptions import Neo4jError, ServiceUnavailable
 
+    driver = obtener_driver()
+    try:
+        for indice in _CYPHER_INDICES:
+            driver.execute_query(indice, database_=BASE_DE_DATOS)
+        with driver.session(database=BASE_DE_DATOS) as sesion:
+            sesion.execute_write(
+                lambda tx: [tx.run(cypher, datos).consume() for cypher in _CYPHER_RECONSTRUIR]
+            )
+    except (ServiceUnavailable, Neo4jError) as error:
+        raise GrafoNoDisponible(f"No se pudo actualizar el grafo en Neo4j: {error}") from error
+
+
+def sincronizar() -> dict:
+    """Rehace el grafo con los datos actuales de MySQL. Devuelve cuántos nodos de cada tipo quedaron."""
     with _bloqueo:
         try:
             datos = _filas_mysql()
             _guardar_reputacion(datos["usuarios"])
-            driver = _conexion()
-            try:
-                for indice in _CYPHER_INDICES:
-                    driver.execute_query(indice, database_="neo4j")
-                with driver.session(database="neo4j") as sesion:
-                    sesion.execute_write(
-                        lambda tx: [tx.run(cypher, datos).consume() for cypher in _CYPHER_RECONSTRUIR]
-                    )
-            except (ServiceUnavailable, Neo4jError) as error:
-                raise GrafoNoDisponible(f"No se pudo actualizar el grafo en Neo4j: {error}") from error
+            _reconstruir_en_neo4j(datos)
             totales = {clave: len(filas) for clave, filas in datos.items()}
             ultima_sincronizacion.update(fecha=datetime.now().isoformat(timespec="seconds"), error=None, totales=totales)
             log.info("Grafo sincronizado: %s", totales)
@@ -287,6 +261,17 @@ def sincronizar() -> dict:
         except Exception as error:
             ultima_sincronizacion["error"] = str(error)
             raise
+
+
+def sincronizar_sin_fallar() -> None:
+    """Rehace el grafo tras una moderación. El cambio en MySQL ya quedó hecho:
+    si Neo4j no está disponible solo se registra el aviso."""
+    if not grafo_configurado():
+        return
+    try:
+        sincronizar()
+    except Exception as error:  # noqa: BLE001
+        log.warning("No se pudo rehacer el grafo tras moderar: %s", error)
 
 
 def iniciar_sincronizacion_periodica() -> None:

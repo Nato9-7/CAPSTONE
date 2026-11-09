@@ -1,6 +1,17 @@
+"""Notificaciones push con Firebase Cloud Messaging.
+
+notificacion.estado_envio: ENVIADA si Firebase aceptó el aviso en al menos un
+teléfono del usuario; FALLIDA si lo rechazó en todos o el usuario no tiene
+teléfono registrado. Queda PENDIENTE solo si nunca se intentó (push sin
+configurar). ENTREGADA no se usa: Firebase no confirma la llegada al teléfono.
+
+Sin FIREBASE_CREDENCIALES los avisos solo se muestran en los logs ("push simulado").
+"""
+
 import logging
 import os
 
+from app.comun.sql import marcas
 from app.db import consultar, ejecutar
 
 log = logging.getLogger("rb_alertas.push")
@@ -12,11 +23,6 @@ CANAL_COMENTARIOS = "comentarios"
 
 # FCM acepta hasta 500 mensajes por llamada a send_each.
 MENSAJES_POR_LOTE = 500
-
-# notificacion.estado_envio: ENVIADA si Firebase aceptó el aviso en al menos un
-# teléfono del usuario; FALLIDA si lo rechazó en todos o el usuario no tiene
-# teléfono registrado. Queda PENDIENTE solo si nunca se intentó (push sin
-# configurar). ENTREGADA no se usa: Firebase no confirma la llegada al teléfono.
 
 _app_firebase = None
 
@@ -51,6 +57,60 @@ def _distancia_legible(metros) -> str:
     return f"a {metros} m"
 
 
+def _textos_alerta(destino: dict) -> tuple[str, str]:
+    """Título y cuerpo del aviso de un reporte según su motivo."""
+    if destino["motivo"] == "GRUPO":
+        grupo = destino["grupo"] or "tu grupo"
+        return f"Nuevo reporte en {grupo}", f"{destino['categoria']}: toca para ver el reporte."
+    zona = destino["zona"] or "tu zona segura"
+    return (
+        f"Alerta cerca de {zona}",
+        f"Nuevo reporte: {destino['categoria']}, {_distancia_legible(destino['distancia_metros'])} de tu zona.",
+    )
+
+
+def _enviar(avisos: list[dict], intentadas: set, id_reporte: int) -> None:
+    """Envía los avisos ya armados y deja el resultado en notificacion.estado_envio.
+
+    Cada aviso trae id_notificacion, id_dispositivo, token_push, titulo, cuerpo, datos y canal.
+    """
+    if not push_configurado():
+        for aviso in avisos:
+            print(
+                f"[push simulado] Dispositivo {aviso['id_dispositivo']} | {aviso['titulo']}: {aviso['cuerpo']}",
+                flush=True,
+            )
+        return
+
+    try:
+        from firebase_admin import messaging
+
+        app = _firebase()
+    except Exception as error:
+        log.error("Firebase no está disponible, no se envían avisos push: %s", error)
+        _marcar_envio(set(), intentadas)
+        return
+
+    mensajes = [
+        (
+            aviso["id_notificacion"],
+            messaging.Message(
+                # token_push guarda el FID del teléfono (la app lo recibe por onRegistered).
+                fid=aviso["token_push"],
+                notification=messaging.Notification(title=aviso["titulo"], body=aviso["cuerpo"]),
+                data=aviso["datos"],
+                android=messaging.AndroidConfig(
+                    priority="high",
+                    notification=messaging.AndroidNotification(channel_id=aviso["canal"]),
+                ),
+            ),
+        )
+        for aviso in avisos
+    ]
+    # Quien no tiene teléfono activo no recibe mensaje y su aviso queda FALLIDA.
+    _marcar_envio(_enviar_mensajes(messaging, app, mensajes, id_reporte), intentadas)
+
+
 def enviar_alertas_de_reporte(id_reporte: int) -> None:
     """Envía por FCM las alertas que generó un reporte: zona segura y grupo.
 
@@ -78,29 +138,13 @@ def enviar_alertas_de_reporte(id_reporte: int) -> None:
     except Exception as error:
         log.error("No se pudieron leer los destinos push del reporte %s: %s", id_reporte, error)
         return
-
     if not destinos:
         return
-    intentadas = {destino["id_notificacion"] for destino in destinos}
-    destinos = [destino for destino in destinos if destino["token_push"]]
 
-    if not push_configurado():
-        for destino in destinos:
-            titulo, cuerpo = _textos_alerta(destino)
-            print(f"[push simulado] Dispositivo {destino['id_dispositivo']} | {titulo}: {cuerpo}", flush=True)
-        return
-
-    try:
-        from firebase_admin import messaging
-
-        app = _firebase()
-    except Exception as error:
-        log.error("Firebase no está disponible, no se envían avisos push: %s", error)
-        _marcar_envio(set(), intentadas)
-        return
-
-    mensajes = []
+    avisos = []
     for destino in destinos:
+        if not destino["token_push"]:
+            continue
         titulo, cuerpo = _textos_alerta(destino)
         # La app usa estos datos al tocar el aviso: ZONA_SEGURA abre la pestaña
         # Alertas y GRUPO abre el reporte.
@@ -111,33 +155,9 @@ def enviar_alertas_de_reporte(id_reporte: int) -> None:
         }
         if destino["id_grupo"] is not None:
             datos["id_grupo"] = str(destino["id_grupo"])
-        mensajes.append((
-            destino["id_notificacion"],
-            messaging.Message(
-                # token_push guarda el FID del teléfono (la app lo recibe por onRegistered).
-                fid=destino["token_push"],
-                notification=messaging.Notification(title=titulo, body=cuerpo),
-                data=datos,
-                android=messaging.AndroidConfig(
-                    priority="high",
-                    notification=messaging.AndroidNotification(channel_id=CANAL_ANDROID),
-                ),
-            ),
-        ))
+        avisos.append({**destino, "titulo": titulo, "cuerpo": cuerpo, "datos": datos, "canal": CANAL_ANDROID})
 
-    _marcar_envio(_enviar_mensajes(messaging, app, mensajes, id_reporte), intentadas)
-
-
-def _textos_alerta(destino: dict) -> tuple[str, str]:
-    """Título y cuerpo del aviso según su motivo."""
-    if destino["motivo"] == "GRUPO":
-        grupo = destino["grupo"] or "tu grupo"
-        return f"Nuevo reporte en {grupo}", f"{destino['categoria']}: toca para ver el reporte."
-    zona = destino["zona"] or "tu zona segura"
-    return (
-        f"Alerta cerca de {zona}",
-        f"Nuevo reporte: {destino['categoria']}, {_distancia_legible(destino['distancia_metros'])} de tu zona.",
-    )
+    _enviar(avisos, {destino["id_notificacion"] for destino in destinos}, id_reporte)
 
 
 def enviar_avisos_comentario(id_reporte: int, avisos: list[dict]) -> None:
@@ -149,16 +169,14 @@ def enviar_avisos_comentario(id_reporte: int, avisos: list[dict]) -> None:
     """
     if not avisos:
         return
-    intentadas = {aviso["id_notificacion"] for aviso in avisos}
     por_usuario = {aviso["id_usuario"]: aviso for aviso in avisos}
-    marcas = ", ".join(["%s"] * len(por_usuario))
     try:
         dispositivos = consultar(
             f"""
             SELECT d.id_usuario, d.id_dispositivo, d.token_push
             FROM usuario_dispositivo d
             JOIN usuario u ON u.id_usuario = d.id_usuario
-            WHERE d.activo = 1 AND u.estado = 'ACTIVO' AND d.id_usuario IN ({marcas})
+            WHERE d.activo = 1 AND u.estado = 'ACTIVO' AND d.id_usuario IN ({marcas(len(por_usuario))})
             """,
             tuple(por_usuario),
         )
@@ -166,47 +184,24 @@ def enviar_avisos_comentario(id_reporte: int, avisos: list[dict]) -> None:
         log.error("No se pudieron leer los destinos push del comentario (reporte %s): %s", id_reporte, error)
         return
 
-    if not push_configurado():
-        for dispositivo in dispositivos:
-            aviso = por_usuario[dispositivo["id_usuario"]]
-            print(
-                f"[push simulado] Dispositivo {dispositivo['id_dispositivo']} | "
-                f"{aviso['titulo']}: {aviso['cuerpo']}",
-                flush=True,
-            )
-        return
-
-    try:
-        from firebase_admin import messaging
-
-        app = _firebase()
-    except Exception as error:
-        log.error("Firebase no está disponible, no se envían avisos push: %s", error)
-        _marcar_envio(set(), intentadas)
-        return
-
     mensajes = []
     for dispositivo in dispositivos:
         aviso = por_usuario[dispositivo["id_usuario"]]
-        mensajes.append((
-            aviso["id_notificacion"],
-            messaging.Message(
-                fid=dispositivo["token_push"],
-                notification=messaging.Notification(title=aviso["titulo"], body=aviso["cuerpo"]),
-                # La app usa estos datos para abrir el reporte al tocar el aviso.
-                data={
-                    "tipo": "COMENTARIO",
-                    "id_notificacion": str(aviso["id_notificacion"]),
-                    "id_reporte": str(id_reporte),
-                },
-                android=messaging.AndroidConfig(
-                    priority="high",
-                    notification=messaging.AndroidNotification(channel_id=CANAL_COMENTARIOS),
-                ),
-            ),
-        ))
-    # Quien no tiene teléfono activo no recibe mensaje y su aviso queda FALLIDA.
-    _marcar_envio(_enviar_mensajes(messaging, app, mensajes, id_reporte), intentadas)
+        mensajes.append({
+            **dispositivo,
+            "id_notificacion": aviso["id_notificacion"],
+            "titulo": aviso["titulo"],
+            "cuerpo": aviso["cuerpo"],
+            # La app usa estos datos para abrir el reporte al tocar el aviso.
+            "datos": {
+                "tipo": "COMENTARIO",
+                "id_notificacion": str(aviso["id_notificacion"]),
+                "id_reporte": str(id_reporte),
+            },
+            "canal": CANAL_COMENTARIOS,
+        })
+
+    _enviar(mensajes, {aviso["id_notificacion"] for aviso in avisos}, id_reporte)
 
 
 def _enviar_mensajes(messaging, app, mensajes: list[tuple], id_reporte: int) -> set:
@@ -239,14 +234,13 @@ def _enviar_mensajes(messaging, app, mensajes: list[tuple], id_reporte: int) -> 
 
 
 def _marcar_envio(enviadas: set, intentadas: set) -> None:
-    """Deja en notificacion.estado_envio el resultado del intento (ver nota arriba)."""
+    """Deja en notificacion.estado_envio el resultado del intento."""
     for estado, ids in (("ENVIADA", enviadas), ("FALLIDA", intentadas - enviadas)):
         if not ids:
             continue
-        marcas = ", ".join(["%s"] * len(ids))
         try:
             ejecutar(
-                f"UPDATE notificacion SET estado_envio = %s WHERE id_notificacion IN ({marcas})",
+                f"UPDATE notificacion SET estado_envio = %s WHERE id_notificacion IN ({marcas(len(ids))})",
                 (estado, *ids),
             )
         except Exception as error:
@@ -255,10 +249,9 @@ def _marcar_envio(enviadas: set, intentadas: set) -> None:
 
 
 def _desactivar_tokens(tokens: list[str]) -> None:
-    marcas = ", ".join(["%s"] * len(tokens))
     try:
         ejecutar(
-            f"UPDATE usuario_dispositivo SET activo = 0 WHERE token_push IN ({marcas})",
+            f"UPDATE usuario_dispositivo SET activo = 0 WHERE token_push IN ({marcas(len(tokens))})",
             tuple(tokens),
         )
     except Exception as error:

@@ -6,7 +6,7 @@ Se calcula al consultar a partir de los reportes de los últimos días:
    seguridad (robos, asaltos, actividad sospechosa...) y vial (accidentes,
    problemas en la vía). Un incendio o una mascota perdida no hacen peligrosa
    una calle.
-2. Los reportes del mismo hecho se juntan en un incidente (app/incidentes.py):
+2. Los reportes del mismo hecho se juntan en un incidente (app/servicios/incidentes.py):
    cinco vecinos reportando el mismo robo son un robo, no cinco.
 3. Los incidentes a menos de RADIO_ZONA_METROS entre sí forman una zona. Si la
    zona tiene al menos MINIMO_INCIDENTES, se muestra con su recomendación.
@@ -18,7 +18,7 @@ radio y cuántos hechos hubo de cada categoría.
 import os
 from datetime import datetime
 
-from app.incidentes import agrupar, distancia_metros
+from app.servicios.incidentes import agrupar, distancia_metros
 
 RADIO_ZONA_METROS = float(os.getenv("ZONA_RIESGO_RADIO_METROS", "250"))
 MINIMO_INCIDENTES = int(os.getenv("ZONA_RIESGO_MINIMO", "2"))
@@ -148,7 +148,6 @@ def calcular(reportes: list[dict]) -> list[dict]:
     # Primero seguridad, luego las de más hechos.
     zonas.sort(key=lambda z: (z["tipo"] != "SEGURIDAD", z["nivel"] != "ALTO", -z["total_incidentes"]))
     return zonas
-
 
 
 # Celdas del mapa de calor: ~110 m por lado en Puerto Montt (en la latitud
