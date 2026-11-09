@@ -1,15 +1,25 @@
+"""Sesiones, tokens de un solo uso, contraseñas y dependencias de autenticación."""
+
 import hashlib
 import ipaddress
 import os
 import secrets
 
-from fastapi import Depends, HTTPException
+import bcrypt
+from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.correo import HORAS_VIGENCIA_RECUPERACION, HORAS_VIGENCIA_VERIFICACION
 from app.db import consultar, ejecutar
+from app.servicios.correo import HORAS_VIGENCIA_RECUPERACION, HORAS_VIGENCIA_VERIFICACION
 
 DURACION_SESION_DIAS = 30
+
+# bcrypt solo usa los primeros 72 bytes de la contraseña.
+LARGO_MINIMO_PASSWORD = 8
+LARGO_MAXIMO_PASSWORD = 72
+
+TOKEN_VERIFICACION = "VERIFICACION_EMAIL"
+TOKEN_RECUPERACION = "RECUPERACION_PASSWORD"
 
 # Cuentas con acceso al panel de administración, separadas por coma en el .env.
 # Se reconocen por correo (verificado) para no tener que cambiar la BD.
@@ -30,9 +40,21 @@ def _ip_valida(ip: str | None) -> str | None:
         return None
 
 
+def ip_cliente(request: Request) -> str | None:
+    return request.client.host if request.client else None
+
+
 def hash_token(token: str) -> str:
     """En la BD solo se guarda el SHA-256 del token: si se filtra la tabla, no sirve para entrar."""
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def verificar_password(password: str, password_hash: str) -> bool:
+    return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
 
 
 def crear_sesion(id_usuario: int, ip: str | None, user_agent: str | None) -> str:
@@ -62,26 +84,41 @@ def _crear_token(cursor, id_usuario: int, tipo: str, horas_vigencia: int, ip: st
 
 
 def crear_token_verificacion(cursor, id_usuario: int, ip: str | None) -> str:
-    """Token de un solo uso para verificar el correo (usuario_token, tipo VERIFICACION_EMAIL).
+    """Token de un solo uso para verificar el correo.
 
     Recibe un cursor para quedar en la misma transacción que la creación del usuario.
     """
-    return _crear_token(cursor, id_usuario, "VERIFICACION_EMAIL", HORAS_VIGENCIA_VERIFICACION, ip)
+    return _crear_token(cursor, id_usuario, TOKEN_VERIFICACION, HORAS_VIGENCIA_VERIFICACION, ip)
 
 
 def crear_token_recuperacion(cursor, id_usuario: int, ip: str | None) -> str:
-    """Token de un solo uso para cambiar la contraseña (usuario_token, tipo RECUPERACION_PASSWORD).
+    """Token de un solo uso para cambiar la contraseña.
 
     Anula los enlaces de recuperación anteriores: solo sirve el último correo enviado.
     """
     cursor.execute(
         """
         UPDATE usuario_token SET fecha_uso = NOW()
-        WHERE id_usuario = %s AND tipo = 'RECUPERACION_PASSWORD' AND fecha_uso IS NULL
+        WHERE id_usuario = %s AND tipo = %s AND fecha_uso IS NULL
         """,
-        (id_usuario,),
+        (id_usuario, TOKEN_RECUPERACION),
     )
-    return _crear_token(cursor, id_usuario, "RECUPERACION_PASSWORD", HORAS_VIGENCIA_RECUPERACION, ip)
+    return _crear_token(cursor, id_usuario, TOKEN_RECUPERACION, HORAS_VIGENCIA_RECUPERACION, ip)
+
+
+def token_reciente(id_usuario: int, tipo: str) -> bool:
+    """True si ya se envió un token de este tipo en el último minuto.
+
+    Máximo un correo por minuto: evita usar los formularios para llenar la bandeja de alguien.
+    """
+    return bool(consultar(
+        """
+        SELECT 1 FROM usuario_token
+        WHERE id_usuario = %s AND tipo = %s
+          AND fecha_creacion > NOW() - INTERVAL 1 MINUTE
+        """,
+        (id_usuario, tipo),
+    ))
 
 
 def revocar_sesiones_usuario(cursor, id_usuario: int) -> None:
@@ -127,8 +164,17 @@ def usuario_actual(credenciales: HTTPAuthorizationCredentials | None = Depends(e
     return usuario
 
 
+def usuario_opcional(credenciales: HTTPAuthorizationCredentials | None = Depends(esquema_bearer)) -> dict | None:
+    """Como usuario_actual, pero sin exigir sesión: devuelve None si no hay token válido."""
+    return _usuario_de_sesion(credenciales.credentials) if credenciales else None
+
+
+def es_correo_admin(email: str | None) -> bool:
+    return (email or "").strip().lower() in CORREOS_ADMIN
+
+
 def es_admin(email: str | None, email_verificado) -> bool:
-    return bool(email_verificado) and (email or "").strip().lower() in CORREOS_ADMIN
+    return bool(email_verificado) and es_correo_admin(email)
 
 
 def usuario_admin(usuario: dict = Depends(usuario_actual)) -> dict:
@@ -136,8 +182,3 @@ def usuario_admin(usuario: dict = Depends(usuario_actual)) -> dict:
     if not es_admin(usuario["email"], usuario["email_verificado"]):
         raise HTTPException(status_code=403, detail="Esta sección es solo para administradores")
     return usuario
-
-
-def usuario_opcional(credenciales: HTTPAuthorizationCredentials | None = Depends(esquema_bearer)) -> dict | None:
-    """Como usuario_actual, pero sin exigir sesión: devuelve None si no hay token válido."""
-    return _usuario_de_sesion(credenciales.credentials) if credenciales else None

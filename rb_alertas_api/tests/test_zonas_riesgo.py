@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from app import zonas_riesgo
+from app.servicios import zonas_riesgo
 
 INICIO = datetime(2026, 11, 1, 22, 0)
 NOMBRES = {"ROBO": "Robo o asalto", "ACCIDENTE": "Accidente de tránsito", "INCENDIO": "Incendio"}

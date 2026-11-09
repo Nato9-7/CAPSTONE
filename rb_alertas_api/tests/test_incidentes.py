@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from app import incidentes
+from app.servicios import incidentes
 
 INICIO = datetime(2026, 11, 1, 20, 0)
 

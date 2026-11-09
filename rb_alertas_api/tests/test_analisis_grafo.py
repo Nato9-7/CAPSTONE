@@ -1,4 +1,4 @@
-from app.analisis_grafo import calcular_reputacion, detectar_coordinacion
+from app.servicios.analisis_grafo import calcular_reputacion, detectar_coordinacion
 
 
 def reporte(id_reporte, autor, estado="PENDIENTE"):

@@ -1,9 +1,4 @@
-import mysql.connector.pooling as pooling
-
-# Las rutas importan app.db, que abre MySQL al cargarse; en las pruebas no hace falta.
-pooling.MySQLConnectionPool.__init__ = lambda self, **k: None
-
-from app.rutas import admin  # noqa: E402
+from app.servicios.grafo import conexion, zonas
 
 ROBO = {"id": 1, "codigo": "ROBO", "nombre": "Robo o asalto", "color": "#C2410C"}
 ACCIDENTE = {"id": 2, "codigo": "ACCIDENTE", "nombre": "Accidente de tránsito", "color": "#B91C1C"}
@@ -34,8 +29,8 @@ def test_cuenta_hechos_y_guarda_los_reportes(monkeypatch):
             fila(2, "Pelluco", ROBO, 5, 5),
         ]
 
-    monkeypatch.setattr(admin.grafo, "consultar_grafo", falso)
-    lugares = admin._zonas_calientes(None, None)
+    monkeypatch.setattr(conexion, "consultar_grafo", falso)
+    lugares = zonas.zonas_calientes(None, None)
 
     # El ranking es por hechos: Pelluco (5) va antes que Mirasol (4), aunque
     # Mirasol tenga más reportes (7).
@@ -52,6 +47,6 @@ def test_cuenta_hechos_y_guarda_los_reportes(monkeypatch):
 
 
 def test_nodo_del_lugar_lleva_hechos_y_reportes(monkeypatch):
-    monkeypatch.setattr(admin.grafo, "consultar_grafo", lambda c, **p: [fila(1, "Mirasol", ROBO, 2, 5)])
-    nodo = admin._nodo_lugar(admin._zonas_calientes("ROBO", None)[0])
+    monkeypatch.setattr(conexion, "consultar_grafo", lambda c, **p: [fila(1, "Mirasol", ROBO, 2, 5)])
+    nodo = zonas.nodo_lugar(zonas.zonas_calientes("ROBO", None)[0])
     assert (nodo["datos"]["total"], nodo["datos"]["reportes"]) == (2, 5)

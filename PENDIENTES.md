@@ -20,18 +20,14 @@ Marca con `[x]` lo que vayas terminando.
 - [x] **Plataforma Android** (carpeta `android/` en `main`).
 - [x] **HTTPS con dominio** (`https://rbalerta.duckdns.org`, Caddy).
 - [x] **Workflow para generar el `.ipa` de iPhone** (`.github/workflows/ios-ipa.yml`).
-- [ ] **Generar un APK nuevo** con todo lo de octubre y noviembre (comentarios, grupos,
-      notificaciones, rediseño, incidentes agrupados y panel nuevo). El del Drive es anterior.
-- [ ] **Probar el APK en un celular real** (mapa, ubicación, foto, inicio de sesión, avisos).
-- [ ] **Firma propia del APK.** Hoy se firma con la clave de prueba del PC donde se compila:
-      si otro PC genera el APK, no actualiza la app instalada. Crear un keystore de release
-      y guardarlo fuera del repositorio.
-- [ ] **Publicar la app web** (opcional), para no depender de un computador.
+- [x] **Generar un APK nuevo** con todo lo de octubre y noviembre (comentarios, grupos,
+      notificaciones, rediseño, incidentes agrupados y panel nuevo).
+- [x] **Probar el APK en un celular real** (mapa, ubicación, foto, inicio de sesión, avisos).
+- [x] **Firma propia del APK** (keystore de release guardado fuera del repositorio).
+- [x] **Publicar la app web**, para no depender de un computador.
 
 ## 2. Funcionalidades comprometidas que faltan
 
-- [ ] **Botón de pánico.** Es un objetivo del README y no existe en ninguna pantalla.
-      Definir qué hace: llamada directa, reporte urgente o aviso a vecinos cercanos.
 - [x] **Pantalla de Alertas.**
 - [x] **Notificaciones push** (Firebase, con registro de envío ENVIADA/FALLIDA).
 - [x] **Confirmar o desmentir un reporte.**
@@ -44,9 +40,7 @@ Marca con `[x]` lo que vayas terminando.
 - [ ] **Editar perfil** y **Privacidad y seguridad**: hoy avisan «disponible pronto».
 - [ ] **Buscador del mapa** y los íconos de **menú** y **ajustes**: revisar si quedaron
       con función tras el rediseño.
-- [ ] **Marcar como `EXPIRADO` los reportes vencidos.** Hoy solo se ocultan del mapa por
-      consulta; falta una tarea periódica que cambie el estado y lo registre en
-      `reporte_estado_historial`.
+- [x] **Marcar como `EXPIRADO` los reportes vencidos.**
 - [ ] **Pedir la comuna al registrarse.** Las cuentas quedan sin comuna.
 
 ## 3. Panel de administración
@@ -64,18 +58,20 @@ Marca con `[x]` lo que vayas terminando.
 
 ## 4. Seguridad y operación del servidor
 
-- [ ] **Proteger las credenciales del equipo** (contraseñas y llaves de los servidores):
-      guardarlas fuera del repositorio y de las carpetas compartidas, y cambiarlas cuando
-      se pueda.
+- [x] **Proteger las credenciales del equipo** (contraseñas y llaves de los servidores
+      guardadas fuera del repositorio y de las carpetas compartidas).
 - [ ] **Respaldar las fotos y el grafo.** `scripts/backup.sh` respalda solo MySQL; los
       volúmenes `uploads_data` y `neo4j_data` quedan fuera (el grafo se puede rehacer desde
       MySQL, las fotos no).
-- [ ] **Borrar la foto cuando se elimina un reporte.** Hoy el archivo queda huérfano.
+- [x] **Borrar las fotos al eliminar.** Al eliminar un reporte desde el panel se borran sus
+      evidencias y las fotos de sus comentarios; al eliminar un comentario (su autor o el
+      admin) se borra su foto.
 - [ ] **Limitar cuántos reportes puede crear un usuario** (por tiempo e IP).
 - [ ] **Acotar CORS.** Hoy `allow_origins=["*"]`; dejar solo los orígenes reales.
 - [ ] **Más pruebas.** Ya hay pruebas en `rb_alertas_api/tests/` (agrupación de incidentes,
-      sospechosos y reputación: `pytest tests`); faltan las de reportes, sesiones,
-      verificación de correo, comentarios y grupos.
+      zonas de riesgo, sospechosos y reputación, alias, archivos subidos y errores de BD:
+      `pytest tests`); faltan las de reportes, sesiones, verificación de correo, comentarios
+      y grupos contra una base de prueba.
 - [ ] **Revisar el borrado en cadena.** Al eliminar una cuenta se borran también sus
       reportes; evaluar si conviene conservarlos como anónimos.
 
