@@ -1,314 +1,114 @@
-import hashlib
-import logging
-import os
-from pathlib import Path
-from uuid import uuid4
+"""Creación de reportes con evidencia opcional y avisos a zonas seguras y grupos."""
 
-from typing import Literal
-
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Path as PathParam, Query, UploadFile
-from pydantic import BaseModel
 import mysql.connector
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 
-from app import incidentes, push, zonas_riesgo
-from app.db import consultar, ejecutar, transaccion
-from app.seguridad import usuario_actual, usuario_opcional
+from app.comun.archivos import FORMATOS_FOTO, FORMATOS_VIDEO, CarpetaAdjuntos, hay_archivo
+from app.comun.geo import PUNTO_SQL, punto_wkt
+from app.comun.sql import error_bd, marcas
+from app.db import consultar, transaccion
+from app.seguridad import usuario_actual
+from app.servicios import avisos, push
+from app.servicios.reportes import reportes_del_incidente
+from app.servicios.ubicacion import resolver_comuna, resolver_localidad
 
 router = APIRouter()
-log = logging.getLogger("rb_alertas.reportes")
 
-# En Docker esta carpeta debe montarse como volumen; si no, las evidencias
-# se pierden al recrear el contenedor. El volumen debe pertenecer al usuario
-# con que corre la API (en la imagen, appuser).
-CARPETA_UPLOADS = Path(os.getenv("CARPETA_UPLOADS", Path(__file__).resolve().parents[2] / "uploads"))
-CARPETA_EVIDENCIAS = CARPETA_UPLOADS / "reportes"
-
-# Si la carpeta no se puede escribir, la API arranca igual y solo rechaza
-# las evidencias: sin esto, un problema de permisos tumba toda la API.
-try:
-    CARPETA_EVIDENCIAS.mkdir(parents=True, exist_ok=True)
-    EVIDENCIAS_DISPONIBLES = os.access(CARPETA_EVIDENCIAS, os.W_OK)
-except OSError:
-    EVIDENCIAS_DISPONIBLES = False
-if not EVIDENCIAS_DISPONIBLES:
-    log.error("No se puede escribir en %s: los reportes funcionan, pero sin evidencias", CARPETA_EVIDENCIAS)
-
-TAMANO_MAXIMO_EVIDENCIA = 20 * 1024 * 1024  # 20 MB
-
-# Radio máximo desde el centroide de una comuna operativa para asignarle un reporte 
-RADIO_MAXIMO_COMUNA_METROS = 40_000
-
-# Radio de alertas cercanas cuando el usuario no tiene preferencia guardada
-# (usuario_preferencia.radio_alerta_metros) ni lo pide explícitamente.
-RADIO_ALERTA_POR_DEFECTO_METROS = 2000
-
-# Votos necesarios para que la comunidad valide o descarte un reporte.
-VOTOS_PARA_CAMBIAR_ESTADO = 3
-
-# Con SRID 4326 MySQL lee el WKT como latitud-longitud; se fija el orden
-PUNTO_SQL = "ST_GeomFromText(%s, 4326, 'axis-order=long-lat')"
+EVIDENCIAS = CarpetaAdjuntos(
+    subcarpeta="reportes",
+    tamano_maximo=20 * 1024 * 1024,
+    formatos=FORMATOS_FOTO + FORMATOS_VIDEO,
+    mensaje_no_disponible="Por ahora no se pueden adjuntar fotos o videos. Envía el reporte sin evidencia.",
+    mensaje_tamano="La evidencia no puede superar los 20 MB",
+    mensaje_formato="La evidencia debe ser una foto (JPG, PNG, WEBP, HEIC) o un video (MP4, MOV, WEBM)",
+)
 
 
-def _primer_id(sql: str, parametros: tuple, columna: str):
+def _horas_vigencia(id_categoria: int) -> int:
+    categorias = consultar(
+        "SELECT horas_vigencia FROM categoria_incidente WHERE id_categoria = %s AND activa = 1",
+        (id_categoria,),
+    )
+    if not categorias:
+        raise HTTPException(status_code=422, detail="Categoría no válida")
+    return categorias[0]["horas_vigencia"]
+
+
+def _leer_ids_grupos(texto: str) -> list[int]:
     try:
-        filas = consultar(sql, parametros)
-    except mysql.connector.Error:
-        # Sin polígonos/centroides cargados o función espacial no soportada:
-        # se sigue con el siguiente criterio.
-        return None
-    return filas[0][columna] if filas else None
+        ids = {int(parte) for parte in texto.split(",") if parte.strip()}
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Los grupos elegidos no son válidos")
+    if any(id_grupo < 1 for id_grupo in ids):
+        raise HTTPException(status_code=422, detail="Los grupos elegidos no son válidos")
+    return sorted(ids)
 
 
-def _detectar_formato(contenido: bytes):
-    """Extensión según la firma real del archivo; None si no es una foto o video aceptado.
-
-    Se mira el contenido y no el Content-Type ni el nombre, que los controla el cliente.
-    """
-    if contenido.startswith(b"\xff\xd8\xff"):
-        return ".jpg"
-    if contenido.startswith(b"\x89PNG\r\n\x1a\n"):
-        return ".png"
-    if contenido[:4] == b"RIFF" and contenido[8:12] == b"WEBP":
-        return ".webp"
-    if contenido.startswith(b"\x1a\x45\xdf\xa3"):
-        return ".webm"
-    if contenido[4:8] == b"ftyp":
-        marca = contenido[8:12]
-        if marca in (b"heic", b"heix", b"mif1", b"msf1", b"hevc"):
-            return ".heic"
-        if marca == b"qt  ":
-            return ".mov"
-        return ".mp4"
-    return None
-
-
-def _radio_alerta_metros(usuario: dict | None, radio_km: float | None) -> int:
-    """Radio a consultar: el que pide el cliente, si no el del usuario, si no el estándar."""
-    if radio_km is not None:
-        return int(radio_km * 1000)
-    if usuario is not None:
-        try:
-            filas = consultar(
-                "SELECT radio_alerta_metros FROM usuario_preferencia WHERE id_usuario = %s",
-                (usuario["id_usuario"],),
-            )
-        except mysql.connector.Error:
-            # Sin tabla de preferencias la pantalla igual funciona con el radio estándar.
-            filas = []
-        if filas and filas[0]["radio_alerta_metros"]:
-            return int(filas[0]["radio_alerta_metros"])
-    return RADIO_ALERTA_POR_DEFECTO_METROS
-
-
-def _resolver_comuna(punto_wkt: str):
-    """Comuna cuyo límite contiene el punto; si no, la operativa cuyo centroide esté a menos de
-    RADIO_MAXIMO_COMUNA_METROS. None si el punto queda fuera de toda comuna con cobertura."""
-    id_comuna = _primer_id(
-        f"SELECT id_comuna FROM comuna WHERE limite IS NOT NULL AND ST_Contains(limite, {PUNTO_SQL}) LIMIT 1",
-        (punto_wkt,),
-        "id_comuna",
+def _validar_grupos_del_reporte(ids_grupos: list[int], id_usuario: int, punto: str) -> None:
+    """Cada grupo elegido debe estar activo, tener al autor como miembro y contener el punto del incidente."""
+    validos = consultar(
+        f"""
+        SELECT g.id_grupo
+        FROM grupo g
+        JOIN grupo_miembro m ON m.id_grupo = g.id_grupo AND m.id_usuario = %s
+        WHERE g.id_grupo IN ({marcas(len(ids_grupos))})
+          AND g.activo = 1
+          AND ST_Distance_Sphere(g.centro, {PUNTO_SQL}) <= g.radio_metros
+        """,
+        (id_usuario, *ids_grupos, punto),
     )
-    if id_comuna is None:
-        id_comuna = _primer_id(
-            f"""
-            SELECT id_comuna FROM comuna
-            WHERE operativa = 1 AND centroide IS NOT NULL
-              AND ST_Distance(centroide, {PUNTO_SQL}) <= %s
-            ORDER BY ST_Distance(centroide, {PUNTO_SQL})
-            LIMIT 1
-            """,
-            (punto_wkt, RADIO_MAXIMO_COMUNA_METROS, punto_wkt),
-            "id_comuna",
+    if len(validos) != len(ids_grupos):
+        raise HTTPException(
+            status_code=422,
+            detail="Solo puedes compartir el reporte en tus grupos cuya área incluye el lugar del incidente",
         )
-    return id_comuna
 
 
-def _resolver_localidad(punto_wkt: str, id_comuna: int):
-    return _primer_id(
-        f"""
-        SELECT id_localidad FROM localidad
-        WHERE id_comuna = %s AND activa = 1 AND limite IS NOT NULL
-          AND ST_Contains(limite, {PUNTO_SQL})
-        LIMIT 1
-        """,
-        (id_comuna, punto_wkt),
-        "id_localidad",
-    )
+def _guardar_reporte(datos: dict, ids_grupos: list[int], evidencia_url: str | None) -> int:
+    with transaccion() as cursor:
+        cursor.execute(
+            f"""
+            INSERT INTO reporte (
+                id_usuario, id_categoria, id_comuna, id_localidad,
+                ubicacion, direccion_referencia, descripcion, visibilidad, fecha_expiracion
+            ) VALUES (
+                %s, %s, %s, %s, {PUNTO_SQL}, %s, %s, %s,
+                DATE_ADD(NOW(), INTERVAL %s HOUR)
+            )
+            """,
+            (
+                datos["id_usuario"], datos["id_categoria"], datos["id_comuna"], datos["id_localidad"],
+                datos["punto"], datos["direccion"], datos["descripcion"], datos["visibilidad"],
+                datos["horas_vigencia"],
+            ),
+        )
+        id_reporte = cursor.lastrowid
+        for id_grupo in ids_grupos:
+            cursor.execute(
+                "INSERT INTO grupo_reporte (id_grupo, id_reporte) VALUES (%s, %s)",
+                (id_grupo, id_reporte),
+            )
+        if evidencia_url is not None:
+            cursor.execute(
+                "INSERT INTO reporte_imagen (id_reporte, url_archivo, orden) VALUES (%s, %s, 1)",
+                (id_reporte, evidencia_url),
+            )
+    return id_reporte
 
 
-@router.get("/categorias")
-def listar_categorias():
-    return consultar(
-        """
-        SELECT id_categoria, codigo, nombre, icono, color_hex
-        FROM categoria_incidente
-        WHERE activa = 1
-        ORDER BY id_categoria
-        """
-    )
+def _generar_avisos(id_reporte: int, punto: str, id_autor: int, ids_grupos: list[int], privado: bool) -> tuple[int, int]:
+    """Avisos del reporte ya confirmado en la BD. Devuelve (zonas avisadas, miembros avisados).
 
-
-@router.get("/")
-def listar_reportes(limite: int = Query(200, ge=1, le=500)):
-    """Incidentes vigentes para dibujar en el mapa, del más reciente al más antiguo.
-
-    Los reportes del mismo hecho se juntan en uno solo (ver app/incidentes.py):
-    cada elemento trae total_reportes e ids_reportes.
+    Primero los del grupo: quien es miembro y además tiene una zona segura cerca
+    recibe un solo aviso, el del grupo. Un reporte privado no avisa a las zonas seguras.
     """
-    filas = consultar(
-        """
-        SELECT r.id_reporte, c.codigo AS categoria_codigo, c.nombre AS categoria,
-               c.color_hex, ST_Latitude(r.ubicacion) AS latitud,
-               ST_Longitude(r.ubicacion) AS longitud,
-               r.direccion_referencia AS direccion, r.descripcion, r.estado,
-               r.fecha_creacion, r.total_confirmaciones, r.total_desmentidos
-        FROM reporte r
-        JOIN categoria_incidente c ON c.id_categoria = r.id_categoria
-        WHERE r.estado IN ('PENDIENTE', 'VALIDADO')
-          AND r.visibilidad = 'PUBLICO'
-          AND (r.fecha_expiracion IS NULL OR r.fecha_expiracion > NOW())
-        ORDER BY r.fecha_creacion DESC
-        LIMIT %s
-        """,
-        (limite,),
-    )
-    return incidentes.resumir(filas)
-
-
-@router.get("/cercanos")
-def listar_reportes_cercanos(
-    usuario: dict | None = Depends(usuario_opcional),
-    latitud: float = Query(ge=-90, le=90),
-    longitud: float = Query(ge=-180, le=180),
-    radio_km: float | None = Query(None, gt=0, le=50),
-    limite: int = Query(50, ge=1, le=200),
-):
-    """Reportes vigentes alrededor del punto, del más reciente al más antiguo.
-
-    Alimenta la pantalla Alertas: cada fila trae la distancia en metros al punto
-    consultado para poder mostrar "a 500 m" sin recalcular en el cliente.
-
-    Sin `radio_km`, se usa el radio que el usuario guardó en sus preferencias;
-    si no tiene sesión o no lo ha configurado, RADIO_ALERTA_POR_DEFECTO_METROS.
-    La respuesta devuelve el radio aplicado para poder mostrarlo en pantalla.
-    """
-    radio_metros = _radio_alerta_metros(usuario, radio_km)
-    punto_wkt = f"POINT({longitud} {latitud})"
-    reportes = consultar(
-        f"""
-        SELECT r.id_reporte, c.codigo AS categoria_codigo, c.nombre AS categoria,
-               c.color_hex, ST_Latitude(r.ubicacion) AS latitud,
-               ST_Longitude(r.ubicacion) AS longitud,
-               r.direccion_referencia AS direccion, r.descripcion, r.estado,
-               r.fecha_creacion, r.total_confirmaciones, r.total_desmentidos,
-               ST_Distance(r.ubicacion, {PUNTO_SQL}) AS distancia_metros
-        FROM reporte r
-        JOIN categoria_incidente c ON c.id_categoria = r.id_categoria
-        WHERE r.estado IN ('PENDIENTE', 'VALIDADO')
-          AND r.visibilidad = 'PUBLICO'
-          AND (r.fecha_expiracion IS NULL OR r.fecha_expiracion > NOW())
-          AND ST_Distance(r.ubicacion, {PUNTO_SQL}) <= %s
-        ORDER BY r.fecha_creacion DESC
-        LIMIT %s
-        """,
-        (punto_wkt, punto_wkt, radio_metros, limite),
-    )
-    # Un elemento por incidente: varios vecinos reportando lo mismo es una sola alerta.
-    agrupados = incidentes.resumir(reportes)
-    return {
-        "radio_metros": radio_metros,
-        "total": len(agrupados),
-        "reportes": agrupados,
-    }
-
-
-def _reportes_recientes(dias: int) -> list[dict]:
-    """Reportes públicos de los últimos `dias` para zonas de riesgo y mapa de calor.
-
-    Incluye los ya resueltos o expirados (un robo de hace dos semanas sigue
-    diciendo algo del lugar), pero no los descartados por la comunidad.
-    """
-    return consultar(
-        """
-        SELECT r.id_reporte, c.codigo AS categoria_codigo, c.nombre AS categoria, c.color_hex,
-               ST_Latitude(r.ubicacion) AS latitud, ST_Longitude(r.ubicacion) AS longitud,
-               r.fecha_creacion
-        FROM reporte r
-        JOIN categoria_incidente c ON c.id_categoria = r.id_categoria
-        WHERE r.estado <> 'DESCARTADO'
-          AND r.visibilidad = 'PUBLICO'
-          AND r.fecha_creacion >= NOW() - INTERVAL %s DAY
-        ORDER BY r.fecha_creacion DESC
-        LIMIT 3000
-        """,
-        (dias,),
-    )
-
-
-@router.get("/zonas-riesgo")
-def listar_zonas_riesgo(dias: int = Query(60, ge=7, le=365)):
-    """Zonas donde se repiten robos, asaltos o accidentes, para marcarlas en el mapa.
-
-    Ver app/zonas_riesgo.py.
-    """
-    return {"dias": dias, "zonas": zonas_riesgo.calcular(_reportes_recientes(dias))}
-
-
-@router.get("/calor")
-def mapa_de_calor(
-    dias: int = Query(60, ge=1, le=365),
-    categoria: str | None = Query(None, pattern=r"^[A-Z_]{1,40}$"),
-):
-    """Hechos por celda de ~110 m para dibujar el mapa de calor.
-
-    Sin `categoria`, robos, accidentes y demás categorías de riesgo; con ella,
-    solo esa. Los reportes del mismo hecho cuentan una vez.
-    """
-    return {"dias": dias, "puntos": zonas_riesgo.puntos_calor(_reportes_recientes(dias), categoria)}
-
-
-@router.get("/mios")
-def listar_mis_reportes(
-    usuario: dict = Depends(usuario_actual),
-    limite: int = Query(100, ge=1, le=300),
-):
-    """Historial de reportes de quien consulta, del más reciente al más antiguo.
-
-    `estado_visual` traduce el estado de la BD a lo que ve el usuario:
-    RESUELTA, VENCIDA (vigencia cumplida sin resolver) o ACTIVA.
-    """
-    return consultar(
-        """
-        SELECT r.id_reporte, c.codigo AS categoria_codigo, c.nombre AS categoria,
-               c.color_hex, ST_Latitude(r.ubicacion) AS latitud,
-               ST_Longitude(r.ubicacion) AS longitud,
-               r.direccion_referencia AS direccion, r.descripcion,
-               r.estado, r.fecha_creacion, r.fecha_expiracion,
-               r.total_confirmaciones, r.total_desmentidos,
-               COALESCE(l.nombre, cm.nombre) AS zona,
-               CASE
-                   WHEN r.estado = 'RESUELTO' THEN 'RESUELTA'
-                   WHEN r.estado = 'DESCARTADO' THEN 'DESCARTADA'
-                   WHEN r.estado = 'EXPIRADO' THEN 'VENCIDA'
-                   WHEN r.fecha_expiracion IS NOT NULL
-                        AND r.fecha_expiracion <= NOW() THEN 'VENCIDA'
-                   ELSE 'ACTIVA'
-               END AS estado_visual,
-               (
-                   SELECT i.url_archivo FROM reporte_imagen i
-                   WHERE i.id_reporte = r.id_reporte
-                   ORDER BY i.orden LIMIT 1
-               ) AS imagen
-        FROM reporte r
-        JOIN categoria_incidente c ON c.id_categoria = r.id_categoria
-        LEFT JOIN comuna cm ON cm.id_comuna = r.id_comuna
-        LEFT JOIN localidad l ON l.id_localidad = r.id_localidad
-        WHERE r.id_usuario = %s
-        ORDER BY r.fecha_creacion DESC
-        LIMIT %s
-        """,
-        (usuario["id_usuario"], limite),
-    )
+    avisos_grupo = avisos.notificar_grupos(id_reporte, ids_grupos, id_autor)
+    if privado:
+        return 0, avisos_grupo
+    # Si otro vecino ya reportó el mismo hecho, quien ya recibió esa alerta no la
+    # recibe de nuevo: para la comunidad es el mismo incidente.
+    ya_avisados = [r["id_reporte"] for r in reportes_del_incidente(id_reporte) if r["id_reporte"] != id_reporte]
+    return avisos.notificar_zonas_seguras(id_reporte, punto, id_autor, ya_avisados), avisos_grupo
 
 
 @router.post("/", status_code=201)
@@ -328,120 +128,53 @@ def crear_reporte(
     grupos; con `solo_grupo` es privado: no sale en el mapa ni avisa a las zonas seguras.
 
     Los ids van separados por comas porque el formulario multipart de la app
-    no admite repetir un campo.
+    no admite repetir un campo. El autor sale del token de sesión, no de un dato del cliente.
     """
     descripcion = descripcion.strip()
     if not descripcion:
         raise HTTPException(status_code=422, detail="La descripción no puede estar vacía")
+    horas_vigencia = _horas_vigencia(id_categoria)
 
-    # El autor sale del token de sesión validado en el servidor (usuario_actual),
-    # no de un dato que envíe el cliente.
-    categorias = consultar(
-        "SELECT horas_vigencia FROM categoria_incidente WHERE id_categoria = %s AND activa = 1",
-        (id_categoria,),
-    )
-    if not categorias:
-        raise HTTPException(status_code=422, detail="Categoría no válida")
-    horas_vigencia = categorias[0]["horas_vigencia"]
-
-    punto_wkt = f"POINT({longitud} {latitud})"
-    id_comuna = _resolver_comuna(punto_wkt)
+    punto = punto_wkt(latitud, longitud)
+    id_comuna = resolver_comuna(punto)
     if id_comuna is None:
-        raise HTTPException(
-            status_code=422,
-            detail="La ubicación está fuera de las comunas donde funciona RB Alertas",
-        )
-    id_localidad = _resolver_localidad(punto_wkt, id_comuna)
+        raise HTTPException(status_code=422, detail="La ubicación está fuera de las comunas donde funciona RB Alertas")
+    id_localidad = resolver_localidad(punto, id_comuna)
 
     # Antes de guardar la evidencia, para no dejar un archivo huérfano si los grupos no sirven.
-    ids_grupos = _leer_ids_grupos(ids_grupos)
-    if solo_grupo and not ids_grupos:
+    grupos = _leer_ids_grupos(ids_grupos)
+    if solo_grupo and not grupos:
         raise HTTPException(status_code=422, detail="Elige al menos un grupo para que el reporte sea privado")
-    if ids_grupos:
-        _validar_grupos_del_reporte(ids_grupos, usuario["id_usuario"], punto_wkt)
+    if grupos:
+        _validar_grupos_del_reporte(grupos, usuario["id_usuario"], punto)
     visibilidad = "GRUPO" if solo_grupo else "PUBLICO"
 
-    ruta_evidencia = None
-    evidencia_url = None
-
-    if evidencia is not None and evidencia.filename:
-        if not EVIDENCIAS_DISPONIBLES:
-            raise HTTPException(
-                status_code=503,
-                detail="Por ahora no se pueden adjuntar fotos o videos. Envía el reporte sin evidencia.",
-            )
-        contenido = evidencia.file.read(TAMANO_MAXIMO_EVIDENCIA + 1)
-        if len(contenido) > TAMANO_MAXIMO_EVIDENCIA:
-            raise HTTPException(status_code=413, detail="La evidencia no puede superar los 20 MB")
-
-        extension = _detectar_formato(contenido)
-        if extension is None:
-            raise HTTPException(
-                status_code=415,
-                detail="La evidencia debe ser una foto (JPG, PNG, WEBP, HEIC) o un video (MP4, MOV, WEBM)",
-            )
-
-        nombre_archivo = f"{uuid4().hex}{extension}"
-        ruta_evidencia = CARPETA_EVIDENCIAS / nombre_archivo
-        ruta_evidencia.write_bytes(contenido)
-        evidencia_url = f"/uploads/reportes/{nombre_archivo}"
-
+    ruta_evidencia, evidencia_url = EVIDENCIAS.guardar(evidencia) if hay_archivo(evidencia) else (None, None)
+    datos = {
+        "id_usuario": usuario["id_usuario"],
+        "id_categoria": id_categoria,
+        "id_comuna": id_comuna,
+        "id_localidad": id_localidad,
+        "punto": punto,
+        "direccion": direccion,
+        "descripcion": descripcion,
+        "visibilidad": visibilidad,
+        "horas_vigencia": horas_vigencia,
+    }
     try:
-        with transaccion() as cursor:
-            cursor.execute(
-                f"""
-                INSERT INTO reporte (
-                    id_usuario, id_categoria, id_comuna, id_localidad,
-                    ubicacion, direccion_referencia, descripcion, visibilidad, fecha_expiracion
-                ) VALUES (
-                    %s, %s, %s, %s, {PUNTO_SQL}, %s, %s, %s,
-                    DATE_ADD(NOW(), INTERVAL %s HOUR)
-                )
-                """,
-                (
-                    usuario["id_usuario"],
-                    id_categoria,
-                    id_comuna,
-                    id_localidad,
-                    punto_wkt,
-                    direccion,
-                    descripcion,
-                    visibilidad,
-                    horas_vigencia,
-                ),
-            )
-            id_reporte = cursor.lastrowid
-
-            for id_grupo in ids_grupos:
-                cursor.execute(
-                    "INSERT INTO grupo_reporte (id_grupo, id_reporte) VALUES (%s, %s)",
-                    (id_grupo, id_reporte),
-                )
-
-            if evidencia_url is not None:
-                cursor.execute(
-                    "INSERT INTO reporte_imagen (id_reporte, url_archivo, orden) VALUES (%s, %s, 1)",
-                    (id_reporte, evidencia_url),
-                )
-    except mysql.connector.Error as error:
+        id_reporte = _guardar_reporte(datos, grupos, evidencia_url)
+    except Exception as error:
         if ruta_evidencia is not None:
             ruta_evidencia.unlink(missing_ok=True)
-        raise HTTPException(status_code=400, detail=error.msg)
+        if isinstance(error, mysql.connector.Error):
+            raise error_bd(error, "No se pudo guardar el reporte. Inténtalo otra vez") from error
+        raise
 
-    # Los avisos van aqui, con el reporte ya confirmado en la BD. Primero los del
-    # grupo: quien es miembro y además tiene una zona segura cerca recibe un solo
-    # aviso, el del grupo. Un reporte privado no avisa a las zonas seguras.
-    avisos_grupo = _notificar_grupos(id_reporte, ids_grupos, usuario["id_usuario"])
-    # Si otro vecino ya reportó el mismo hecho, quien ya recibió esa alerta no la
-    # recibe de nuevo: para la comunidad es el mismo incidente.
-    ya_avisados = [] if visibilidad == "GRUPO" else [
-        r["id_reporte"] for r in reportes_del_incidente(id_reporte) if r["id_reporte"] != id_reporte
-    ]
-    avisos = 0 if visibilidad == "GRUPO" else _notificar_zonas_seguras(
-        id_reporte, punto_wkt, usuario["id_usuario"], ya_avisados
+    zonas_notificadas, miembros_notificados = _generar_avisos(
+        id_reporte, punto, usuario["id_usuario"], grupos, privado=visibilidad == "GRUPO"
     )
     # El push sale después de responder, igual que los correos: no demora el reporte.
-    if avisos or avisos_grupo:
+    if zonas_notificadas or miembros_notificados:
         tareas.add_task(push.enviar_alertas_de_reporte, id_reporte)
 
     return {
@@ -449,436 +182,7 @@ def crear_reporte(
         "estado": "PENDIENTE",
         "visibilidad": visibilidad,
         "evidencia_url": evidencia_url,
-        "zonas_notificadas": avisos,
-        "grupos": ids_grupos,
-        "miembros_notificados": avisos_grupo,
+        "zonas_notificadas": zonas_notificadas,
+        "grupos": grupos,
+        "miembros_notificados": miembros_notificados,
     }
-
-
-def _leer_ids_grupos(texto: str) -> list[int]:
-    try:
-        ids = {int(parte) for parte in texto.split(",") if parte.strip()}
-    except ValueError:
-        raise HTTPException(status_code=422, detail="Los grupos elegidos no son válidos")
-    if any(id_grupo < 1 for id_grupo in ids):
-        raise HTTPException(status_code=422, detail="Los grupos elegidos no son válidos")
-    return sorted(ids)
-
-
-def _validar_grupos_del_reporte(ids_grupos: list[int], id_usuario: int, punto_wkt: str) -> None:
-    """Cada grupo elegido debe estar activo, tener al autor como miembro y contener el punto del incidente."""
-    marcas = ", ".join(["%s"] * len(ids_grupos))
-    validos = consultar(
-        f"""
-        SELECT g.id_grupo
-        FROM grupo g
-        JOIN grupo_miembro m ON m.id_grupo = g.id_grupo AND m.id_usuario = %s
-        WHERE g.id_grupo IN ({marcas})
-          AND g.activo = 1
-          AND ST_Distance_Sphere(g.centro, {PUNTO_SQL}) <= g.radio_metros
-        """,
-        (id_usuario, *ids_grupos, punto_wkt),
-    )
-    if len(validos) != len(ids_grupos):
-        raise HTTPException(
-            status_code=422,
-            detail="Solo puedes compartir el reporte en tus grupos cuya área incluye el lugar del incidente",
-        )
-
-
-def _notificar_grupos(id_reporte: int, ids_grupos: list[int], id_autor: int) -> int:
-    """Avisa a los miembros de los grupos donde se compartió el reporte.
-
-    Igual que _notificar_zonas_seguras: corre fuera de la transacción del reporte
-    y, si falla, solo se pierde el aviso (el reporte ya está en el chat del grupo).
-    Quien está en varios de esos grupos recibe un solo aviso.
-    """
-    if not ids_grupos:
-        return 0
-    marcas = ", ".join(["%s"] * len(ids_grupos))
-    try:
-        with transaccion() as cursor:
-            cursor.execute(
-                f"""
-                INSERT INTO notificacion (id_usuario, id_reporte, id_grupo, motivo)
-                SELECT id_usuario, %s, id_grupo, 'GRUPO'
-                FROM (
-                    SELECT m.id_usuario, m.id_grupo,
-                           ROW_NUMBER() OVER (PARTITION BY m.id_usuario ORDER BY m.id_grupo) AS orden
-                    FROM grupo_miembro m
-                    JOIN usuario u ON u.id_usuario = m.id_usuario
-                    WHERE m.id_grupo IN ({marcas})
-                      AND m.id_usuario <> %s
-                      AND u.estado = 'ACTIVO'
-                ) AS candidatos
-                WHERE orden = 1
-                """,
-                (id_reporte, *ids_grupos, id_autor),
-            )
-            return cursor.rowcount or 0
-    except mysql.connector.Error as error:
-        log.error("No se pudieron generar los avisos de grupo del reporte %s: %s", id_reporte, error)
-        return 0
-
-
-def _notificar_zonas_seguras(
-    id_reporte: int, punto_wkt: str, id_autor: int, mismo_incidente: list[int] | None = None
-) -> int:
-    """Avisa a los vecinos cuyo reporte cayo dentro de alguna de sus zonas seguras.
-
-    Corre DESPUES de confirmar el reporte y a proposito fuera de su transaccion:
-    si el cruce falla, el reporte ya quedo guardado y solo se pierde el aviso.
-    De cada usuario se toma su zona mas cercana al incidente, para que no reciba
-    dos alertas del mismo hecho cuando sus zonas se superponen. Tampoco se avisa a
-    quien ya recibió la alerta por otro reporte del mismo incidente (`mismo_incidente`).
-    """
-    mismo_incidente = mismo_incidente or []
-    filtro_incidente = ""
-    if mismo_incidente:
-        marcas = ", ".join(["%s"] * len(mismo_incidente))
-        filtro_incidente = f"""
-                      AND NOT EXISTS (
-                          SELECT 1 FROM notificacion n2
-                          WHERE n2.id_reporte IN ({marcas}) AND n2.id_usuario = z.id_usuario
-                      )"""
-    try:
-        with transaccion() as cursor:
-            cursor.execute(
-                f"""
-                INSERT INTO notificacion (
-                    id_usuario, id_reporte, id_zona_segura, motivo, distancia_metros
-                )
-                SELECT id_usuario, %s, id_zona_segura, 'ZONA_SEGURA', distancia_metros
-                FROM (
-                    SELECT z.id_usuario,
-                           z.id_zona_segura,
-                           ROUND(ST_Distance_Sphere(z.centro, {PUNTO_SQL})) AS distancia_metros,
-                           ROW_NUMBER() OVER (
-                               PARTITION BY z.id_usuario
-                               ORDER BY ST_Distance_Sphere(z.centro, {PUNTO_SQL})
-                           ) AS orden
-                    FROM zona_segura z
-                    JOIN usuario u ON u.id_usuario = z.id_usuario
-                    LEFT JOIN usuario_preferencia p ON p.id_usuario = z.id_usuario
-                    WHERE z.activa = 1
-                      AND z.notif_activa = 1
-                      AND z.id_usuario <> %s
-                      AND u.estado = 'ACTIVO'
-                      AND COALESCE(p.notif_zona_activa, 1) = 1
-                      AND ST_Distance_Sphere(z.centro, {PUNTO_SQL}) <= z.radio_metros
-                      AND NOT EXISTS (
-                          SELECT 1 FROM notificacion n
-                          WHERE n.id_reporte = %s AND n.id_usuario = z.id_usuario
-                      ){filtro_incidente}
-                ) AS candidatas
-                WHERE orden = 1
-                """,
-                (id_reporte, punto_wkt, punto_wkt, id_autor, punto_wkt, id_reporte, *mismo_incidente),
-            )
-            return cursor.rowcount or 0
-    except mysql.connector.Error as error:
-        log.error("No se pudieron generar las alertas de zona segura del reporte %s: %s", id_reporte, error)
-        return 0
-
-
-# Al buscar el incidente de un reporte se revisa este entorno: más amplio que la
-# regla de agrupación, para alcanzar también los reportes encadenados.
-VENTANA_INCIDENTE_MINUTOS = 24 * 60
-VENTANA_INCIDENTE_METROS = 5000
-
-
-def reportes_del_incidente(id_reporte: int) -> list[dict]:
-    """El reporte y los vigentes y públicos del mismo incidente, del más antiguo al más nuevo."""
-    filas = consultar(
-        """
-        SELECT r.id_reporte, c.codigo AS categoria_codigo,
-               ST_Latitude(r.ubicacion) AS latitud, ST_Longitude(r.ubicacion) AS longitud,
-               r.fecha_creacion, r.descripcion, r.estado, r.id_usuario,
-               r.total_confirmaciones, r.total_desmentidos
-        FROM reporte base
-        JOIN reporte r ON r.id_categoria = base.id_categoria
-        JOIN categoria_incidente c ON c.id_categoria = r.id_categoria
-        WHERE base.id_reporte = %s
-          AND (r.id_reporte = base.id_reporte OR (
-                r.visibilidad = 'PUBLICO'
-                AND r.estado IN ('PENDIENTE', 'VALIDADO')
-                AND (r.fecha_expiracion IS NULL OR r.fecha_expiracion > NOW())))
-          AND ABS(TIMESTAMPDIFF(MINUTE, r.fecha_creacion, base.fecha_creacion)) <= %s
-          AND ST_Distance_Sphere(r.ubicacion, base.ubicacion) <= %s
-        """,
-        (id_reporte, VENTANA_INCIDENTE_MINUTOS, VENTANA_INCIDENTE_METROS),
-    )
-    return incidentes.grupo_de(id_reporte, filas)
-
-
-def _entidad_emergencia(id_entidad, id_comuna: int):
-    """Organismo a llamar: el de la categoría; si no tiene, Seguridad Ciudadana (u otro) de la comuna."""
-    if id_entidad is not None:
-        filas = consultar(
-            "SELECT nombre, tipo, telefono FROM entidad_emergencia WHERE id_entidad = %s AND activa = 1",
-            (id_entidad,),
-        )
-        if filas:
-            return filas[0]
-    filas = consultar(
-        """
-        SELECT nombre, tipo, telefono FROM entidad_emergencia
-        WHERE id_comuna = %s AND activa = 1
-        ORDER BY tipo = 'SEGURIDAD_CIUDADANA' DESC, id_entidad
-        LIMIT 1
-        """,
-        (id_comuna,),
-    )
-    return filas[0] if filas else None
-
-
-# Nombres de fantasía para quien reporta: por seguridad, el nombre real nunca
-# sale de la API (evita represalias contra quien denuncia).
-ADJETIVOS_SURICATA = (
-    "Vigía", "Centinela", "Valiente", "Atenta", "Curiosa", "Veloz", "Guardiana", "Exploradora",
-    "Solidaria", "Despierta", "Alerta", "Intrépida", "Astuta", "Serena", "Audaz", "Protectora",
-)
-
-
-def alias_autor(id_reporte: int) -> str:
-    """Alias fijo por reporte (siempre el mismo al recargar), p. ej. «Suricata Centinela 42».
-
-    Sale del id del reporte y no del usuario: dos reportes de la misma persona tienen
-    alias distintos, así nadie puede juntar sus reportes para adivinar quién es.
-    """
-    semilla = int.from_bytes(hashlib.sha256(f"alias-reporte:{id_reporte}".encode()).digest()[:8], "big")
-    adjetivo = ADJETIVOS_SURICATA[semilla % len(ADJETIVOS_SURICATA)]
-    numero = 10 + (semilla // len(ADJETIVOS_SURICATA)) % 90
-    return f"Suricata {adjetivo} {numero}"
-
-
-def puede_ver_reporte(id_reporte: int, id_autor: int, visibilidad: str, id_usuario: int | None) -> bool:
-    """Un reporte GRUPO solo lo ven su autor y los miembros de los grupos activos donde se compartió."""
-    if visibilidad == "PUBLICO":
-        return True
-    if id_usuario is None:
-        return False
-    if id_usuario == id_autor:
-        return True
-    return bool(consultar(
-        """
-        SELECT 1
-        FROM grupo_reporte gr
-        JOIN grupo g ON g.id_grupo = gr.id_grupo AND g.activo = 1
-        JOIN grupo_miembro m ON m.id_grupo = gr.id_grupo AND m.id_usuario = %s
-        WHERE gr.id_reporte = %s
-        LIMIT 1
-        """,
-        (id_usuario, id_reporte),
-    ))
-
-
-def verificar_acceso_reporte(id_reporte: int, id_usuario: int | None) -> None:
-    """404 si el reporte no existe o es privado de un grupo ajeno: no se revela cuál de los dos."""
-    filas = consultar("SELECT id_usuario, visibilidad FROM reporte WHERE id_reporte = %s", (id_reporte,))
-    if not filas or not puede_ver_reporte(id_reporte, filas[0]["id_usuario"], filas[0]["visibilidad"], id_usuario):
-        raise HTTPException(status_code=404, detail="Reporte no encontrado")
-
-
-@router.get("/{id_reporte}")
-def detalle_reporte(
-    id_reporte: int = PathParam(ge=1),
-    usuario: dict | None = Depends(usuario_opcional),
-):
-    filas = consultar(
-        """
-        SELECT r.id_reporte, r.id_usuario, r.id_comuna, r.estado, r.visibilidad,
-               r.total_confirmaciones, r.total_desmentidos,
-               c.codigo AS categoria_codigo, c.nombre AS categoria, c.color_hex, c.id_entidad,
-               ST_Latitude(r.ubicacion) AS latitud, ST_Longitude(r.ubicacion) AS longitud,
-               r.direccion_referencia AS direccion, r.descripcion,
-               r.fecha_creacion, r.fecha_expiracion
-        FROM reporte r
-        JOIN categoria_incidente c ON c.id_categoria = r.id_categoria
-        WHERE r.id_reporte = %s
-        """,
-        (id_reporte,),
-    )
-    id_usuario = usuario["id_usuario"] if usuario is not None else None
-    if not filas or not puede_ver_reporte(id_reporte, filas[0]["id_usuario"], filas[0]["visibilidad"], id_usuario):
-        raise HTTPException(status_code=404, detail="Reporte no encontrado")
-    r = filas[0]
-
-    imagenes = consultar(
-        "SELECT url_archivo FROM reporte_imagen WHERE id_reporte = %s ORDER BY orden",
-        (id_reporte,),
-    )
-    # Mismo total que muestra la conversación: los comentarios publicados.
-    comentarios = consultar(
-        "SELECT COUNT(*) AS total FROM comentario WHERE id_reporte = %s AND estado = 'PUBLICADO'",
-        (id_reporte,),
-    )
-
-    # Voto propio, para que la app muestre cuál de los dos botones está marcado.
-    mi_voto = None
-    if usuario is not None:
-        votos = consultar(
-            "SELECT tipo_voto FROM reporte_voto WHERE id_reporte = %s AND id_usuario = %s",
-            (id_reporte, usuario["id_usuario"]),
-        )
-        if votos:
-            mi_voto = votos[0]["tipo_voto"]
-    # El id del autor no se expone: solo si quien consulta es el autor.
-    return {
-        "id_reporte": r["id_reporte"],
-        "categoria_codigo": r["categoria_codigo"],
-        "categoria": r["categoria"],
-        "color_hex": r["color_hex"],
-        "latitud": r["latitud"],
-        "longitud": r["longitud"],
-        "direccion": r["direccion"],
-        "descripcion": r["descripcion"],
-        "estado": r["estado"],
-        "visibilidad": r["visibilidad"],
-        "fecha_creacion": r["fecha_creacion"],
-        "fecha_expiracion": r["fecha_expiracion"],
-        "autor": alias_autor(r["id_reporte"]),
-        "es_autor": usuario is not None and usuario["id_usuario"] == r["id_usuario"],
-        "total_confirmaciones": r["total_confirmaciones"],
-        "total_desmentidos": r["total_desmentidos"],
-        "mi_voto": mi_voto,
-        "imagenes": [fila["url_archivo"] for fila in imagenes],
-        "total_comentarios": int(comentarios[0]["total"]) if comentarios else 0,
-        "emergencia": _entidad_emergencia(r["id_entidad"], r["id_comuna"]),
-        "incidente": _resumen_incidente(id_reporte) if r["visibilidad"] == "PUBLICO" else None,
-    }
-
-
-def _resumen_incidente(id_reporte: int) -> dict:
-    """Reportes del mismo incidente para el detalle; el autor va siempre con su alias."""
-    grupo = reportes_del_incidente(id_reporte) or [{"id_reporte": id_reporte}]
-    return {
-        "id_incidente": grupo[0]["id_reporte"],
-        "total_reportes": len(grupo),
-        "reportes": [
-            {
-                "id_reporte": g["id_reporte"],
-                "autor": alias_autor(g["id_reporte"]),
-                "descripcion": g.get("descripcion"),
-                "fecha_creacion": g.get("fecha_creacion"),
-                "es_este": g["id_reporte"] == id_reporte,
-            }
-            for g in grupo
-        ],
-    }
-
-
-class VotoReporte(BaseModel):
-    tipo_voto: Literal["CONFIRMA", "DESMIENTE"]
-
-
-def _reporte_votable(id_reporte: int, id_usuario: int) -> dict:
-    """Valida que el reporte admita votos de este usuario y lo devuelve."""
-    filas = consultar(
-        """
-        SELECT id_usuario, estado, visibilidad,
-               (fecha_expiracion IS NOT NULL AND fecha_expiracion <= NOW()) AS vencido
-        FROM reporte WHERE id_reporte = %s
-        """,
-        (id_reporte,),
-    )
-    if not filas or not puede_ver_reporte(id_reporte, filas[0]["id_usuario"], filas[0]["visibilidad"], id_usuario):
-        raise HTTPException(status_code=404, detail="Reporte no encontrado")
-    reporte = filas[0]
-    if reporte["id_usuario"] == id_usuario:
-        raise HTTPException(status_code=403, detail="No puedes votar tu propio reporte")
-    if reporte["estado"] not in ("PENDIENTE", "VALIDADO") or reporte["vencido"]:
-        raise HTTPException(status_code=409, detail="Este reporte ya no admite votos")
-    return reporte
-
-
-@router.put("/{id_reporte}/voto")
-def votar_reporte(
-    datos: VotoReporte,
-    id_reporte: int = PathParam(ge=1),
-    usuario: dict = Depends(usuario_actual),
-):
-    """Confirma o desmiente un reporte. Un voto por persona: repetirlo lo cambia.
-
-    Los contadores de `reporte` y el paso a VALIDADO/DESCARTADO los mantienen
-    los triggers de reporte_voto, no esta función: así el conteo no se duplica
-    ni se descuadra si alguien vota fuera de la API.
-    """
-    _reporte_votable(id_reporte, usuario["id_usuario"])
-    try:
-        ejecutar(
-            """
-            INSERT INTO reporte_voto (id_reporte, id_usuario, tipo_voto)
-            VALUES (%s, %s, %s)
-            ON DUPLICATE KEY UPDATE tipo_voto = VALUES(tipo_voto), fecha_voto = NOW()
-            """,
-            (id_reporte, usuario["id_usuario"], datos.tipo_voto),
-        )
-    except mysql.connector.Error as error:
-        raise HTTPException(status_code=400, detail=error.msg)
-    return _resumen_votos(id_reporte, datos.tipo_voto)
-
-
-@router.delete("/{id_reporte}/voto")
-def quitar_voto(
-    id_reporte: int = PathParam(ge=1),
-    usuario: dict = Depends(usuario_actual),
-):
-    """Retira el voto propio. Si no había voto, responde igual (operación idempotente)."""
-    verificar_acceso_reporte(id_reporte, usuario["id_usuario"])
-    ejecutar(
-        "DELETE FROM reporte_voto WHERE id_reporte = %s AND id_usuario = %s",
-        (id_reporte, usuario["id_usuario"]),
-    )
-    return _resumen_votos(id_reporte, None)
-
-
-def _resumen_votos(id_reporte: int, mi_voto: str | None) -> dict:
-    """Contadores ya actualizados por el trigger, para refrescar la pantalla."""
-    filas = consultar(
-        "SELECT total_confirmaciones, total_desmentidos, estado FROM reporte WHERE id_reporte = %s",
-        (id_reporte,),
-    )
-    if not filas:
-        raise HTTPException(status_code=404, detail="Reporte no encontrado")
-    return {
-        "id_reporte": id_reporte,
-        "total_confirmaciones": filas[0]["total_confirmaciones"],
-        "total_desmentidos": filas[0]["total_desmentidos"],
-        "estado": filas[0]["estado"],
-        "mi_voto": mi_voto,
-    }
-
-
-@router.post("/{id_reporte}/resolver")
-def resolver_reporte(
-    id_reporte: int = PathParam(ge=1),
-    usuario: dict = Depends(usuario_actual),
-):
-    """Quien creó el reporte lo marca como resuelto; el cambio queda en reporte_estado_historial."""
-    filas = consultar("SELECT id_usuario, estado FROM reporte WHERE id_reporte = %s", (id_reporte,))
-    if not filas:
-        raise HTTPException(status_code=404, detail="Reporte no encontrado")
-    reporte = filas[0]
-    if reporte["id_usuario"] != usuario["id_usuario"]:
-        raise HTTPException(status_code=403, detail="Solo quien creó el reporte puede marcarlo como resuelto")
-    if reporte["estado"] not in ("PENDIENTE", "VALIDADO"):
-        raise HTTPException(status_code=409, detail=f"Este reporte ya está {reporte['estado'].lower()}")
-
-    with transaccion() as cursor:
-        cursor.execute(
-            "UPDATE reporte SET estado = 'RESUELTO' WHERE id_reporte = %s AND estado IN ('PENDIENTE', 'VALIDADO')",
-            (id_reporte,),
-        )
-        if cursor.rowcount == 0:
-            # Otro cambio de estado se adelantó entre la consulta y el UPDATE.
-            raise HTTPException(status_code=409, detail="El estado del reporte cambió. Vuelve a cargarlo")
-        cursor.execute(
-            """
-            INSERT INTO reporte_estado_historial (
-                id_reporte, estado_anterior, estado_nuevo, id_usuario_responsable, motivo
-            ) VALUES (%s, %s, 'RESUELTO', %s, 'Marcado como resuelto por quien lo reportó')
-            """,
-            (id_reporte, reporte["estado"], usuario["id_usuario"]),
-        )
-    return {"id_reporte": id_reporte, "estado": "RESUELTO"}
