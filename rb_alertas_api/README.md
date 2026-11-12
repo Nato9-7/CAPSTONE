@@ -40,13 +40,38 @@ Copia `.env.example` a `.env` y completa los valores. Las variables principales:
 uploads, reglas de incidentes y de zonas de riesgo). El `.env` y el JSON de Firebase
 **no se suben al repositorio**.
 
+## Base de datos
+
+El esquema base de MySQL está en
+`Fase 2/Evidencias proyecto/VPS/db/init/01-rbalerta_db.sql` (lo carga el contenedor
+de MySQL al crearse). Los cambios posteriores están en `sql/` y se ejecutan a mano,
+con un respaldo previo.
+
 ## Ejecución
 
 ```bash
 uvicorn app.main:app --host 0.0.0.0 --port 3000 --reload
 ```
 
-La documentación interactiva queda en `http://localhost:3000/docs`.
+La documentación interactiva queda en `http://localhost:3000/docs` y
+`GET /api/ping` sirve para comprobar que la API responde.
+
+En producción la API corre en un contenedor Docker (puerto interno 8000) en la VM
+de Azure, detrás de Caddy con HTTPS (`https://rbalerta.duckdns.org`). Al subir
+cambios de esta carpeta a `main`, el servidor la reconstruye en menos de 5 minutos
+y, si la versión nueva no responde, vuelve a la anterior.
+
+## Endpoints
+
+| Prefijo | Contenido | Acceso |
+| --- | --- | --- |
+| `/api/usuarios` | Registro, inicio y cierre de sesión, perfil, verificación de correo, recuperación de contraseña, zonas seguras (`/zonas`), alertas (`/notificaciones`) y dispositivos para push (`/dispositivos`). | Público (registro, login, enlaces del correo) o con sesión |
+| `/api/reportes` | Categorías, reportes del mapa, cercanos, zonas de riesgo, mapa de calor, reportes propios, creación con evidencia, detalle, votos, resolución, comentarios y denuncias. | Consultas del mapa públicas; el resto con sesión |
+| `/api/grupos` | Grupos vecinales: creación, edición, código de invitación, unirse, miembros, salir y reportes del grupo. | Con sesión |
+| `/api/admin` | Resumen, moderación de reportes, comentarios, denuncias, usuarios y grupos, y el grafo (hallazgos y explorador). | Cuenta admin (`ADMIN_EMAILS`) |
+
+Las rutas protegidas reciben el token de sesión en `Authorization: Bearer <token>`.
+El detalle de cada endpoint está en `/docs`.
 
 ## Pruebas
 

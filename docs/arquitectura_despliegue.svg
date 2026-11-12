@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1060 620" width="1060" height="620" font-family="Segoe UI, Roboto, Helvetica, Arial, sans-serif" role="img" aria-labelledby="titulo desc">
+  <title id="titulo">Arquitectura de despliegue de RB Alertas</title>
+  <desc id="desc">La app móvil Flutter se conecta por HTTPS a Caddy, que reenvía a la API FastAPI dentro de Docker Compose en una VM de Azure. La API usa MySQL y Neo4j, envía push por Firebase y correos por Gmail SMTP. El servidor se actualiza desde la rama main de GitHub cada 5 minutos y respalda MySQL diariamente.</desc>
+  <defs>
+    <marker id="flecha" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M1,1 L9,5 L1,9" fill="none" stroke="#8A8A85" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+    <style>
+      .ext   { fill:#EFEEEA; stroke:#CBC9C2; stroke-width:1.3; }
+      .prop  { fill:#E4F3EE; stroke:#7DBBA6; stroke-width:1.3; }
+      .cont  { fill:#EFEEEA; stroke:#CBC9C2; stroke-width:1.3; }
+      .red   { fill:#F7F7F4; stroke:#C9DCD5; stroke-width:1.3; stroke-dasharray:6 4; }
+      .t     { font-size:17px; fill:#2B2B2B; text-anchor:middle; font-weight:500; }
+      .s     { font-size:13.5px; fill:#5A5A56; text-anchor:middle; }
+      .ct    { font-size:17px; fill:#2B2B2B; font-weight:500; }
+      .cs    { font-size:13.5px; fill:#5A5A56; }
+      .et    { font-size:11.5px; fill:#7A7A75; }
+      .l     { fill:none; stroke:#8A8A85; stroke-width:1.5; marker-end:url(#flecha); }
+      .ld    { fill:none; stroke:#8A8A85; stroke-width:1.5; stroke-dasharray:5 4; marker-end:url(#flecha); }
+    </style>
+  </defs>
+
+  <rect width="1060" height="620" fill="#FFFFFF"/>
+
+  <!-- ===== Columna izquierda: externos y cliente ===== -->
+  <rect class="ext" x="40" y="30" width="200" height="62" rx="9"/>
+  <text class="t" x="140" y="56">Gmail SMTP</text>
+  <text class="s" x="140" y="78">Verificación y recuperación</text>
+
+  <rect class="ext" x="40" y="140" width="200" height="62" rx="9"/>
+  <text class="t" x="140" y="166">Firebase FCM</text>
+  <text class="s" x="140" y="188">Notificaciones push</text>
+
+  <rect class="prop" x="40" y="250" width="200" height="62" rx="9"/>
+  <text class="t" x="140" y="276">App móvil</text>
+  <text class="s" x="140" y="298">Flutter · Android e iOS</text>
+
+  <rect class="ext" x="40" y="350" width="200" height="62" rx="9"/>
+  <text class="t" x="140" y="376">DuckDNS</text>
+  <text class="s" x="140" y="398">rbalerta.duckdns.org</text>
+
+  <rect class="ext" x="40" y="440" width="200" height="62" rx="9"/>
+  <text class="t" x="140" y="466">OpenStreetMap</text>
+  <text class="s" x="140" y="488">Teselas del mapa</text>
+
+  <rect class="ext" x="40" y="530" width="200" height="62" rx="9"/>
+  <text class="t" x="140" y="556">PC de desarrollo</text>
+  <text class="s" x="140" y="578">git push a main</text>
+
+  <!-- ===== VM de Azure ===== -->
+  <rect class="cont" x="290" y="20" width="750" height="470" rx="16"/>
+  <text class="ct" x="312" y="48">VM Microsoft Azure</text>
+  <text class="cs" x="312" y="69">Ubuntu 22.04 · solo puertos 80 y 443 abiertos</text>
+
+  <!-- Docker Compose -->
+  <rect class="red" x="310" y="85" width="710" height="290" rx="12"/>
+  <text class="ct" x="330" y="110">Docker Compose · red interna</text>
+
+  <rect class="prop" x="330" y="140" width="200" height="62" rx="9"/>
+  <text class="t" x="430" y="166">api</text>
+  <text class="s" x="430" y="188">FastAPI · Uvicorn · :8000</text>
+
+  <rect class="prop" x="580" y="140" width="200" height="62" rx="9"/>
+  <text class="t" x="680" y="166">db</text>
+  <text class="s" x="680" y="188">MySQL 8 · :3306</text>
+
+  <rect class="prop" x="810" y="140" width="200" height="62" rx="9"/>
+  <text class="t" x="910" y="166">neo4j</text>
+  <text class="s" x="910" y="188">Grafo · solo 127.0.0.1</text>
+
+  <rect class="prop" x="330" y="290" width="200" height="62" rx="9"/>
+  <text class="t" x="430" y="316">caddy</text>
+  <text class="s" x="430" y="338">HTTPS · 80/443 · Let's Encrypt</text>
+
+  <rect class="prop" x="580" y="290" width="430" height="62" rx="9"/>
+  <text class="t" x="795" y="316">Volúmenes</text>
+  <text class="s" x="795" y="338">Datos de MySQL · fotos y videos (uploads) · grafo</text>
+
+  <!-- Procesos del servidor (cron) -->
+  <rect class="prop" x="455" y="405" width="200" height="62" rx="9"/>
+  <text class="t" x="555" y="431">Auto-despliegue</text>
+  <text class="s" x="555" y="453">cron cada 5 min · rollback</text>
+
+  <rect class="prop" x="810" y="405" width="200" height="62" rx="9"/>
+  <text class="t" x="910" y="431">Respaldos</text>
+  <text class="s" x="910" y="453">cron diario 03:15 · MySQL</text>
+
+  <!-- GitHub -->
+  <rect class="ext" x="455" y="530" width="200" height="62" rx="9"/>
+  <text class="t" x="555" y="556">GitHub</text>
+  <text class="s" x="555" y="578">Repositorio · rama main</text>
+
+  <!-- ===== Conexiones ===== -->
+  <!-- api -> SMTP y Firebase -->
+  <path class="l" d="M330,152 H270 V61 H242"/>
+  <path class="l" d="M330,171 H242"/>
+  <!-- Firebase -> App -->
+  <path class="l" d="M140,202 V248"/>
+  <!-- App -> caddy (HTTPS) -->
+  <path class="l" d="M240,281 H262 V321 H328"/>
+  <text class="et" x="272" y="314">HTTPS</text>
+  <!-- App -> DuckDNS y OSM (punteadas) -->
+  <path class="ld" d="M140,312 V348"/>
+  <path class="ld" d="M40,295 H22 V471 H38"/>
+  <!-- caddy -> api -->
+  <path class="l" d="M430,290 V204"/>
+  <text class="et" x="438" y="252">proxy inverso</text>
+  <!-- api -> db -->
+  <path class="l" d="M530,171 H578"/>
+  <text class="et" x="542" y="164">SQL</text>
+  <!-- api -> neo4j -->
+  <path class="l" d="M480,140 V124 H910 V138"/>
+  <text class="et" x="620" y="119">copia de MySQL cada 10 min · Bolt</text>
+  <!-- db y neo4j -> volúmenes -->
+  <path class="l" d="M680,202 V288"/>
+  <path class="l" d="M910,202 V288"/>
+  <!-- volúmenes -> respaldos -->
+  <path class="l" d="M910,352 V403"/>
+  <!-- PC -> GitHub -> auto-despliegue -> api -->
+  <path class="l" d="M240,561 H453"/>
+  <path class="l" d="M555,530 V469"/>
+  <path class="l" d="M555,405 V186 H532"/>
+  <text class="et" x="563" y="390">git pull + docker build</text>
+</svg>
