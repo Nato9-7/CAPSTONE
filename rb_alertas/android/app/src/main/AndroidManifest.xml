@@ -7,6 +7,11 @@
     <!-- Geolocalizacion de reportes y zonas (geolocator) -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- Aviso al pasar por zonas de riesgo con la app cerrada (geocercas). Se
+         pide solo si el usuario activa ese aviso, después de explicarle para qué. -->
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <!-- Volver a vigilar las zonas de riesgo después de reiniciar el teléfono -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <!-- Evidencia fotografica de los reportes (image_picker) -->
     <uses-permission android:name="android.permission.CAMERA" />
@@ -41,6 +46,18 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- Zonas de riesgo: Android avisa al entrar a una, aunque la app esté cerrada -->
+        <receiver
+            android:name=".ReceptorGeocercas"
+            android:exported="false" />
+        <receiver
+            android:name=".ReceptorArranque"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
         <!-- Canal de los avisos push; la app lo crea al arrancar (PushServicio) -->
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"

@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:rb_alertas/config/api_config.dart';
+import 'package:rb_alertas/servicios/aviso_zonas_riesgo.dart';
 import 'package:rb_alertas/servicios/estado_alertas_servicio.dart';
 import 'package:rb_alertas/servicios/reporte_servicio.dart';
 import 'package:rb_alertas/servicios/sesion.dart';
@@ -51,6 +54,11 @@ class _MapaVistaState extends State<MapaVista> {
   LatLng? _miUbicacion;
   bool _buscandoUbicacion = false;
 
+  /// Ubicación en vivo mientras el mapa está abierto, para avisar al entrar
+  /// a una zona de riesgo.
+  StreamSubscription<Position>? _seguimiento;
+  ZonaRiesgo? _zonaActual;
+
   /// Panel de filtros desplegado bajo el botón "Filtrar".
   bool _filtrosAbiertos = false;
 
@@ -87,6 +95,7 @@ class _MapaVistaState extends State<MapaVista> {
 
   @override
   void dispose() {
+    _seguimiento?.cancel();
     _mapController.dispose();
     super.dispose();
   }
@@ -133,18 +142,82 @@ class _MapaVistaState extends State<MapaVista> {
   Future<void> _cargarZonas() async {
     try {
       final zonas = await _reporteServicio.obtenerZonasRiesgo(dias: _diasZonas);
-      if (mounted) setState(() => _zonas = zonas);
+      if (!mounted) return;
+      setState(() => _zonas = zonas);
+      if (_modoAdmin) return;
+      final preferencia = await AvisoZonasRiesgo.cargarPreferencia();
+      await AvisoZonasRiesgo.sincronizar(zonas);
+      if (mounted && preferencia == null && zonas.isNotEmpty) _ofrecerAviso();
     } catch (_) {
       // Sin zonas el mapa funciona igual: solo no se marcan.
     }
   }
 
-  /// Calor de la categoría filtrada; sin filtro, robos, accidentes y similares.
+  /// Primera vez que hay zonas: se explica el aviso antes de pedir permisos.
+  Future<void> _ofrecerAviso() async {
+    final acepta = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: const Icon(Icons.gpp_maybe_rounded, color: RBColores.rojo, size: 32),
+        title: const Text('¿Te avisamos al pasar por zonas de riesgo?'),
+        content: const Text(
+          'RB Alertas puede avisarte cuando entres a un lugar con robos o '
+          'accidentes frecuentes, incluso con la app cerrada.\n\n'
+          'Para eso usa tu ubicación en segundo plano: elige "Permitir todo el '
+          'tiempo". Tu ubicación no se envía ni se guarda en el servidor; solo '
+          'el teléfono la compara con las zonas. Puedes desactivarlo cuando quieras '
+          'desde la tarjeta de cualquier zona.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Ahora no')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Activar avisos')),
+        ],
+      ),
+    );
+    if (acepta == true) {
+      await _activarAviso();
+    } else if (acepta == false) {
+      await AvisoZonasRiesgo.rechazar();
+    }
+  }
+
+  Future<void> _activarAviso() async {
+    final resultado = await AvisoZonasRiesgo.activar();
+    if (!mounted) return;
+    switch (resultado) {
+      case ActivacionAviso.activado:
+        _mostrarMensaje('Listo: te avisaremos al pasar por zonas de riesgo');
+      case ActivacionAviso.soloConAppAbierta:
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(SnackBar(
+            duration: const Duration(seconds: 8),
+            content: const Text(
+              'Te avisaremos con la app abierta. Para recibirlo con la app cerrada, '
+              'elige "Permitir todo el tiempo" en la ubicación.',
+            ),
+            action: SnackBarAction(label: 'Ajustes', onPressed: Geolocator.openAppSettings),
+          ));
+      case ActivacionAviso.sinPermiso:
+        _mostrarMensaje('Sin permiso de ubicación no podemos avisarte');
+    }
+    _ubicacionSiHayPermiso();
+  }
+
+  Future<void> _cambiarAviso(bool activar) async {
+    if (activar) {
+      await _activarAviso();
+    } else {
+      await AvisoZonasRiesgo.desactivar();
+      if (mounted) _mostrarMensaje('Ya no te avisaremos al pasar por zonas de riesgo');
+    }
+  }
+
+  /// Un solo mapa de calor: robos y accidentes de tránsito.
   Future<void> _cargarCalor() async {
-    final categoria = _codigoFiltro;
     try {
-      final calor = await _reporteServicio.obtenerCalor(dias: _diasZonas, categoria: categoria);
-      if (mounted && categoria == _codigoFiltro) setState(() => _calor = calor);
+      final calor = await _reporteServicio.obtenerCalor(dias: _diasZonas);
+      if (mounted) setState(() => _calor = calor);
     } catch (_) {
       // Sin calor el mapa funciona igual.
     }
@@ -152,7 +225,14 @@ class _MapaVistaState extends State<MapaVista> {
 
   bool get _lejos => _zoom < _zoomCalor;
 
-  bool get _mostrarCalor => _verZonas && _calor.isNotEmpty && (_lejos || _calorSiempre);
+  /// El calor es de robos y accidentes: si se filtra otra categoría, se oculta.
+  bool get _filtroAdmiteCalor {
+    final filtro = _codigoFiltro?.toUpperCase();
+    return filtro == null || filtro == 'ROBO' || filtro == 'ACCIDENTE';
+  }
+
+  bool get _mostrarCalor =>
+      _verZonas && _filtroAdmiteCalor && _calor.isNotEmpty && (_lejos || _calorSiempre);
 
   /// Los círculos se dibujan de cerca; en el panel, siempre.
   bool get _mostrarCirculos => !_lejos || _modoAdmin;
@@ -206,10 +286,42 @@ class _MapaVistaState extends State<MapaVista> {
         return;
       }
       final punto = await _ubicacionServicio.obtenerUbicacionActual();
-      if (mounted) setState(() => _miUbicacion = punto);
+      if (!mounted) return;
+      setState(() => _miUbicacion = punto);
+      _zonaActual = _zonaQueContiene(punto);
+      _seguirUbicacion();
     } catch (_) {
       // Sin ubicación el mapa funciona igual.
     }
+  }
+
+  ZonaRiesgo? _zonaQueContiene(LatLng punto) {
+    for (final z in _zonas) {
+      if (zonaContiene(z, punto)) return z;
+    }
+    return null;
+  }
+
+  /// Mientras el mapa está abierto, el punto azul y el banner siguen al
+  /// usuario; al entrar a una zona nueva, además llega el aviso.
+  void _seguirUbicacion() {
+    if (_seguimiento != null || _modoAdmin) return;
+    _seguimiento = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 20),
+    ).listen(
+      (posicion) {
+        if (!mounted) return;
+        final punto = LatLng(posicion.latitude, posicion.longitude);
+        final zona = _zonaQueContiene(punto);
+        if (zona != null && zona != _zonaActual) AvisoZonasRiesgo.alEntrar(zona);
+        _zonaActual = zona;
+        setState(() => _miUbicacion = punto);
+      },
+      onError: (_) {
+        _seguimiento?.cancel();
+        _seguimiento = null;
+      },
+    );
   }
 
   /// Botón de ubicación: centra el mapa en el usuario.
@@ -219,6 +331,7 @@ class _MapaVistaState extends State<MapaVista> {
       final punto = await _ubicacionServicio.obtenerUbicacionActual();
       if (!mounted) return;
       setState(() => _miUbicacion = punto);
+      _seguirUbicacion();
       if (_mapaListo) _mapController.move(punto, 16);
     } on UbicacionServicioException catch (e) {
       if (mounted) _mostrarMensaje(e.mensaje.split(':').first);
@@ -478,11 +591,7 @@ class _MapaVistaState extends State<MapaVista> {
                   ),
                   if (mostrarCalor && seleccionado == null && zonaSeleccionada == null && !_filtrosAbiertos) ...[
                     const SizedBox(height: 8),
-                    LeyendaCalor(
-                      texto: categoriaFiltro == null
-                          ? 'Robos y accidentes · $_diasZonas días'
-                          : '${etiquetaCortaCategoria(categoriaFiltro.codigo, categoriaFiltro.nombre)} · $_diasZonas días',
-                    ),
+                    const LeyendaCalor(texto: 'Robos y accidentes · $_diasZonas días'),
                   ],
                   if (zonaDondeEstoy != null && zonaSeleccionada == null && seleccionado == null && !_filtrosAbiertos) ...[
                     const SizedBox(height: 8),
@@ -497,8 +606,6 @@ class _MapaVistaState extends State<MapaVista> {
                         setState(() {
                           _codigoFiltro = codigo;
                           _filtrosAbiertos = false;
-                          _calor = [];
-                          _cargarCalor();
                           if (codigo != null && _seleccionado?.categoriaCodigo != codigo) {
                             _cerrarVistaPrevia();
                           }
@@ -572,6 +679,8 @@ class _MapaVistaState extends State<MapaVista> {
                 zona: zonaSeleccionada,
                 dias: _diasZonas,
                 onCerrar: () => setState(() => _zonaSeleccionada = null),
+                avisoActivo: _modoAdmin || !AvisoZonasRiesgo.soportado ? null : AvisoZonasRiesgo.activo,
+                onCambiarAviso: _cambiarAviso,
               ),
             )
           else if (seleccionado != null)

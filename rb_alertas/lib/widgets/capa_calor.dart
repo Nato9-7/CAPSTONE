@@ -1,6 +1,7 @@
-// Mapa de calor sobre flutter_map: cada celda con hechos se dibuja como una
-// mancha difusa (amarillo -> naranjo -> rojo) que crece con su peso. Donde se
-// juntan varias, el color se acumula y se pone más rojo.
+// Mapa de calor sobre flutter_map, solo de robos y accidentes de tránsito.
+// La API ya junta los hechos cercanos: cada punto es una sola mancha difusa
+// (amarillo -> naranjo -> rojo) que se agranda y enrojece con cuántos hechos
+// se juntaron ahí, en vez de dibujar cada hecho disperso.
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -15,12 +16,10 @@ const _naranjo = Color(0xFFEA580C);
 class CapaCalor extends StatelessWidget {
   final List<PuntoCalor> puntos;
 
-  /// Radio de cada mancha en el terreno; con poco zoom nunca baja de
-  /// [radioMinimoPx] para que se siga viendo.
-  final double radioMetros;
+  /// Con poco zoom la mancha nunca baja de [radioMinimoPx] para que se vea.
   final double radioMinimoPx;
 
-  const CapaCalor({super.key, required this.puntos, this.radioMetros = 170, this.radioMinimoPx = 22});
+  const CapaCalor({super.key, required this.puntos, this.radioMinimoPx = 22});
 
   @override
   Widget build(BuildContext context) {
@@ -28,7 +27,7 @@ class CapaCalor extends StatelessWidget {
     return IgnorePointer(
       child: CustomPaint(
         size: Size.infinite,
-        painter: _PintorCalor(puntos, camara, radioMetros, radioMinimoPx),
+        painter: _PintorCalor(puntos, camara, radioMinimoPx),
       ),
     );
   }
@@ -37,10 +36,9 @@ class CapaCalor extends StatelessWidget {
 class _PintorCalor extends CustomPainter {
   final List<PuntoCalor> puntos;
   final MapCamera camara;
-  final double radioMetros;
   final double radioMinimoPx;
 
-  _PintorCalor(this.puntos, this.camara, this.radioMetros, this.radioMinimoPx);
+  _PintorCalor(this.puntos, this.camara, this.radioMinimoPx);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -48,40 +46,39 @@ class _PintorCalor extends CustomPainter {
     final maximo = puntos.map((p) => p.peso).reduce(math.max);
     final pantalla = Offset.zero & size;
 
-    // Metros a píxeles con el zoom actual (se mide en el centro del mapa).
-    final centro = camara.center;
-    final borde = const Distance().offset(centro, radioMetros, 90);
-    final radioBase = math.max(
-      radioMinimoPx,
-      (camara.getOffsetFromOrigin(borde) - camara.getOffsetFromOrigin(centro)).distance,
-    );
-
     canvas.saveLayer(pantalla, Paint()..color = Colors.white.withValues(alpha: 0.9));
-    // Primero los más suaves, para que los más intensos queden encima.
+    // Primero las más chicas, para que las más intensas queden encima.
     for (final p in puntos.reversed) {
-      final c = camara.getOffsetFromOrigin(LatLng(p.latitud, p.longitud));
-      // Raíz: un lugar con 9 hechos no debe tapar con una mancha 9 veces mayor.
-      final t = math.sqrt(p.peso / maximo);
-      final r = radioBase * (0.85 + 0.9 * t);
+      final punto = LatLng(p.latitud, p.longitud);
+      final c = camara.getOffsetFromOrigin(punto);
+      // Metros a píxeles con el zoom actual, en el lugar de la mancha.
+      final borde = const Distance().offset(punto, p.radioMetros, 90);
+      final r = math.max(radioMinimoPx, (camara.getOffsetFromOrigin(borde) - c).distance);
       if (!pantalla.inflate(r).contains(c)) continue;
-      _mancha(canvas, c, r * 1.35, _amarillo, 0.25 + 0.3 * t);
-      _mancha(canvas, c, r, _naranjo, 0.15 + 0.45 * t);
-      _mancha(canvas, c, r * 0.55, RBColores.rojo, 0.05 + 0.75 * t);
+      // Raíz: un lugar con 9 hechos no debe ser 9 veces más rojo.
+      final t = math.sqrt(p.peso / maximo);
+      _mancha(canvas, c, r, t);
     }
     canvas.restore();
   }
 
-  void _mancha(Canvas canvas, Offset centro, double radio, Color color, double alfa) {
+  /// Una sola mancha: centro rojo, borde naranjo y amarillo que se desvanece.
+  void _mancha(Canvas canvas, Offset centro, double radio, double t) {
     final paint = Paint()
       ..shader = RadialGradient(
-        colors: [color.withValues(alpha: alfa.clamp(0, 1)), color.withValues(alpha: 0)],
+        colors: [
+          RBColores.rojo.withValues(alpha: (0.35 + 0.5 * t).clamp(0, 1)),
+          _naranjo.withValues(alpha: (0.3 + 0.35 * t).clamp(0, 1)),
+          _amarillo.withValues(alpha: (0.2 + 0.25 * t).clamp(0, 1)),
+          _amarillo.withValues(alpha: 0),
+        ],
+        stops: const [0, 0.4, 0.75, 1],
       ).createShader(Rect.fromCircle(center: centro, radius: radio));
     canvas.drawCircle(centro, radio, paint);
   }
 
   @override
-  bool shouldRepaint(_PintorCalor viejo) =>
-      viejo.puntos != puntos || viejo.camara != camara || viejo.radioMetros != radioMetros;
+  bool shouldRepaint(_PintorCalor viejo) => viejo.puntos != puntos || viejo.camara != camara;
 }
 
 /// Leyenda chica: de amarillo (pocos) a rojo (muchos).

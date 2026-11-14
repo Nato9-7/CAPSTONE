@@ -157,16 +157,13 @@ def listar_zonas_riesgo(dias: int = Query(60, ge=7, le=365)):
 
 
 @router.get("/calor")
-def mapa_de_calor(
-    dias: int = Query(60, ge=1, le=365),
-    categoria: str | None = Query(None, pattern=r"^[A-Z_]{1,40}$"),
-):
-    """Hechos por celda de ~110 m para dibujar el mapa de calor.
+def mapa_de_calor(dias: int = Query(60, ge=1, le=365)):
+    """Manchas del mapa de calor de robos y accidentes de tránsito.
 
-    Sin `categoria`, robos, accidentes y demás categorías de riesgo; con ella,
-    solo esa. Los reportes del mismo hecho cuentan una vez.
+    Los reportes del mismo hecho cuentan una vez y los hechos cercanos se
+    juntan en una sola mancha que crece con cuántos son.
     """
-    return {"dias": dias, "puntos": zonas_riesgo.puntos_calor(_reportes_recientes(dias), categoria)}
+    return {"dias": dias, "puntos": zonas_riesgo.puntos_calor(_reportes_recientes(dias))}
 
 
 @router.get("/mios")

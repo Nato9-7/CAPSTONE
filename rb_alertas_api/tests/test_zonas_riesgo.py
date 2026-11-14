@@ -3,7 +3,10 @@ from datetime import datetime, timedelta
 from app.servicios import zonas_riesgo
 
 INICIO = datetime(2026, 11, 1, 22, 0)
-NOMBRES = {"ROBO": "Robo o asalto", "ACCIDENTE": "Accidente de tránsito", "INCENDIO": "Incendio"}
+NOMBRES = {
+    "ROBO": "Robo o asalto", "ACCIDENTE": "Accidente de tránsito", "INCENDIO": "Incendio",
+    "MASCOTA": "Mascota perdida", "VIAL": "Problema en la vía",
+}
 
 
 def reporte(id_reporte, dias=0, norte_metros=0, categoria="ROBO", hora=None):
@@ -73,19 +76,25 @@ def test_accidentes_y_robos_son_zonas_separadas_seguridad_primero():
     assert "velocidad" in zonas[1]["recomendacion"]
 
 
-def test_calor_agrupa_hechos_por_celda_y_no_expone_el_punto_exacto():
+def test_calor_solo_robos_y_accidentes_y_junta_los_cercanos():
     filas = [
-        reporte(1, dias=1), reporte(2, dias=1, norte_metros=10),  # mismo robo, 2 reportes
-        reporte(3, dias=5, norte_metros=30),                       # otro robo, misma celda
-        reporte(4, dias=2, categoria="ACCIDENTE", norte_metros=900),
-        reporte(5, dias=3, categoria="INCENDIO"),                  # no es de riesgo
+        reporte(1, dias=1), reporte(2, dias=1, norte_metros=10),   # mismo robo, 2 reportes
+        reporte(3, dias=5, norte_metros=120),                       # otro robo cerca
+        reporte(4, dias=2, categoria="ACCIDENTE", norte_metros=200),  # accidente cerca
+        reporte(5, dias=3, categoria="ACCIDENTE", norte_metros=3000),  # accidente lejos
+        reporte(6, dias=3, categoria="INCENDIO"),                   # no cuenta
+        reporte(7, dias=3, categoria="VIAL", norte_metros=50),       # no cuenta
     ]
     puntos = zonas_riesgo.puntos_calor(filas)
-    assert [(p["peso"], p["seguridad"]) for p in puntos] == [(2, 2), (1, 0)]
+    # Los tres hechos cercanos quedan en una sola mancha, no dispersos.
+    assert [(p["peso"], p["robos"], p["accidentes"]) for p in puntos] == [(3, 2, 1), (1, 0, 1)]
+    # La mancha con más hechos es más grande.
+    assert puntos[0]["radio_metros"] > puntos[1]["radio_metros"]
     # Coordenadas redondeadas a la celda, no las del reporte.
-    assert puntos[0]["latitud"] == round(round(-41.4693 / 0.001) * 0.001, 6)
+    lat = puntos[0]["latitud"]
+    assert lat == round(round(lat / 0.001) * 0.001, 6)
 
 
-def test_calor_de_una_categoria():
-    filas = [reporte(1, dias=1, categoria="INCENDIO"), reporte(2, dias=1)]
-    assert [p["peso"] for p in zonas_riesgo.puntos_calor(filas, "INCENDIO")] == [1]
+def test_calor_ignora_otras_categorias():
+    filas = [reporte(1, dias=1, categoria="INCENDIO"), reporte(2, dias=1, categoria="MASCOTA")]
+    assert zonas_riesgo.puntos_calor(filas) == []

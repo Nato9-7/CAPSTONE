@@ -150,42 +150,56 @@ def calcular(reportes: list[dict]) -> list[dict]:
     return zonas
 
 
-# Celdas del mapa de calor: ~110 m por lado en Puerto Montt (en la latitud
-# -41°, un grado de longitud mide ~84 km). Se entrega la celda y no el punto
-# exacto para no delatar dónde vive quien reporta.
+# Categorías del mapa de calor: solo robos y accidentes de tránsito.
+CATEGORIAS_CALOR = ("ROBO", "ACCIDENTE")
+
+# Celda a la que se redondea el centro de cada mancha: ~110 m por lado en
+# Puerto Montt (en la latitud -41°, un grado de longitud mide ~84 km). Se
+# entrega la celda y no el punto exacto para no delatar dónde vive quien reporta.
 CELDA_LATITUD = 0.001
 CELDA_LONGITUD = 0.0013
 
+# Tamaño de la mancha: un hecho solo se ve con RADIO_CALOR_BASE y cada hecho
+# más que se junta la agranda, hasta RADIO_MAXIMO_DIBUJO.
+RADIO_CALOR_BASE = 150.0
+RADIO_CALOR_POR_HECHO = 60.0
 
-def puntos_calor(reportes: list[dict], categoria: str | None = None) -> list[dict]:
-    """Hechos por celda para el mapa de calor, de la celda con más a la con menos.
 
-    Sin `categoria` solo cuentan las que marcan riesgo (robos, accidentes...);
-    con ella, solo esa (sirve también para el panel, p. ej. mascotas perdidas).
+def puntos_calor(reportes: list[dict]) -> list[dict]:
+    """Manchas del mapa de calor, de la más grande a la más chica.
+
+    Solo cuentan robos y accidentes de tránsito. Los reportes del mismo hecho
+    cuentan una vez y los hechos a menos de RADIO_ZONA_METROS entre sí se
+    juntan en una sola mancha centrada entre ellos, que crece con cuántos son
+    (en vez de dibujar cada hecho por separado).
     """
-    if categoria:
-        elegidos = [r for r in reportes if r["categoria_codigo"] == categoria]
-    else:
-        elegidos = [r for r in reportes if tipo_riesgo(r["categoria_codigo"])]
+    elegidos = [r for r in reportes if (r["categoria_codigo"] or "").upper() in CATEGORIAS_CALOR]
 
-    celdas: dict[tuple[int, int], dict] = {}
+    incidentes = []
     for grupo in agrupar(elegidos):
-        lat = sum(float(r["latitud"]) for r in grupo) / len(grupo)
-        lng = sum(float(r["longitud"]) for r in grupo) / len(grupo)
-        clave = (round(lat / CELDA_LATITUD), round(lng / CELDA_LONGITUD))
-        celda = celdas.setdefault(clave, {"peso": 0, "seguridad": 0})
-        celda["peso"] += 1
-        if tipo_riesgo(grupo[0]["categoria_codigo"]) == "SEGURIDAD":
-            celda["seguridad"] += 1
+        incidentes.append({
+            "codigo": grupo[0]["categoria_codigo"].upper(),
+            "latitud": sum(float(r["latitud"]) for r in grupo) / len(grupo),
+            "longitud": sum(float(r["longitud"]) for r in grupo) / len(grupo),
+        })
 
-    puntos = [
-        {
-            "latitud": round(fila * CELDA_LATITUD, 6),
-            "longitud": round(columna * CELDA_LONGITUD, 6),
-            "peso": c["peso"],
-            "seguridad": c["seguridad"],
-        }
-        for (fila, columna), c in celdas.items()
-    ]
+    puntos = []
+    for grupo in _juntar_cercanos(incidentes):
+        lat = sum(i["latitud"] for i in grupo) / len(grupo)
+        lng = sum(i["longitud"] for i in grupo) / len(grupo)
+        lejania = max(distancia_metros(lat, lng, i["latitud"], i["longitud"]) for i in grupo)
+        crecido = RADIO_CALOR_BASE + RADIO_CALOR_POR_HECHO * (len(grupo) - 1)
+        radio = min(RADIO_MAXIMO_DIBUJO, max(crecido, lejania + 80))
+        robos = sum(1 for i in grupo if i["codigo"] == "ROBO")
+        puntos.append({
+            "latitud": round(round(lat / CELDA_LATITUD) * CELDA_LATITUD, 6),
+            "longitud": round(round(lng / CELDA_LONGITUD) * CELDA_LONGITUD, 6),
+            "peso": len(grupo),
+            "robos": robos,
+            "accidentes": len(grupo) - robos,
+            # Se mantiene por compatibilidad con clientes anteriores.
+            "seguridad": robos,
+            "radio_metros": round(radio),
+        })
     puntos.sort(key=lambda p: -p["peso"])
     return puntos

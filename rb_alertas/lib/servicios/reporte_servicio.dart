@@ -456,22 +456,38 @@ class ZonaRiesgo {
       );
 }
 
-/// Celda del mapa de calor (GET /api/reportes/calor): cuántos hechos hubo ahí.
+/// Mancha del mapa de calor (GET /api/reportes/calor): robos y accidentes de
+/// tránsito cercanos juntos en un solo lugar, que crece con cuántos son.
 class PuntoCalor {
   final double latitud;
   final double longitud;
+
+  /// Hechos que se juntaron en esta mancha.
   final int peso;
 
-  /// Cuántos de esos hechos son robos, asaltos y similares.
-  final int seguridad;
+  /// De esos hechos, cuántos son robos y cuántos accidentes de tránsito.
+  final int robos;
+  final int accidentes;
 
-  const PuntoCalor({required this.latitud, required this.longitud, required this.peso, this.seguridad = 0});
+  /// Radio de la mancha en el terreno; crece con [peso].
+  final double radioMetros;
+
+  const PuntoCalor({
+    required this.latitud,
+    required this.longitud,
+    required this.peso,
+    this.robos = 0,
+    this.accidentes = 0,
+    this.radioMetros = 150,
+  });
 
   factory PuntoCalor.desdeJson(Map<String, dynamic> json) => PuntoCalor(
         latitud: (json['latitud'] as num).toDouble(),
         longitud: (json['longitud'] as num).toDouble(),
         peso: (json['peso'] as num).toInt(),
-        seguridad: (json['seguridad'] as num? ?? 0).toInt(),
+        robos: (json['robos'] as num? ?? json['seguridad'] as num? ?? 0).toInt(),
+        accidentes: (json['accidentes'] as num? ?? 0).toInt(),
+        radioMetros: (json['radio_metros'] as num? ?? 150).toDouble(),
       );
 }
 
@@ -510,13 +526,10 @@ class ReporteServicio {
     );
   }
 
-  /// Mapa de calor: sin [categoria], robos, accidentes y demás de riesgo.
-  Future<List<PuntoCalor>> obtenerCalor({int dias = 60, String? categoria}) async {
+  /// Mapa de calor de robos y accidentes de tránsito en los últimos [dias].
+  Future<List<PuntoCalor>> obtenerCalor({int dias = 60}) async {
     final respuesta = await http.get(
-      Uri.parse('$baseUrl/api/reportes/calor').replace(queryParameters: {
-        'dias': '$dias',
-        'categoria': ?categoria,
-      }),
+      Uri.parse('$baseUrl/api/reportes/calor?dias=$dias'),
     );
     if (respuesta.statusCode == 200) {
       final cuerpo = jsonDecode(utf8.decode(respuesta.bodyBytes)) as Map<String, dynamic>;

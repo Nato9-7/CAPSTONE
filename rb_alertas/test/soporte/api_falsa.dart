@@ -546,18 +546,24 @@ final _zonasRiesgo = [
   },
 ];
 
-// Celdas del mapa de calor: un foco fuerte en la zona roja y otros más suaves.
+// Manchas del mapa de calor (robos y accidentes): un foco grande en la zona
+// roja y otros más chicos.
 final _calor = [
-  for (final (lat, lng, peso) in [
-    (-41.4672, -72.9395, 6),
-    (-41.4680, -72.9382, 4),
-    (-41.4662, -72.9408, 3),
-    (-41.4735, -72.9500, 2),
-    (-41.4650, -72.9480, 3),
-    (-41.4600, -72.9300, 1),
-    (-41.4760, -72.9350, 1),
-    (-41.4710, -72.9250, 2),
-    (-41.4550, -72.9450, 1),
+  for (final (lat, lng, robos, accidentes) in [
+    (-41.4672, -72.9395, 9, 2),
+    (-41.4735, -72.9500, 1, 1),
+    (-41.4650, -72.9480, 3, 0),
+    (-41.4600, -72.9300, 0, 1),
+    (-41.4710, -72.9250, 1, 1),
+    (-41.4550, -72.9450, 1, 0),
   ])
-    {'latitud': lat, 'longitud': lng, 'peso': peso, 'seguridad': peso},
+    {
+      'latitud': lat,
+      'longitud': lng,
+      'peso': robos + accidentes,
+      'robos': robos,
+      'accidentes': accidentes,
+      'seguridad': robos,
+      'radio_metros': (150 + 60 * (robos + accidentes - 1)).clamp(150, 600),
+    },
 ];

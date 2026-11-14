@@ -1,5 +1,6 @@
 // Zonas de riesgo en el mapa: círculos donde se repiten robos o accidentes,
 // su tarjeta con la recomendación y el aviso cuando el usuario está dentro.
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -228,7 +229,18 @@ class TarjetaZonaRiesgo extends StatelessWidget {
   final int dias;
   final VoidCallback onCerrar;
 
-  const TarjetaZonaRiesgo({super.key, required this.zona, required this.dias, required this.onCerrar});
+  /// Interruptor "Avisarme al pasar por zonas de riesgo"; sin él no se muestra.
+  final ValueListenable<bool?>? avisoActivo;
+  final ValueChanged<bool>? onCambiarAviso;
+
+  const TarjetaZonaRiesgo({
+    super.key,
+    required this.zona,
+    required this.dias,
+    required this.onCerrar,
+    this.avisoActivo,
+    this.onCambiarAviso,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -315,6 +327,25 @@ class TarjetaZonaRiesgo extends StatelessWidget {
                 if (hace != null) _dato(Icons.schedule_rounded, hace == 0 ? 'El último fue hoy' : 'El último hace $hace ${hace == 1 ? 'día' : 'días'}'),
               ],
             ),
+            if (avisoActivo != null && onCambiarAviso != null)
+              ValueListenableBuilder<bool?>(
+                valueListenable: avisoActivo!,
+                // Material propio: el fondo de la tarjeta taparía el toque.
+                builder: (context, activo, _) => Material(
+                  type: MaterialType.transparency,
+                  child: SwitchListTile(
+                    contentPadding: const EdgeInsets.only(right: 8),
+                    dense: true,
+                    value: activo == true,
+                    onChanged: onCambiarAviso,
+                    secondary: const Icon(Icons.notifications_active_outlined, color: RBColores.texto2),
+                    title: const Text(
+                      'Avisarme al pasar por zonas de riesgo',
+                      style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: RBColores.tinta),
+                    ),
+                  ),
+                ),
+              ),
           ],
         ),
       ),
