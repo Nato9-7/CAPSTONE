@@ -69,12 +69,16 @@ def _red_de_zonas(categoria: str | None, desde: str | None, limite: int) -> dict
     return {"nodos": nodos + list(categorias.values()), "aristas": aristas}
 
 
-def _red_de_vecinos(desde: str | None, limite: int) -> dict:
-    """Vecinos unidos por quién confirma o desmiente a quién; el peso es cuántas veces lo hizo."""
+def _red_de_vecinos(desde: str | None, categoria: str | None, limite: int) -> dict:
+    """Vecinos unidos por quién confirma o desmiente a quién; el peso es cuántas veces lo hizo.
+
+    Con `categoria`, solo cuentan los votos y reportes de esa categoría (p. ej. ROBO).
+    """
     filas = grafo.consultar_grafo(
         """
         MATCH (a:Usuario)-[v:VOTO]->(r:Reporte)<-[:CREO]-(b:Usuario)
         WHERE a <> b AND ($desde IS NULL OR r.fecha_creacion >= $desde)
+          AND ($categoria IS NULL OR r.categoria_codigo = $categoria)
         WITH a, b, sum(CASE v.tipo WHEN 'CONFIRMA' THEN 1 ELSE 0 END) AS confirma,
                    sum(CASE v.tipo WHEN 'DESMIENTE' THEN 1 ELSE 0 END) AS desmiente
         ORDER BY confirma + desmiente DESC LIMIT $limite
@@ -84,6 +88,7 @@ def _red_de_vecinos(desde: str | None, limite: int) -> dict:
                'Usuario' AS tipo_b, properties(b) AS b
         """,
         desde=desde,
+        categoria=categoria,
         limite=limite,
     )
     # También los vecinos que reportaron sin recibir votos, para que la red esté completa.
@@ -91,20 +96,24 @@ def _red_de_vecinos(desde: str | None, limite: int) -> dict:
         """
         MATCH (u:Usuario)-[:CREO]->(r:Reporte)
         WHERE NOT u.es_admin AND ($desde IS NULL OR r.fecha_creacion >= $desde)
+          AND ($categoria IS NULL OR r.categoria_codigo = $categoria)
         RETURN DISTINCT properties(u) AS u LIMIT $limite
         """,
         desde=desde,
+        categoria=categoria,
         limite=limite,
     )
     return armar_red(filas, [nodo("Usuario", f["u"]) for f in solos])
 
 
-def _red_completa(capas: set[str], desde: str | None, limite: int) -> dict:
-    """Vecinos y reportes recientes, más las relaciones de las capas pedidas."""
+def _red_completa(capas: set[str], desde: str | None, categoria: str | None, limite: int) -> dict:
+    """Vecinos y reportes recientes (de `categoria`, si se pide), más las relaciones de las capas pedidas."""
     tipos = ["CREO", "VOTO"] + [rel for capa, rels in _RELACIONES_POR_CAPA.items() if capa in capas for rel in rels]
     filas = grafo.consultar_grafo(
         f"""
-        MATCH (r:Reporte) WHERE $desde IS NULL OR r.fecha_creacion >= $desde
+        MATCH (r:Reporte)
+        WHERE ($desde IS NULL OR r.fecha_creacion >= $desde)
+          AND ($categoria IS NULL OR r.categoria_codigo = $categoria)
         WITH r ORDER BY r.fecha_creacion DESC LIMIT $limite
         WITH collect(r) AS reportes
         UNWIND reportes AS r
@@ -113,6 +122,7 @@ def _red_completa(capas: set[str], desde: str | None, limite: int) -> dict:
         {PROYECCION_RELACION}
         """,
         desde=desde,
+        categoria=categoria,
         limite=limite,
     )
     if "sospechosos" in capas:
@@ -136,7 +146,8 @@ def red_completa(
     - modo=completa: vecinos y reportes, más las capas pedidas (lugares, categorias,
       zonas, incidentes, sospechosos, grupos).
     - modo=zonas: dónde ocurre más. Lugares unidos a las categorías de lo que pasó
-      ahí; el peso es cuántos hechos hubo (no reportes). `categoria` (p. ej. ROBO) deja solo esa.
+      ahí; el peso es cuántos hechos hubo (no reportes).
+    `categoria` (p. ej. ROBO o ACCIDENTE) deja solo los reportes de esa categoría en cualquier modo.
     `dias` limita a la actividad de los últimos N días (sin él, toda la historia).
     """
     desde = desde_dias(dias)
@@ -144,9 +155,9 @@ def red_completa(
         if modo == "zonas":
             red = _red_de_zonas(categoria, desde, limite)
         elif modo == "vecinos":
-            red = _red_de_vecinos(desde, limite)
+            red = _red_de_vecinos(desde, categoria, limite)
         else:
-            red = _red_completa({c.strip() for c in capas.split(",") if c.strip()}, desde, limite)
+            red = _red_completa({c.strip() for c in capas.split(",") if c.strip()}, desde, categoria, limite)
     marcar_comunidades(red)
     return {**red, "sincronizacion": grafo.ultima_sincronizacion}
 

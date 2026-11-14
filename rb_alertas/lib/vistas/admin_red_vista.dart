@@ -80,7 +80,8 @@ class _SeccionRedState extends State<SeccionRed> with AutomaticKeepAliveClientMi
   final Set<String> _capas = {'lugares', 'incidentes', 'sospechosos', 'grupos'};
   bool _comunidades = false;
 
-  /// "Dónde ocurre más": código de la categoría elegida (null = todas).
+  /// Categoría elegida para la red y el ranking de zonas (null = todas).
+  /// Se puede elegir robos o accidentes en cualquiera de las tres vistas.
   String? _categoria;
   List<CategoriaIncidente> _categoriasDisponibles = [];
 
@@ -157,7 +158,7 @@ class _SeccionRedState extends State<SeccionRed> with AutomaticKeepAliveClientMi
       modo: _modo,
       dias: _periodos[_periodo].$1,
       capas: _capas,
-      categoria: _modo == 'zonas' ? _categoria : null,
+      categoria: _categoria,
     );
     if (!mounted) return;
     setState(() {
@@ -197,7 +198,7 @@ class _SeccionRedState extends State<SeccionRed> with AutomaticKeepAliveClientMi
   /// Al cambiar la categoría o el período, la red y el ranking de zonas se rehacen juntos.
   Future<void> _recargarZonas() => _ejecutar(() async {
     await Future.wait([
-      if (_modo == 'zonas') _cargarRedSinAviso(),
+      _cargarRedSinAviso(),
       if (_seccion == 3) _cargarSeccion(),
     ]);
   });
@@ -718,10 +719,8 @@ class _SeccionRedState extends State<SeccionRed> with AutomaticKeepAliveClientMi
               ),
             ],
           ),
-          if (_modo == 'zonas') ...[
-            const SizedBox(height: 8),
-            _filtroCategorias(alElegir: _elegirCategoria),
-          ],
+          const SizedBox(height: 8),
+          _filtroCategorias(alElegir: _elegirCategoria),
           const SizedBox(height: 4),
           _lineaTiempo(),
         ],
@@ -769,12 +768,10 @@ class _SeccionRedState extends State<SeccionRed> with AutomaticKeepAliveClientMi
                     ),
                   ],
                 ),
-                if (_modo == 'zonas') ...[
-                  const SizedBox(height: 16),
-                  const Text('Categoría', style: TextStyle(fontWeight: FontWeight.w800)),
-                  const SizedBox(height: 8),
-                  _filtroCategorias(alElegir: (codigo) => cambiar(() => _categoria = codigo)),
-                ],
+                const SizedBox(height: 16),
+                const Text('Categoría', style: TextStyle(fontWeight: FontWeight.w800)),
+                const SizedBox(height: 8),
+                _filtroCategorias(alElegir: (codigo) => cambiar(() => _categoria = codigo)),
                 const SizedBox(height: 16),
                 const Text('Línea de tiempo', style: TextStyle(fontWeight: FontWeight.w800)),
                 Slider(
@@ -1731,7 +1728,10 @@ class _SeccionRedState extends State<SeccionRed> with AutomaticKeepAliveClientMi
 
   // -- Dónde ocurre más ---------------------------------------------------------
 
-  /// Chips "Todas" + una por categoría. Se usa en la barra, en la hoja de
+  /// Categorías que se pueden filtrar en la red: robos y accidentes de tránsito.
+  static const _categoriasFiltrables = {'ROBO', 'ACCIDENTE'};
+
+  /// Chips "Todas", "Robos" y "Accidentes". Se usa en la barra, en la hoja de
   /// filtros del celular y arriba del ranking de zonas.
   Widget _filtroCategorias({required ValueChanged<String?> alElegir}) {
     return Wrap(
@@ -1740,16 +1740,17 @@ class _SeccionRedState extends State<SeccionRed> with AutomaticKeepAliveClientMi
       children: [
         ChipFiltro(etiqueta: 'Todas', activo: _categoria == null, onTap: () => alElegir(null)),
         for (final c in _categoriasDisponibles)
-          ChipFiltro(
-            etiqueta: etiquetaCortaCategoria(c.codigo, c.nombre),
-            icono: Icon(
-              iconoCategoria(c.codigo),
-              size: 16,
-              color: _categoria == c.codigo ? Colors.white : colorCategoria(c.codigo, colorHex: c.colorHex),
+          if (_categoriasFiltrables.contains(c.codigo.toUpperCase()))
+            ChipFiltro(
+              etiqueta: etiquetaCortaCategoria(c.codigo, c.nombre),
+              icono: Icon(
+                iconoCategoria(c.codigo),
+                size: 16,
+                color: _categoria == c.codigo ? Colors.white : colorCategoria(c.codigo, colorHex: c.colorHex),
+              ),
+              activo: _categoria == c.codigo,
+              onTap: () => alElegir(c.codigo),
             ),
-            activo: _categoria == c.codigo,
-            onTap: () => alElegir(c.codigo),
-          ),
       ],
     );
   }

@@ -97,6 +97,12 @@ void main() {
       );
       await _asentar(tester);
 
+      // El filtro de categoría está en todas las vistas y solo ofrece robos y accidentes.
+      expect(find.text('Robos'), findsOneWidget);
+      expect(find.text('Accidentes'), findsOneWidget);
+      expect(find.text('Mascotas'), findsNothing);
+      expect(find.text('Incendios'), findsNothing);
+
       // Vista "Dónde ocurre más" con todas las categorías.
       await _tocar(tester, find.text('Dónde ocurre más'));
       final lienzo = tester.widget<LienzoGrafo>(find.byType(LienzoGrafo));
