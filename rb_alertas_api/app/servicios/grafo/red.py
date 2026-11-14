@@ -18,15 +18,23 @@ RETURN labels(startNode(rel))[0] AS tipo_a, properties(startNode(rel)) AS a,
 """
 
 
+def calle(direccion: str | None) -> str | None:
+    """Solo la calle de la dirección de referencia ("Tucapel, Puerto Montt" -> "Tucapel")."""
+    primera = (direccion or "").split(",")[0].strip()
+    return primera or None
+
+
 def _etiqueta(tipo: str, datos: dict) -> str:
     if tipo == "Usuario":
         return datos.get("alias") or f"Vecino {datos.get('id')}"
     if tipo == "Reporte":
-        return f"#{datos.get('id')}"
+        # La calle dice más que el número interno del reporte.
+        return calle(datos.get("direccion")) or "Sin dirección"
     if tipo == "Coordinacion":
         return f"Grupo de {datos.get('tamano', '?')} cuentas"
     if tipo == "Incidente":
-        return f"Incidente #{datos.get('id')}"
+        lugar = calle(datos.get("direccion"))
+        return f"Incidente en {lugar}" if lugar else "Incidente sin dirección"
     return str(datos.get("nombre") or datos.get("id"))
 
 

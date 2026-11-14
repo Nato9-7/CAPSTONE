@@ -65,3 +65,14 @@ def test_votos_de_cuentas_sospechosas_valen_menos():
     con_sospecha = calcular_reputacion([1, 2, 3, 4], reportes, votos, sospechosos={4})
     assert con_sospecha[2]["puntaje"] < normal[2]["puntaje"]
     assert con_sospecha[1]["puntaje"] >= normal[1]["puntaje"] - 1
+
+
+def test_reportes_e_incidentes_se_etiquetan_con_la_calle():
+    from app.servicios.grafo.red import nodo
+
+    assert nodo("Reporte", {"id": 17, "direccion": "Tucapel, Puerto Montt"})["etiqueta"] == "Tucapel"
+    assert nodo("Reporte", {"id": 18, "direccion": None})["etiqueta"] == "Sin dirección"
+    assert nodo("Incidente", {"id": 16, "direccion": "Av. Diego Portales 123, Puerto Montt"})["etiqueta"] == (
+        "Incidente en Av. Diego Portales 123"
+    )
+    assert nodo("Incidente", {"id": 3})["etiqueta"] == "Incidente sin dirección"

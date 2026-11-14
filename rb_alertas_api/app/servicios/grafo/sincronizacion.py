@@ -68,7 +68,7 @@ def _usuarios_y_reportes() -> tuple[list[dict], list[dict], list[dict]]:
     reportes = consultar(
         """
         SELECT r.id_reporte, r.id_usuario, r.id_categoria, r.id_comuna, r.id_localidad, r.estado,
-               LEFT(r.descripcion, 120) AS descripcion, r.fecha_creacion,
+               LEFT(r.descripcion, 120) AS descripcion, r.direccion_referencia AS direccion, r.fecha_creacion,
                (r.fecha_expiracion IS NOT NULL AND r.fecha_expiracion <= NOW()) AS vencido,
                r.total_confirmaciones, r.total_desmentidos, c.codigo AS categoria_codigo, r.visibilidad,
                ST_Latitude(r.ubicacion) AS latitud, ST_Longitude(r.ubicacion) AS longitud
@@ -155,7 +155,7 @@ _CYPHER_RECONSTRUIR = [
     """UNWIND $reportes AS r
        MATCH (u:Usuario {id: r.id_usuario})
        MATCH (cat:Categoria {id: r.id_categoria})
-       CREATE (rep:Reporte {id: r.id_reporte, estado: r.estado, descripcion: r.descripcion,
+       CREATE (rep:Reporte {id: r.id_reporte, estado: r.estado, descripcion: r.descripcion, direccion: r.direccion,
                             fecha_creacion: r.fecha_creacion, vencido: r.vencido,
                             confirmaciones: r.total_confirmaciones, desmentidos: r.total_desmentidos,
                             categoria: cat.nombre, categoria_codigo: cat.codigo, color: cat.color,
@@ -199,7 +199,7 @@ _CYPHER_RECONSTRUIR = [
        MATCH (primero:Reporte {id: i.id})
        CREATE (inc:Incidente {id: i.id, total: i.total, inicio: i.inicio, fin: i.fin,
                               categoria: primero.categoria, categoria_codigo: primero.categoria_codigo,
-                              color: primero.color})
+                              color: primero.color, direccion: primero.direccion})
        WITH inc, i
        UNWIND i.ids AS id_reporte
        MATCH (r:Reporte {id: id_reporte})
