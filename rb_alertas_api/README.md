@@ -65,7 +65,7 @@ y, si la versión nueva no responde, vuelve a la anterior.
 
 | Prefijo | Contenido | Acceso |
 | --- | --- | --- |
-| `/api/usuarios` | Registro, inicio y cierre de sesión, perfil, verificación de correo, recuperación de contraseña, zonas seguras (`/zonas`), alertas (`/notificaciones`) y dispositivos para push (`/dispositivos`). | Público (registro, login, enlaces del correo) o con sesión |
+| `/api/usuarios` | Regiones y comunas para el registro (`/comunas`), registro con comuna, rol y consentimientos, inicio y cierre de sesión, perfil, verificación de correo, recuperación de contraseña, zonas seguras (`/zonas`), alertas (`/notificaciones`) y dispositivos para push (`/dispositivos`). | Público (comunas, registro, login, enlaces del correo) o con sesión |
 | `/api/reportes` | Categorías, reportes del mapa, cercanos, zonas de riesgo, mapa de calor, reportes propios, creación con evidencia, detalle, votos, resolución, comentarios y denuncias. | Consultas del mapa públicas; el resto con sesión |
 | `/api/grupos` | Grupos vecinales: creación, edición, código de invitación, unirse, miembros, salir y reportes del grupo. | Con sesión |
 | `/api/admin` | Resumen, moderación de reportes, comentarios, denuncias, usuarios y grupos, y el grafo (hallazgos y explorador). | Cuenta admin (`ADMIN_EMAILS`) |
@@ -108,7 +108,8 @@ app/
 │   ├── push.py        Notificaciones push con Firebase.
 │   └── grafo/         Copia en Neo4j: conexión, sincronización, red del explorador y zonas.
 ├── rutas/             Endpoints, un paquete por recurso.
-│   ├── usuarios/      /api/usuarios: cuenta, verificación, recuperación, zonas, alertas, dispositivos.
+│   ├── usuarios/      /api/usuarios: cuenta, territorio (comunas del registro), verificación,
+│   │                  recuperación, zonas, alertas, dispositivos.
 │   ├── reportes/      /api/reportes: consultas, creación, detalle, votos, comentarios, denuncias.
 │   ├── grupos/        /api/grupos: gestión, membresía y chat del grupo.
 │   └── admin/         /api/admin: resumen, moderación y grafo del panel.

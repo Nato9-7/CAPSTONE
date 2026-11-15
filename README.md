@@ -50,10 +50,10 @@ Desarrollar una aplicación móvil multiplataforma para la gestión de alertas d
 
 ### Para los vecinos
 
-- **Cuenta y acceso:** registro con RUT y comuna, verificación por correo, inicio de sesión con sesión guardada de forma cifrada en el dispositivo y recuperación de contraseña por enlace al correo.
+- **Cuenta y acceso:** registro con RUT, región y comuna, aceptación de los Términos de uso y la Política de privacidad (queda registrada con su versión), verificación por correo, inicio de sesión con sesión guardada de forma cifrada en el dispositivo y recuperación de contraseña por enlace al correo.
 - **Perfil:** edición de los datos de la cuenta, foto de perfil, privacidad y seguridad, y política de privacidad.
 - **Reporte de incidentes:** reporte geolocalizado con categoría, descripción y foto o video como evidencia (hasta 20 MB), público o privado para un grupo de vecinos.
-- **Mapa de incidentes:** reportes vigentes con filtros por categoría y buscador de direcciones e incidentes. Los reportes del mismo hecho (misma categoría, a menos de 300 m y con menos de 3 horas de diferencia) se muestran como un solo incidente.
+- **Mapa de incidentes:** reportes vigentes con filtros por categoría. Los reportes del mismo hecho (misma categoría, a menos de 300 m y con menos de 3 horas de diferencia) se muestran como un solo incidente. Al alejar el mapa, los pines cercanos se agrupan en un círculo con el total; al tocarlo, el mapa se acerca hasta separarlos, y los que están en el mismo punto se abren en abanico (hasta 6) o en una lista.
 - **Zonas de riesgo y mapa de calor:** el mapa marca los sectores donde se repiten los hechos, con su nivel de riesgo y una recomendación, y avisa cuando el usuario se encuentra dentro de uno.
 - **Validación comunitaria:** los vecinos confirman o desmienten cada reporte y conversan en sus comentarios, con respuestas y fotos.
 - **Denuncias:** cualquier vecino puede denunciar un reporte o un comentario (falso, ofensivo, spam, datos personales u otro motivo) para que lo revise la administración.
@@ -103,10 +103,23 @@ CAPSTONE/
 ├── rb_alertas/                Aplicación Flutter.
 │   ├── lib/
 │   │   ├── main.dart          Punto de entrada de la app.
-│   │   ├── config/            URL de la API, versión de la app y capa base del mapa.
-│   │   ├── servicios/         Comunicación con la API (sesión, reportes, grupos, push, admin...).
-│   │   ├── vistas/            Pantallas (mapa, alertas, perfil, grupos, panel admin y su red...).
-│   │   ├── widgets/           Componentes reutilizables (comentarios, votos, denuncias, capas del mapa...).
+│   │   ├── config/            URL de la API, versión de la app, mapa base y textos legales versionados.
+│   │   ├── modelos/           Clases de datos que entrega la API, un archivo por tema (reporte, grupo,
+│   │   │                      zona, admin, grafo...). modelos.dart los exporta todos.
+│   │   ├── servicios/         Llamadas a la API, una clase por recurso, más sesión, push y aviso de zonas.
+│   │   │   └── api/           ApiCliente: único punto de acceso HTTP (token, UTF-8 y errores ApiException).
+│   │   ├── utilidades/        Funciones sin pantalla: formato de fechas y distancias, y validadores.
+│   │   ├── vistas/            Pantallas, una carpeta por sección con sus widgets propios en widgets/.
+│   │   │   ├── cuenta/        Bienvenida, inicio de sesión, registro, recuperación, perfil y textos legales.
+│   │   │   ├── mapa/          Mapa principal, agrupación de pines y aviso de zonas de riesgo.
+│   │   │   ├── reportar/      Formulario para reportar un incidente.
+│   │   │   ├── detalle/       Detalle de un incidente con votos y comentarios.
+│   │   │   ├── alertas/       Alertas cercanas, de mis zonas y mis reportes.
+│   │   │   ├── grupos/        Grupos de vecinos: lista, detalle (chat) y formulario.
+│   │   │   ├── zonas/         Zonas seguras: lista y formulario.
+│   │   │   └── admin/         Panel de administración, una pestaña por archivo; red/ es la sección Neo4j.
+│   │   ├── widgets/           Componentes compartidos entre pantallas (avisos y confirmaciones, editor
+│   │   │                      de área, comentarios, votos, capas del mapa, grafo...).
 │   │   └── tema/              Colores, tipografías y estilos de la app.
 │   ├── assets/                Ícono, imágenes y fuentes (Figtree y Bricolage Grotesque, licencia OFL).
 │   ├── test/                  Pruebas de widgets (con una API falsa en test/soporte/).
@@ -214,7 +227,7 @@ El `.ipa` se genera **sin firmar**; para instalarlo en un iPhone debe firmarse c
 
 | Ámbito | Herramienta | Cobertura |
 | --- | --- | --- |
-| Aplicación | `flutter test` | Pantallas en distintos tamaños, mapa con zonas de riesgo, red del panel y teclado en los comentarios. |
+| Aplicación | `flutter test` | Pantallas en distintos tamaños (incluidos los errores del registro y la política de privacidad), mapa con zonas de riesgo, agrupación de pines y reportes superpuestos, red del panel y teclado en los comentarios. |
 | API | `pytest tests` | Agrupación de incidentes, zonas de riesgo y mapa de calor, cuentas sospechosas y reputación, alias, archivos subidos y traducción de errores de MySQL. |
 | Capacidad | k6 sobre el servidor | Requisitos no funcionales de rendimiento y escalabilidad (resultados abajo). |
 
