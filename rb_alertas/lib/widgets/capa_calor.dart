@@ -7,7 +7,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:rb_alertas/servicios/reporte_servicio.dart';
+import 'package:rb_alertas/modelos/modelos.dart';
 import 'package:rb_alertas/tema/rb_tema.dart';
 
 const _amarillo = Color(0xFFF59E0B);

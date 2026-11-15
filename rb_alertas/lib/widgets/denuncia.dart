@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:rb_alertas/servicios/denuncia_servicio.dart';
+import 'package:rb_alertas/modelos/modelos.dart';
 import 'package:rb_alertas/tema/rb_tema.dart';
 
 /// Pide el motivo (y un detalle opcional) para denunciar un reporte o un

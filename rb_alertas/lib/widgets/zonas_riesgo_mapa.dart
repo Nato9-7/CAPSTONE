@@ -4,22 +4,12 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:rb_alertas/servicios/reporte_servicio.dart';
+import 'package:rb_alertas/modelos/modelos.dart';
 import 'package:rb_alertas/tema/rb_tema.dart';
 import 'package:rb_alertas/widgets/categoria_visual.dart';
 
 const _ambar = Color(0xFFB45309);
 const _ambarFondo = Color(0xFFFFF4E5);
-
-/// Igual que tipo_riesgo() de la API: 'SEGURIDAD', 'VIAL' o null.
-String? tipoRiesgoCategoria(String codigo) {
-  final c = codigo.toUpperCase();
-  const seguridad = ['ROBO', 'ASALTO', 'HURTO', 'SOSPECH', 'VANDAL', 'VIOLEN', 'RINA', 'DROGA', 'AGRESION'];
-  const vial = ['ACCIDENTE', 'VIAL', 'CHOQUE', 'ATROPELL'];
-  if (seguridad.any(c.contains)) return 'SEGURIDAD';
-  if (vial.any(c.contains)) return 'VIAL';
-  return null;
-}
 
 /// Rojo para seguridad de nivel alto, naranjo para el resto de seguridad y
 /// ámbar para las zonas viales.
@@ -30,11 +20,6 @@ Color colorZona(ZonaRiesgo z) {
 
 IconData iconoZona(ZonaRiesgo z) =>
     z.esSeguridad ? Icons.gpp_maybe_rounded : Icons.car_crash_rounded;
-
-String tituloZona(ZonaRiesgo z) {
-  if (z.esSeguridad) return z.esAlto ? 'Zona de riesgo alto' : 'Zona de precaución';
-  return 'Zona de riesgo vial';
-}
 
 bool zonaContiene(ZonaRiesgo z, LatLng punto) =>
     const Distance().as(LengthUnit.Meter, LatLng(z.latitud, z.longitud), punto) <= z.radioMetros;
@@ -63,7 +48,7 @@ Marker marcadorZona(ZonaRiesgo z, VoidCallback onTap) => Marker(
         onTap: onTap,
         child: Semantics(
           button: true,
-          label: tituloZona(z),
+          label: z.titulo,
           child: Container(
             decoration: BoxDecoration(
               color: Colors.white,
@@ -275,7 +260,7 @@ class TarjetaZonaRiesgo extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        tituloZona(zona),
+                        zona.titulo,
                         style: RBTexto.titulo.copyWith(fontSize: 18, color: color),
                       ),
                       Text(

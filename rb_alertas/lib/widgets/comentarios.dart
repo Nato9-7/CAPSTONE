@@ -1,8 +1,9 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:rb_alertas/servicios/comentario_servicio.dart';
+import 'package:rb_alertas/modelos/modelos.dart';
 import 'package:rb_alertas/tema/rb_tema.dart';
+import 'package:rb_alertas/utilidades/formato.dart';
 import 'package:rb_alertas/widgets/rb_componentes.dart';
 
 // Piezas de la conversación de un reporte (detalle del incidente).

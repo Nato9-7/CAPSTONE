@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:rb_alertas/modelos/modelos.dart';
+import 'package:rb_alertas/servicios/api/api_cliente.dart';
 import 'package:rb_alertas/servicios/perfil_servicio.dart';
-import 'package:rb_alertas/servicios/reporte_servicio.dart' show EntidadEmergencia;
 import 'package:rb_alertas/servicios/sesion.dart';
 import 'package:rb_alertas/tema/rb_tema.dart';
+import 'package:rb_alertas/widgets/dialogos.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 /// Pregunta antes de llamar a una entidad de emergencia y abre el marcador.
@@ -30,14 +32,12 @@ Future<void> llamarEmergencia(BuildContext context, EntidadEmergencia entidad) a
   final abierta = await launchUrl(Uri(scheme: 'tel', path: entidad.telefono))
       .catchError((_) => false);
   if (!abierta && context.mounted) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text('Marca al ${entidad.telefono}')));
+    mostrarAviso(context, 'Marca al ${entidad.telefono}');
   }
 }
 
 /// Panel inferior con los teléfonos de emergencia de la comuna del usuario
-/// (los mismos accesos directos que antes estaban en el perfil).
+/// (solo con sesión iniciada).
 Future<void> mostrarPanelEmergencias(BuildContext context) {
   return showModalBottomSheet<void>(
     context: context,
@@ -64,20 +64,17 @@ class _PanelEmergenciasState extends State<_PanelEmergencias> {
   }
 
   Future<void> _cargar() async {
-    final token = Sesion.token;
-    if (token == null || token.isEmpty) {
+    if (!Sesion.activa) {
       setState(() => _error = 'Inicia sesión para ver los teléfonos de emergencia de tu comuna.');
       return;
     }
     setState(() => _error = null);
     try {
-      final perfil = await PerfilServicio().obtenerPerfil(token);
+      final perfil = await PerfilServicio().obtenerPerfil();
       if (!mounted) return;
       setState(() => _entidades = perfil.emergencias);
-    } on PerfilServicioException catch (e) {
-      if (mounted) setState(() => _error = e.mensaje);
-    } catch (_) {
-      if (mounted) setState(() => _error = 'No se pudo conectar con el servidor');
+    } catch (e) {
+      if (mounted) setState(() => _error = mensajeDeError(e));
     }
   }
 

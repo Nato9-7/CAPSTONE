@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:rb_alertas/servicios/estado_alertas_servicio.dart';
 import 'package:rb_alertas/tema/rb_tema.dart';
-import 'package:rb_alertas/vistas/alertas_vista.dart';
-import 'package:rb_alertas/vistas/grupos_vista.dart';
-import 'package:rb_alertas/vistas/mapa_vista.dart';
-import 'package:rb_alertas/vistas/perfil_vista.dart';
+import 'package:rb_alertas/vistas/alertas/alertas_vista.dart';
+import 'package:rb_alertas/vistas/cuenta/perfil_vista.dart';
+import 'package:rb_alertas/vistas/grupos/grupos_vista.dart';
+import 'package:rb_alertas/vistas/mapa/mapa_vista.dart';
 
-/// Secciones de la barra inferior. Reportar ya no es una pestaña: se abre con
-/// el botón verde del mapa.
+/// Secciones de la barra inferior. Reportar se abre con el botón verde del mapa.
 enum SeccionApp { mapa, grupos, alertas, perfil }
 
 class BarraNavegacionInferior extends StatelessWidget {
