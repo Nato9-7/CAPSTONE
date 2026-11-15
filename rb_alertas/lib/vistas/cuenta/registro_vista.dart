@@ -7,6 +7,10 @@ import 'package:rb_alertas/utilidades/validaciones.dart';
 import 'package:rb_alertas/widgets/dialogos.dart';
 import 'package:rb_alertas/widgets/fondo_acceso.dart';
 import 'package:rb_alertas/widgets/rb_componentes.dart';
+import 'package:rb_alertas/config/documentos_legales.dart';
+import 'package:rb_alertas/modelos/territorio.dart';
+import 'package:rb_alertas/vistas/cuenta/widgets/casilla_terminos.dart';
+import 'package:rb_alertas/vistas/cuenta/widgets/selector_comuna.dart';
 
 class RegistroVista extends StatefulWidget {
   const RegistroVista({super.key});
@@ -25,6 +29,7 @@ class _RegistroVistaState extends State<RegistroVista> {
   final _passwordController = TextEditingController();
   final _authServicio = AuthServicio();
   bool _obscurePassword = true;
+  Comuna? _comuna;
   bool _cargando = false;
 
   @override
@@ -55,6 +60,8 @@ class _RegistroVistaState extends State<RegistroVista> {
         email: email,
         telefono: '$_prefijoTelefono${_telefonoController.text.replaceAll(' ', '')}',
         password: _passwordController.text,
+        idComuna: _comuna!.id,
+        versionTerminos: DocumentosLegales.version,
       );
 
       if (!mounted) return;
@@ -222,7 +229,11 @@ class _RegistroVistaState extends State<RegistroVista> {
                 ),
               ),
             ),
-            const SizedBox(height: 22),
+            const SizedBox(height: 14),
+            SelectorComuna(alCambiar: (comuna) => _comuna = comuna),
+            const SizedBox(height: 10),
+            const CasillaTerminos(),
+            const SizedBox(height: 18),
             BotonPrincipal(
               texto: 'Crear cuenta',
               onPressed: _registrar,

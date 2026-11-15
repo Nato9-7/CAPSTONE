@@ -7,5 +7,6 @@ export 'grupo.dart';
 export 'notificacion.dart';
 export 'reporte.dart';
 export 'riesgo.dart';
+export 'territorio.dart';
 export 'usuario.dart';
 export 'zona_segura.dart';

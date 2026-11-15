@@ -1,74 +1,54 @@
-import 'dart:convert';
+import 'package:rb_alertas/modelos/lectura_json.dart';
+import 'package:rb_alertas/modelos/territorio.dart';
+import 'package:rb_alertas/modelos/usuario.dart';
+import 'package:rb_alertas/servicios/api/api_cliente.dart';
 
-import 'package:http/http.dart' as http;
-import 'package:rb_alertas/config/api_config.dart';
-
-class AuthServicioException implements Exception {
-  final String mensaje;
-  // Código que manda la API para errores que la app trata distinto
-  // (por ejemplo AuthServicio.codigoEmailNoVerificado).
-  final String? codigo;
-
-  AuthServicioException(this.mensaje, {this.codigo});
-}
-
-class LoginResultado {
-  final String token;
-  final Map<String, dynamic> usuario;
-
-  LoginResultado({required this.token, required this.usuario});
-}
-
+/// Login, registro y recuperación de cuenta.
 class AuthServicio {
-  static const String baseUrl = ApiConfig.baseUrl;
+  /// Código de error que manda la API al iniciar sesión sin verificar el correo.
   static const String codigoEmailNoVerificado = 'EMAIL_NO_VERIFICADO';
 
-  /// Comprueba contra la API si un token guardado sigue vigente.
+  /// Comprueba contra la API si el token de la sesión sigue vigente.
   ///
   /// `true` = sirve, `false` = la sesión ya no vale (hay que volver a entrar),
   /// `null` = no se pudo preguntar (sin conexión); en ese caso no conviene
   /// borrar la sesión, porque puede ser perfectamente válida.
-  Future<bool?> sesionVigente(String token) async {
+  Future<bool?> sesionVigente() async {
     try {
-      final respuesta = await http
-          .get(
-            Uri.parse('$baseUrl/api/usuarios/perfil'),
-            headers: {'Authorization': 'Bearer $token'},
-          )
-          .timeout(const Duration(seconds: 8));
-      if (respuesta.statusCode == 401) return false;
-      if (respuesta.statusCode == 200) return true;
-      return null;
+      await ApiCliente.get('/api/usuarios/perfil', error: '').timeout(const Duration(seconds: 8));
+      return true;
+    } on ApiException catch (e) {
+      return e.estadoHttp == 401 ? false : null;
     } catch (_) {
       return null;
     }
   }
 
-  Future<LoginResultado> login({
-    required String email,
-    required String password,
-  }) async {
-    final uri = Uri.parse('$baseUrl/api/usuarios/login');
-
-    final respuesta = await http.post(
-      uri,
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'email': email, 'password': password}),
+  Future<LoginResultado> login({required String email, required String password}) async {
+    final cuerpo = await ApiCliente.post(
+      '/api/usuarios/login',
+      cuerpo: {'email': email, 'password': password},
+      error: 'Correo o contraseña incorrectos',
+      conSesion: false,
+    ) as Map<String, dynamic>;
+    return LoginResultado(
+      token: (cuerpo['token'] ?? cuerpo['access_token'] ?? '').toString(),
+      usuario: (cuerpo['usuario'] ?? cuerpo['user'] ?? {}) as Map<String, dynamic>,
     );
-
-    if (respuesta.statusCode == 200) {
-      final cuerpo = _json(respuesta) as Map<String, dynamic>;
-      return LoginResultado(
-        token: (cuerpo['token'] ?? cuerpo['access_token'] ?? '').toString(),
-        usuario:
-            (cuerpo['usuario'] ?? cuerpo['user'] ?? {}) as Map<String, dynamic>,
-      );
-    }
-
-    throw _error(respuesta, 'Correo o contraseña incorrectos');
   }
 
-  /// Crea la cuenta; la API envía un correo con el enlace para verificarla.
+  /// Regiones con las comunas que se pueden elegir al registrarse.
+  Future<List<Region>> regionesRegistro() async {
+    final cuerpo = await ApiCliente.get(
+      '/api/usuarios/comunas',
+      error: 'No se pudieron cargar las comunas',
+      conSesion: false,
+    );
+    return listaDesdeJson(cuerpo, Region.desdeJson);
+  }
+
+  /// Crea la cuenta con su comuna y deja constancia de que aceptó los textos
+  /// legales en [versionTerminos]. La API envía un correo para verificarla.
   Future<void> registrar({
     required String nombres,
     required String apellidos,
@@ -76,81 +56,51 @@ class AuthServicio {
     required String email,
     required String telefono,
     required String password,
+    required int idComuna,
+    required String versionTerminos,
   }) async {
-    final uri = Uri.parse('$baseUrl/api/usuarios/registro');
-
-    final respuesta = await http.post(
-      uri,
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
+    await ApiCliente.post(
+      '/api/usuarios/registro',
+      cuerpo: {
         'nombres': nombres,
         'apellidos': apellidos,
         'rut': rut,
         'email': email,
         'telefono': telefono,
         'password': password,
-      }),
+        'id_comuna': idComuna,
+        'acepta_terminos': true,
+        'version_terminos': versionTerminos,
+      },
+      error: 'No se pudo completar el registro',
+      conSesion: false,
     );
-
-    if (respuesta.statusCode == 201) {
-      return;
-    }
-
-    throw _error(respuesta, 'No se pudo completar el registro');
   }
 
   /// Pide un nuevo correo de verificación. Devuelve el mensaje para mostrar.
-  Future<String> reenviarVerificacion(String email) async {
-    final respuesta = await http.post(
-      Uri.parse('$baseUrl/api/usuarios/reenviar-verificacion'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'email': email}),
-    );
-
-    if (respuesta.statusCode == 202) {
-      final cuerpo = _json(respuesta);
-      return (cuerpo is Map ? cuerpo['detail'] : null)?.toString() ??
-          'Te enviamos un nuevo enlace a tu correo.';
-    }
-    throw _error(respuesta, 'No se pudo reenviar el correo');
-  }
+  Future<String> reenviarVerificacion(String email) => _pedirCorreo(
+    '/api/usuarios/reenviar-verificacion',
+    email,
+    exito: 'Te enviamos un nuevo enlace a tu correo.',
+    error: 'No se pudo reenviar el correo',
+  );
 
   /// Pide el correo con el enlace para crear una contraseña nueva.
   /// Devuelve el mensaje para mostrar.
-  Future<String> recuperarPassword(String email) async {
-    final respuesta = await http.post(
-      Uri.parse('$baseUrl/api/usuarios/recuperar-password'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'email': email}),
-    );
+  Future<String> recuperarPassword(String email) => _pedirCorreo(
+    '/api/usuarios/recuperar-password',
+    email,
+    exito: 'Te enviamos un enlace a tu correo.',
+    error: 'No se pudo enviar el correo',
+  );
 
-    if (respuesta.statusCode == 202) {
-      final cuerpo = _json(respuesta);
-      return (cuerpo is Map ? cuerpo['detail'] : null)?.toString() ??
-          'Te enviamos un enlace a tu correo.';
-    }
-    throw _error(respuesta, 'No se pudo enviar el correo');
-  }
-
-  // La API responde JSON sin charset; se decodifica como UTF-8 para que
-  // las tildes y la ñ se vean bien.
-  dynamic _json(http.Response respuesta) =>
-      jsonDecode(utf8.decode(respuesta.bodyBytes));
-
-  AuthServicioException _error(http.Response respuesta, String porDefecto) {
-    try {
-      final cuerpo = _json(respuesta);
-      final detalle = cuerpo is Map ? cuerpo['detail'] : null;
-      if (detalle is String) return AuthServicioException(detalle);
-      if (detalle is Map && detalle['mensaje'] != null) {
-        return AuthServicioException(
-          detalle['mensaje'].toString(),
-          codigo: detalle['codigo']?.toString(),
-        );
-      }
-    } catch (_) {
-      // se usa el mensaje por defecto si el cuerpo no es JSON válido
-    }
-    return AuthServicioException(porDefecto);
+  Future<String> _pedirCorreo(
+    String ruta,
+    String email, {
+    required String exito,
+    required String error,
+  }) async {
+    final cuerpo = await ApiCliente.post(ruta, cuerpo: {'email': email}, error: error, conSesion: false);
+    return (cuerpo is Map ? cuerpo['detail'] : null)?.toString() ?? exito;
   }
 }
