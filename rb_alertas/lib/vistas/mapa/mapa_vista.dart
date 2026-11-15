@@ -14,10 +14,13 @@ import 'package:rb_alertas/servicios/sesion.dart';
 import 'package:rb_alertas/servicios/ubicacion_servicio.dart';
 import 'package:rb_alertas/tema/rb_tema.dart';
 import 'package:rb_alertas/vistas/detalle/detalle_incidente_vista.dart';
+import 'package:rb_alertas/vistas/mapa/agrupacion_pines.dart';
 import 'package:rb_alertas/vistas/mapa/aviso_zonas_dialogo.dart';
 import 'package:rb_alertas/vistas/mapa/widgets/botones_mapa.dart';
 import 'package:rb_alertas/vistas/mapa/widgets/etiqueta_pin.dart';
 import 'package:rb_alertas/vistas/mapa/widgets/filtros_mapa.dart';
+import 'package:rb_alertas/vistas/mapa/widgets/hoja_superpuestos.dart';
+import 'package:rb_alertas/vistas/mapa/widgets/pin_grupo.dart';
 import 'package:rb_alertas/vistas/mapa/widgets/tarjeta_vista_previa.dart';
 import 'package:rb_alertas/vistas/reportar/reportar_incidente_vista.dart';
 import 'package:rb_alertas/widgets/barra_navegacion_inferior.dart';
@@ -69,6 +72,15 @@ class _MapaVistaState extends State<MapaVista> {
 
   /// Pin tocado: muestra su etiqueta y la tarjeta de vista previa.
   ReporteMapa? _seleccionado;
+
+  /// Reportes superpuestos abiertos en abanico alrededor de su centro.
+  GrupoPines? _abanico;
+
+  /// Grupos calculados para un zoom (redondeado a [_pasoZoomGrupos]) y una
+  /// lista de reportes; se recalculan solo si cambia alguno de los dos.
+  static const _pasoZoomGrupos = 0.25;
+  List<GrupoPines> _grupos = const [];
+  ({double zoom, List<ReporteMapa> reportes})? _claveGrupos;
   DetalleReporte? _vistaPrevia;
   bool _votando = false;
 
@@ -187,16 +199,24 @@ class _MapaVistaState extends State<MapaVista> {
   /// Los círculos se dibujan de cerca; en el panel, siempre.
   bool get _mostrarCirculos => !_lejos || _modoAdmin;
 
-  /// Solo redibuja cuando se cruza el zoom en que cambia calor por círculos.
+  /// Redibuja al cruzar el zoom en que cambia calor por círculos, o cuando el
+  /// zoom cambia lo suficiente para que los pines se agrupen distinto.
   void _alMoverMapa(MapCamera camara, bool _) {
     final antes = _lejos;
+    final pasoAntes = _zoomAgrupacion;
     _zoom = camara.zoom;
-    if (antes != _lejos && mounted) {
+    final cruzoCalor = antes != _lejos;
+    final cambioGrupos = pasoAntes != _zoomAgrupacion;
+    if ((cruzoCalor || cambioGrupos) && mounted) {
       setState(() {
-        if (_lejos && !_modoAdmin) _zonaSeleccionada = null;
+        if (cruzoCalor && _lejos && !_modoAdmin) _zonaSeleccionada = null;
+        // El abanico se calcula para un zoom: al cambiarlo se vuelve a agrupar.
+        if (cambioGrupos) _abanico = null;
       });
     }
   }
+
+  double get _zoomAgrupacion => (_zoom / _pasoZoomGrupos).round() * _pasoZoomGrupos;
 
   /// Zonas a la vista: si se filtra por una categoría, solo las de su tipo
   /// (robos -> seguridad, accidentes -> vial; mascotas -> ninguna).
@@ -297,6 +317,55 @@ class _MapaVistaState extends State<MapaVista> {
     return _reportes.where((r) => r.categoriaCodigo == _codigoFiltro).toList();
   }
 
+  /// Pines y grupos a dibujar. El seleccionado y los del abanico se dibujan
+  /// aparte, así que no entran en la agrupación.
+  List<GrupoPines> get _gruposVisibles {
+    final apartados = {_seleccionado?.id, ...?_abanico?.reportes.map((r) => r.id)};
+    final reportes = _reportesVisibles.where((r) => !apartados.contains(r.id)).toList();
+    final anterior = _claveGrupos;
+    if (anterior == null ||
+        anterior.zoom != _zoomAgrupacion ||
+        !_mismosReportes(anterior.reportes, reportes)) {
+      _claveGrupos = (zoom: _zoomAgrupacion, reportes: reportes);
+      _grupos = agruparPines(reportes, _zoomAgrupacion);
+    }
+    return _grupos;
+  }
+
+  static bool _mismosReportes(List<ReporteMapa> a, List<ReporteMapa> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (!identical(a[i], b[i])) return false;
+    }
+    return true;
+  }
+
+  /// Un grupo que se separa acercando el mapa se encuadra; si sus pines
+  /// siguen juntos al zoom de separación, se abren en abanico o en una lista.
+  Future<void> _tocarGrupo(GrupoPines grupo) async {
+    if (!grupo.siguenJuntos) {
+      _mapController.fitCamera(
+        CameraFit.coordinates(
+          coordinates: [for (final r in grupo.reportes) LatLng(r.latitud, r.longitud)],
+          padding: const EdgeInsets.all(90),
+          maxZoom: zoomSeparacion,
+        ),
+      );
+      return;
+    }
+    if (grupo.reportes.length <= maximoAbanico) {
+      setState(() {
+        _abanico = grupo;
+        _cerrarVistaPrevia();
+        _filtrosAbiertos = false;
+        _zonaSeleccionada = null;
+      });
+      return;
+    }
+    final elegido = await elegirReporteSuperpuesto(context, grupo.reportes);
+    if (elegido != null && mounted) _seleccionar(elegido);
+  }
+
   // ---------------------------------------------------------------------------
   // Vista previa del reporte
 
@@ -306,6 +375,7 @@ class _MapaVistaState extends State<MapaVista> {
       _vistaPrevia = null;
       _filtrosAbiertos = false;
       _zonaSeleccionada = null;
+      _abanico = null;
     });
     await _cargarVistaPrevia(reporte.id);
   }
@@ -419,11 +489,12 @@ class _MapaVistaState extends State<MapaVista> {
         onMapReady: () => _mapaListo = true,
         onPositionChanged: _alMoverMapa,
         onTap: (_, punto) {
-          if (_seleccionado != null || _filtrosAbiertos || _zonaSeleccionada != null) {
+          if (_seleccionado != null || _filtrosAbiertos || _zonaSeleccionada != null || _abanico != null) {
             setState(() {
               _cerrarVistaPrevia();
               _filtrosAbiertos = false;
               _zonaSeleccionada = null;
+              _abanico = null;
             });
             return;
           }
@@ -443,25 +514,29 @@ class _MapaVistaState extends State<MapaVista> {
             markers: [for (final z in circulos) marcadorZona(z, () => _seleccionarZona(z))],
           ),
         ],
+        if (_abanico != null) _lineasAbanico(_abanico!),
         MarkerLayer(
           markers: [
             if (_miUbicacion != null)
               Marker(point: _miUbicacion!, width: 56, height: 56, child: const PuntoUsuario()),
-            for (final reporte in _reportesVisibles)
-              if (reporte.id != seleccionado?.id)
+            for (final grupo in _gruposVisibles)
+              if (grupo.esUnico)
+                _marcadorReporte(grupo.reportes.first)
+              else
                 Marker(
-                  point: LatLng(reporte.latitud, reporte.longitud),
-                  width: 48,
-                  height: 48,
+                  point: grupo.centro,
+                  width: 56,
+                  height: 56,
                   child: GestureDetector(
-                    onTap: () => _seleccionar(reporte),
-                    child: PinIncidente(
-                      codigo: reporte.categoriaCodigo,
-                      colorHex: reporte.colorHex,
-                      cantidad: reporte.totalReportes,
+                    onTap: () => _tocarGrupo(grupo),
+                    child: PinGrupo(
+                      cantidad: grupo.totalReportes,
+                      codigoCategoria: grupo.dominante.categoriaCodigo,
+                      colorHex: grupo.dominante.colorHex,
                     ),
                   ),
                 ),
+            ..._marcadoresAbanico(),
             // El seleccionado va al final para quedar por encima del resto.
             if (seleccionado != null) ...[
               Marker(
@@ -488,6 +563,42 @@ class _MapaVistaState extends State<MapaVista> {
             ],
           ],
         ),
+      ],
+    );
+  }
+
+  /// Pin de un reporte en su posición, o en [punto] si se dibuja en abanico.
+  Marker _marcadorReporte(ReporteMapa reporte, [LatLng? punto]) => Marker(
+    point: punto ?? LatLng(reporte.latitud, reporte.longitud),
+    width: 48,
+    height: 48,
+    child: GestureDetector(
+      onTap: () => _seleccionar(reporte),
+      child: PinIncidente(
+        codigo: reporte.categoriaCodigo,
+        colorHex: reporte.colorHex,
+        cantidad: reporte.totalReportes,
+      ),
+    ),
+  );
+
+  /// Pines del abanico, repartidos en círculo alrededor del punto común.
+  List<Marker> _marcadoresAbanico() {
+    final abanico = _abanico;
+    if (abanico == null) return const [];
+    final posiciones = posicionesAbanico(abanico.centro, abanico.reportes.length, _zoom);
+    return [
+      for (var i = 0; i < abanico.reportes.length; i++) _marcadorReporte(abanico.reportes[i], posiciones[i]),
+    ];
+  }
+
+  /// Líneas del punto común a cada pin del abanico.
+  PolylineLayer _lineasAbanico(GrupoPines abanico) {
+    final posiciones = posicionesAbanico(abanico.centro, abanico.reportes.length, _zoom);
+    return PolylineLayer(
+      polylines: [
+        for (final p in posiciones)
+          Polyline(points: [abanico.centro, p], color: RBColores.tinta.withValues(alpha: 0.55), strokeWidth: 2),
       ],
     );
   }
@@ -559,6 +670,7 @@ class _MapaVistaState extends State<MapaVista> {
     setState(() {
       _codigoFiltro = codigo;
       _filtrosAbiertos = false;
+      _abanico = null;
       if (codigo != null && _seleccionado?.categoriaCodigo != codigo) _cerrarVistaPrevia();
     });
   }
