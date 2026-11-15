@@ -15,8 +15,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:rb_alertas/servicios/reporte_servicio.dart';
-import 'package:rb_alertas/widgets/zonas_riesgo_mapa.dart';
+import 'package:rb_alertas/modelos/riesgo.dart';
 
 /// Resultado de pedir que se active el aviso con la app cerrada.
 enum ActivacionAviso { activado, soloConAppAbierta, sinPermiso }
@@ -75,7 +74,7 @@ class AvisoZonasRiesgo {
           'latitud': z.latitud,
           'longitud': z.longitud,
           'radio': z.radioMetros,
-          'titulo': tituloZona(z),
+          'titulo': z.titulo,
           'texto': textoAviso(z),
         },
     ];
@@ -92,7 +91,7 @@ class AvisoZonasRiesgo {
     try {
       await _canal.invokeMethod('notificar', {
         'id': idZona(zona),
-        'titulo': tituloZona(zona),
+        'titulo': zona.titulo,
         'texto': textoAviso(zona),
       });
     } catch (_) {}

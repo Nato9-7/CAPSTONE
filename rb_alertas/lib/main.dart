@@ -2,7 +2,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:rb_alertas/servicios/push_servicio.dart';
 import 'package:rb_alertas/tema/rb_tema.dart';
-import 'package:rb_alertas/vistas/pantalla_bienvenida_vista.dart';
+import 'package:rb_alertas/vistas/cuenta/pantalla_bienvenida_vista.dart';
 
 void main() {
   runApp(const RBAlertasApp());

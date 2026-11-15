@@ -7,13 +7,12 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
-import 'package:rb_alertas/config/api_config.dart';
+import 'package:rb_alertas/servicios/api/api_cliente.dart';
 import 'package:rb_alertas/servicios/estado_alertas_servicio.dart';
 import 'package:rb_alertas/servicios/sesion.dart';
-import 'package:rb_alertas/vistas/alertas_vista.dart';
-import 'package:rb_alertas/vistas/detalle_incidente_vista.dart';
+import 'package:rb_alertas/vistas/alertas/alertas_vista.dart';
+import 'package:rb_alertas/vistas/detalle/detalle_incidente_vista.dart';
 
 /// Avisos push (Firebase Cloud Messaging): alertas de zona segura, reportes
 /// nuevos en los grupos y comentarios nuevos en los reportes propios o
@@ -23,7 +22,6 @@ import 'package:rb_alertas/vistas/detalle_incidente_vista.dart';
 /// Firebase no arranca y la app sigue igual, solo que sin avisos push:
 /// las alertas se ven de todas formas en la pestaña Alertas.
 class PushServicio {
-  static const String baseUrl = ApiConfig.baseUrl;
   static const String _ruta = '/api/usuarios/dispositivos';
 
   /// Mismo id que CANAL_ANDROID en la API (app/push.py).
@@ -105,9 +103,9 @@ class PushServicio {
   /// Se llama al iniciar sesión y al abrir la app con una sesión guardada.
   static Future<void> registrar() async {
     debugPrint(
-      '[push] registrar: firebase=$_disponible, sesion=${Sesion.token != null}',
+      '[push] registrar: firebase=$_disponible, sesion=${Sesion.activa}',
     );
-    if (!_disponible || Sesion.token == null) return;
+    if (!_disponible || !Sesion.activa) return;
     try {
       final permiso = await FirebaseMessaging.instance.requestPermission();
       debugPrint('[push] permiso: ${permiso.authorizationStatus}');
@@ -128,19 +126,12 @@ class PushServicio {
 
   /// Al cerrar sesión, antes de revocar el token de sesión en la API:
   /// el teléfono deja de recibir avisos de esa cuenta.
-  static Future<void> darDeBaja(String tokenSesion) async {
+  static Future<void> darDeBaja() async {
     final tokenPush = _tokenRegistrado;
     if (tokenPush == null) return;
     _tokenRegistrado = null;
     try {
-      await http.post(
-        Uri.parse('$baseUrl$_ruta/baja'),
-        headers: {
-          'Authorization': 'Bearer $tokenSesion',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({'token_push': tokenPush}),
-      );
+      await ApiCliente.post('$_ruta/baja', cuerpo: {'token_push': tokenPush}, error: '');
     } catch (_) {
       // aunque falle, la sesión se cierra igual en la app
     }
@@ -168,7 +159,7 @@ class PushServicio {
 
   /// Abre el detalle encima de la pantalla actual, para volver a ella con «atrás».
   static void abrirReporte(int idReporte, {bool irAComentarios = true}) {
-    if (Sesion.token == null || Sesion.esAdmin) return;
+    if (!Sesion.activa || Sesion.esAdmin) return;
     navegador.currentState?.push(
       MaterialPageRoute(
         builder: (context) =>
@@ -187,7 +178,7 @@ class PushServicio {
   }
 
   static void abrirAlertas() {
-    if (Sesion.token == null || Sesion.esAdmin) return;
+    if (!Sesion.activa || Sesion.esAdmin) return;
     navegador.currentState?.pushAndRemoveUntil(
       PageRouteBuilder(
         pageBuilder: (context, animacion, animacionSecundaria) =>
@@ -210,32 +201,23 @@ class PushServicio {
   }
 
   static Future<void> _enviarToken(String tokenPush) async {
-    final tokenSesion = Sesion.token;
-    if (tokenSesion == null) return;
+    if (!Sesion.activa) return;
     try {
       final equipo = await DeviceInfoPlugin().androidInfo;
       final paquete = await PackageInfo.fromPlatform();
-      final respuesta = await http.post(
-        Uri.parse('$baseUrl$_ruta/'),
-        headers: {
-          'Authorization': 'Bearer $tokenSesion',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({
+      await ApiCliente.post(
+        '$_ruta/',
+        cuerpo: {
           'token_push': tokenPush,
           'plataforma': 'ANDROID',
           'modelo': _recortar('${equipo.manufacturer} ${equipo.model}', 100),
           'version_so': _recortar('Android ${equipo.version.release}', 40),
-          'version_app': _recortar(
-            '${paquete.version}+${paquete.buildNumber}',
-            20,
-          ),
-        }),
+          'version_app': _recortar('${paquete.version}+${paquete.buildNumber}', 20),
+        },
+        error: 'No se pudo registrar el dispositivo',
       );
-      debugPrint(
-        '[push] API dispositivos: ${respuesta.statusCode} ${respuesta.body}',
-      );
-      if (respuesta.statusCode == 204) _tokenRegistrado = tokenPush;
+      debugPrint('[push] dispositivo registrado en la API');
+      _tokenRegistrado = tokenPush;
     } catch (error) {
       debugPrint('[push] envío a la API falló: $error');
       // se reintenta la próxima vez que se abra la app

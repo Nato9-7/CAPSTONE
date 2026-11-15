@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-import 'package:rb_alertas/servicios/auth_servicio.dart';
+import 'package:rb_alertas/modelos/usuario.dart';
 
 /// Datos del usuario que inició sesión.
 ///
@@ -16,6 +16,9 @@ class Sesion {
   static const _almacen = FlutterSecureStorage();
   static const _claveToken = 'sesion_token';
   static const _claveUsuario = 'sesion_usuario';
+
+  /// true si hay un usuario con sesión iniciada.
+  static bool get activa => token != null && token!.isNotEmpty;
 
   /// La cuenta admin solo usa el panel de administración (ver AdminVista).
   static bool get esAdmin => usuario?['es_admin'] == true;

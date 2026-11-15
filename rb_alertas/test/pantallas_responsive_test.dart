@@ -30,6 +30,8 @@ import 'package:rb_alertas/vistas/mapa/mapa_vista.dart';
 import 'package:rb_alertas/vistas/reportar/reportar_incidente_vista.dart';
 import 'package:rb_alertas/vistas/zonas/zonas_seguras_vista.dart';
 import 'package:rb_alertas/widgets/rb_componentes.dart';
+import 'package:rb_alertas/config/documentos_legales.dart';
+import 'package:rb_alertas/vistas/cuenta/documento_legal_vista.dart';
 
 import 'soporte/api_falsa.dart';
 
@@ -71,6 +73,11 @@ Future<void> _asentar(WidgetTester tester) async {
 final _casos = <_Caso>[
   _Caso('01_login', () => const InicioSesionVista()),
   _Caso('02_registro', () => const RegistroVista()),
+  // Formulario enviado vacío: errores de región, comuna y aceptación de términos.
+  _Caso('02b_registro_errores', () => const RegistroVista(), preparar: (t) async {
+    await _tocar(t, find.text('Crear cuenta'));
+  }),
+  _Caso('02c_privacidad', () => const DocumentoLegalVista(documento: DocumentoLegal.privacidad)),
   _Caso('03_recuperar', () => const RecuperarContrasenaVista()),
   _Caso('04_mapa', () => const MapaVista()),
   _Caso('05_mapa_tarjeta', () => const MapaVista(), conSesion: true, preparar: (t) async {

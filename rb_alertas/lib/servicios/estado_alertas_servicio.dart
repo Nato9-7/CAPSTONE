@@ -1,5 +1,4 @@
 import 'package:flutter/foundation.dart';
-
 import 'package:rb_alertas/servicios/notificaciones_servicio.dart';
 import 'package:rb_alertas/servicios/sesion.dart';
 
@@ -54,13 +53,12 @@ class EstadoAlertas {
 
   /// Consulta al servidor cuántas alertas de zona quedan sin leer.
   static Future<void> refrescarZonasSinLeer() async {
-    final token = Sesion.token;
-    if (token == null || token.isEmpty) {
+    if (!Sesion.activa) {
       registrarZonasSinLeer(0);
       return;
     }
     try {
-      final datos = await NotificacionesServicio().listar(token, limite: 1);
+      final datos = await NotificacionesServicio().listar(limite: 1);
       registrarZonasSinLeer(datos.noLeidas);
     } catch (_) {
       // se reintenta en la próxima carga del mapa

@@ -42,6 +42,7 @@ Object? _responder(String metodo, String ruta, [Map<String, String> consulta = c
   if (ruta == '/api/reportes/zonas-riesgo') return {'dias': 60, 'zonas': _zonasRiesgo};
   if (RegExp(r'^/api/reportes/\d+$').hasMatch(ruta)) return _detalle;
   if (RegExp(r'^/api/reportes/\d+/comentarios$').hasMatch(ruta)) return _comentarios;
+  if (ruta == '/api/usuarios/comunas') return _regiones;
   if (ruta == '/api/usuarios/perfil') return _perfil;
   if (ruta == '/api/usuarios/zonas/') return _zonas;
   if (ruta == '/api/grupos/') return _grupos;
@@ -566,4 +567,15 @@ final _calor = [
       'seguridad': robos,
       'radio_metros': (150 + 60 * (robos + accidentes - 1)).clamp(150, 600),
     },
+];
+
+const _regiones = [
+  {
+    'id_region': 1,
+    'nombre': 'Los Lagos',
+    'numero_romano': 'X',
+    'comunas': [
+      {'id_comuna': 1, 'nombre': 'Puerto Montt'},
+    ],
+  },
 ];
