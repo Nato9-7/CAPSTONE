@@ -6,15 +6,15 @@
 import 'dart:io';
 import 'dart:ui' as ui;
 
-import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:rb_alertas/tema/rb_tema.dart';
-import 'package:rb_alertas/vistas/mapa_vista.dart';
+import 'package:rb_alertas/vistas/mapa/mapa_vista.dart';
 import 'package:rb_alertas/widgets/capa_calor.dart';
 import 'package:rb_alertas/widgets/zonas_riesgo_mapa.dart';
 

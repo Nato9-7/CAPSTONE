@@ -17,18 +17,18 @@ import 'package:http/http.dart' as http;
 import 'package:rb_alertas/servicios/estado_alertas_servicio.dart';
 import 'package:rb_alertas/servicios/sesion.dart';
 import 'package:rb_alertas/tema/rb_tema.dart';
-import 'package:rb_alertas/vistas/admin_vista.dart';
-import 'package:rb_alertas/vistas/alertas_vista.dart';
-import 'package:rb_alertas/vistas/detalle_incidente_vista.dart';
-import 'package:rb_alertas/vistas/grupo_detalle_vista.dart';
-import 'package:rb_alertas/vistas/grupos_vista.dart';
-import 'package:rb_alertas/vistas/inicio_sesion_vista.dart';
-import 'package:rb_alertas/vistas/mapa_vista.dart';
-import 'package:rb_alertas/vistas/perfil_vista.dart';
-import 'package:rb_alertas/vistas/recuperar_contrasena_vista.dart';
-import 'package:rb_alertas/vistas/registro_vista.dart';
-import 'package:rb_alertas/vistas/reportar_incidente_vista.dart';
-import 'package:rb_alertas/vistas/zonas_seguras_vista.dart';
+import 'package:rb_alertas/vistas/admin/admin_vista.dart';
+import 'package:rb_alertas/vistas/alertas/alertas_vista.dart';
+import 'package:rb_alertas/vistas/cuenta/inicio_sesion_vista.dart';
+import 'package:rb_alertas/vistas/cuenta/perfil_vista.dart';
+import 'package:rb_alertas/vistas/cuenta/recuperar_contrasena_vista.dart';
+import 'package:rb_alertas/vistas/cuenta/registro_vista.dart';
+import 'package:rb_alertas/vistas/detalle/detalle_incidente_vista.dart';
+import 'package:rb_alertas/vistas/grupos/grupo_detalle_vista.dart';
+import 'package:rb_alertas/vistas/grupos/grupos_vista.dart';
+import 'package:rb_alertas/vistas/mapa/mapa_vista.dart';
+import 'package:rb_alertas/vistas/reportar/reportar_incidente_vista.dart';
+import 'package:rb_alertas/vistas/zonas/zonas_seguras_vista.dart';
 import 'package:rb_alertas/widgets/rb_componentes.dart';
 
 import 'soporte/api_falsa.dart';
@@ -135,8 +135,8 @@ final _casos = <_Caso>[
     await _tocar(t, find.text('Grupos'));
     await _tocar(t, find.text('Ver reportes'));
   }),
-  _Caso('20_admin_grafo', () => const AdminVista(), conSesion: true, admin: true,
-      preparar: (t) async => _tocar(t, find.text('Grafo'))),
+  _Caso('20_admin_red', () => const AdminVista(), conSesion: true, admin: true,
+      preparar: (t) async => _tocar(t, find.text('Red'))),
 ];
 
 Future<void> _cargarFuentes() async {
@@ -220,9 +220,10 @@ void main() {
               });
             }
 
-            // Se desmonta dentro de la zona para cerrar temporizadores pendientes.
+            // Se desmonta dentro de la zona y se deja correr el tiempo suficiente
+            // para que venzan los temporizadores pendientes (el GPS espera hasta 20 s).
             await tester.pumpWidget(const SizedBox());
-            await tester.pump(const Duration(seconds: 6));
+            await tester.pump(const Duration(seconds: 21));
           }, clienteApiFalsa);
         } finally {
           FlutterError.onError = manejadorOriginal;

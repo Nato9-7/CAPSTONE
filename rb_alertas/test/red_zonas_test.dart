@@ -15,7 +15,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:rb_alertas/servicios/sesion.dart';
 import 'package:rb_alertas/tema/rb_tema.dart';
-import 'package:rb_alertas/vistas/admin_red_vista.dart';
+import 'package:rb_alertas/vistas/admin/red/seccion_red.dart';
 import 'package:rb_alertas/widgets/lienzo_grafo.dart';
 
 import 'soporte/api_falsa.dart';
