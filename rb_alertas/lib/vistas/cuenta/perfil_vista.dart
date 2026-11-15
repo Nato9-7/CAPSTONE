@@ -12,6 +12,8 @@ import 'package:rb_alertas/vistas/zonas/zonas_seguras_vista.dart';
 import 'package:rb_alertas/widgets/barra_navegacion_inferior.dart';
 import 'package:rb_alertas/widgets/dialogos.dart';
 import 'package:rb_alertas/widgets/rb_componentes.dart';
+import 'package:rb_alertas/config/documentos_legales.dart';
+import 'package:rb_alertas/vistas/cuenta/documento_legal_vista.dart';
 
 /// Perfil del usuario. Las estadísticas se ven en Alertas › Mis reportes y los
 /// teléfonos de emergencia en el botón "Emergencias" del mapa.
@@ -337,7 +339,12 @@ class _PerfilVistaState extends State<PerfilVista> {
               _opcion(
                 Icons.description_outlined,
                 'Política de privacidad',
-                () => mostrarAviso(context, 'La política de privacidad estará disponible pronto'),
+                () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const DocumentoLegalVista(documento: DocumentoLegal.privacidad),
+                  ),
+                ),
               ),
               const Divider(height: 1),
               _opcion(
