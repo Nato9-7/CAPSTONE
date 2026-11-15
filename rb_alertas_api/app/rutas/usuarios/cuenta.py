@@ -9,6 +9,7 @@ from pydantic import BaseModel, EmailStr, Field
 
 from app.comun.sql import error_bd, es_duplicado
 from app.db import consultar, transaccion
+from app.rutas.usuarios.territorio import comuna_operativa
 from app.rutas.usuarios.verificacion import programar_correo_verificacion
 from app.seguridad import (
     LARGO_MAXIMO_PASSWORD,
@@ -19,6 +20,7 @@ from app.seguridad import (
     esquema_bearer,
     hash_password,
     ip_cliente,
+    ip_valida,
     revocar_sesion,
     usuario_actual,
     verificar_password,
@@ -28,6 +30,13 @@ router = APIRouter()
 
 MENSAJE_USUARIO_EXISTENTE = "Ya existe un usuario con ese email o RUT"
 
+# Rol que recibe toda cuenta creada desde la app.
+ROL_POR_DEFECTO = "CIUDADANO"
+
+# Lo que acepta el usuario con la casilla del registro: queda una fila por tipo
+# en usuario_consentimiento, con la versión de los textos que vio en la app.
+CONSENTIMIENTOS_REGISTRO = ("TERMINOS_USO", "PRIVACIDAD", "GEOLOCALIZACION")
+
 
 class RegistroUsuario(BaseModel):
     nombres: str = Field(min_length=1, max_length=80)
@@ -36,6 +45,9 @@ class RegistroUsuario(BaseModel):
     email: EmailStr
     telefono: str = Field(min_length=1, max_length=20)
     password: str = Field(min_length=LARGO_MINIMO_PASSWORD, max_length=LARGO_MAXIMO_PASSWORD)
+    id_comuna: int = Field(gt=0)
+    acepta_terminos: bool
+    version_terminos: str = Field(min_length=1, max_length=20)
 
 
 class LoginUsuario(BaseModel):
@@ -179,6 +191,14 @@ def cerrar_sesion(credenciales: HTTPAuthorizationCredentials | None = Depends(es
 
 @router.post("/registro", status_code=201)
 def registrar_usuario(datos: RegistroUsuario, request: Request, tareas: BackgroundTasks):
+    if not datos.acepta_terminos:
+        raise HTTPException(
+            status_code=400,
+            detail="Debes aceptar los Términos de uso y la Política de privacidad para crear tu cuenta",
+        )
+    if not comuna_operativa(datos.id_comuna):
+        raise HTTPException(status_code=400, detail="Elige una comuna de la lista")
+
     existentes = consultar(
         "SELECT id_usuario FROM usuario WHERE email = %s OR rut = %s",
         (datos.email, datos.rut),
@@ -188,23 +208,26 @@ def registrar_usuario(datos: RegistroUsuario, request: Request, tareas: Backgrou
 
     uuid_publico = str(uuid4())
     try:
-        # Usuario y token de verificación en la misma transacción: si falla
-        # uno, no queda una cuenta a medias sin forma de verificarse.
+        # Usuario, rol, consentimientos y token de verificación en una sola
+        # transacción: si algo falla, no queda una cuenta a medias.
         with transaccion() as cursor:
             cursor.execute(
                 """
                 INSERT INTO usuario (
-                    uuid_publico, nombres, apellidos, rut, email, telefono,
+                    uuid_publico, id_comuna, nombres, apellidos, rut, email, telefono,
                     password_hash, password_actualizada, estado,
                     email_verificado, telefono_verificado, intentos_fallidos
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), 'PENDIENTE', 0, 0, 0)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW(), 'PENDIENTE', 0, 0, 0)
                 """,
                 (
-                    uuid_publico, datos.nombres, datos.apellidos, datos.rut,
+                    uuid_publico, datos.id_comuna, datos.nombres, datos.apellidos, datos.rut,
                     datos.email, datos.telefono, hash_password(datos.password),
                 ),
             )
-            token = crear_token_verificacion(cursor, cursor.lastrowid, ip_cliente(request))
+            id_usuario = cursor.lastrowid
+            _asignar_rol(cursor, id_usuario, ROL_POR_DEFECTO)
+            _registrar_consentimientos(cursor, id_usuario, datos.version_terminos, ip_cliente(request))
+            token = crear_token_verificacion(cursor, id_usuario, ip_cliente(request))
     except mysql.connector.Error as error:
         # Dos registros casi simultáneos con el mismo correo o RUT.
         if es_duplicado(error):
@@ -218,3 +241,29 @@ def registrar_usuario(datos: RegistroUsuario, request: Request, tareas: Backgrou
         "estado": "PENDIENTE",
         "verificacion_enviada": True,
     }
+
+
+def _asignar_rol(cursor, id_usuario: int, codigo_rol: str) -> None:
+    cursor.execute(
+        """
+        INSERT INTO usuario_rol (id_usuario, id_rol, fecha_asignacion)
+        SELECT %s, id_rol, NOW() FROM rol WHERE codigo = %s AND activo = 1
+        """,
+        (id_usuario, codigo_rol),
+    )
+    if cursor.rowcount != 1:
+        # Sin el rol en el catálogo la cuenta quedaría sin permisos: se revierte todo.
+        raise RuntimeError(f"No existe el rol activo {codigo_rol}")
+
+
+def _registrar_consentimientos(cursor, id_usuario: int, version: str, ip: str | None) -> None:
+    # Sin una IP válida (p. ej. en pruebas) se guarda 0.0.0.0: la columna no admite NULL.
+    ip_registro = ip_valida(ip) or "0.0.0.0"
+    cursor.executemany(
+        """
+        INSERT INTO usuario_consentimiento
+            (id_usuario, tipo, version_documento, aceptado, ip_registro, fecha_registro)
+        VALUES (%s, %s, %s, 1, INET6_ATON(%s), NOW())
+        """,
+        [(id_usuario, tipo, version, ip_registro) for tipo in CONSENTIMIENTOS_REGISTRO],
+    )

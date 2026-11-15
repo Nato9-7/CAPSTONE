@@ -32,7 +32,7 @@ CORREOS_ADMIN = {
 esquema_bearer = HTTPBearer(auto_error=False)
 
 
-def _ip_valida(ip: str | None) -> str | None:
+def ip_valida(ip: str | None) -> str | None:
     """INET6_ATON da error con textos que no son IP (p. ej. 'testclient'): esos se guardan como NULL."""
     try:
         return str(ipaddress.ip_address(ip)) if ip else None
@@ -66,7 +66,7 @@ def crear_sesion(id_usuario: int, ip: str | None, user_agent: str | None) -> str
             id_usuario, refresh_token_hash, ip_origen, user_agent, fecha_expiracion
         ) VALUES (%s, %s, INET6_ATON(%s), %s, DATE_ADD(NOW(), INTERVAL %s DAY))
         """,
-        (id_usuario, hash_token(token), _ip_valida(ip), (user_agent or "")[:255] or None, DURACION_SESION_DIAS),
+        (id_usuario, hash_token(token), ip_valida(ip), (user_agent or "")[:255] or None, DURACION_SESION_DIAS),
     )
     return token
 
@@ -78,7 +78,7 @@ def _crear_token(cursor, id_usuario: int, tipo: str, horas_vigencia: int, ip: st
         INSERT INTO usuario_token (id_usuario, tipo, token_hash, fecha_expiracion, ip_solicitud)
         VALUES (%s, %s, %s, DATE_ADD(NOW(), INTERVAL %s HOUR), INET6_ATON(%s))
         """,
-        (id_usuario, tipo, hash_token(token), horas_vigencia, _ip_valida(ip)),
+        (id_usuario, tipo, hash_token(token), horas_vigencia, ip_valida(ip)),
     )
     return token
 
