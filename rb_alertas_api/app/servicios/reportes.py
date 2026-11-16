@@ -2,6 +2,7 @@
 
 from fastapi import HTTPException
 
+from app.comun.cache import cache_mapa
 from app.db import consultar
 from app.servicios import incidentes
 
@@ -98,6 +99,8 @@ def reportes_del_incidente(id_reporte: int) -> list[dict]:
 def cambiar_estado(cursor, id_reporte: int, anterior: str, nuevo: str, id_responsable: int, motivo: str) -> None:
     """Cambia el estado del reporte y lo deja en reporte_estado_historial (en la transacción del cursor)."""
     cursor.execute("UPDATE reporte SET estado = %s WHERE id_reporte = %s", (nuevo, id_reporte))
+    # Un reporte descartado deja de contar en las zonas de riesgo y el calor.
+    cache_mapa.vaciar()
     cursor.execute(
         """
         INSERT INTO reporte_estado_historial (

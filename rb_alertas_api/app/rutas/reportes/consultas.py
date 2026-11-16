@@ -3,6 +3,7 @@
 import mysql.connector
 from fastapi import APIRouter, Depends, Query
 
+from app.comun.cache import cache_mapa
 from app.comun.geo import PUNTO_SQL, punto_wkt
 from app.db import consultar
 from app.seguridad import usuario_actual, usuario_opcional
@@ -59,6 +60,7 @@ def _reportes_recientes(dias: int) -> list[dict]:
     return consultar(
         """
         SELECT r.id_reporte, c.codigo AS categoria_codigo, c.nombre AS categoria, c.color_hex,
+               c.nivel_gravedad,
                ST_Latitude(r.ubicacion) AS latitud, ST_Longitude(r.ubicacion) AS longitud,
                r.fecha_creacion
         FROM reporte r
@@ -153,17 +155,19 @@ def listar_zonas_riesgo(dias: int = Query(60, ge=7, le=365)):
 
     Ver app/servicios/zonas_riesgo.py.
     """
-    return {"dias": dias, "zonas": zonas_riesgo.calcular(_reportes_recientes(dias))}
+    zonas = cache_mapa.obtener(("zonas", dias), lambda: zonas_riesgo.calcular(_reportes_recientes(dias)))
+    return {"dias": dias, "zonas": zonas}
 
 
 @router.get("/calor")
 def mapa_de_calor(dias: int = Query(60, ge=1, le=365)):
-    """Manchas del mapa de calor de robos y accidentes de tránsito.
+    """Manchas del mapa de calor de robos, accidentes y problemas viales.
 
-    Los reportes del mismo hecho cuentan una vez y los hechos cercanos se
-    juntan en una sola mancha que crece con cuántos son.
+    Ver zonas_riesgo.puntos_calor: cada mancha trae su intensidad, que ya
+    considera la gravedad y la antigüedad de sus hechos.
     """
-    return {"dias": dias, "puntos": zonas_riesgo.puntos_calor(_reportes_recientes(dias))}
+    puntos = cache_mapa.obtener(("calor", dias), lambda: zonas_riesgo.puntos_calor(_reportes_recientes(dias)))
+    return {"dias": dias, "puntos": puntos}
 
 
 @router.get("/mios")

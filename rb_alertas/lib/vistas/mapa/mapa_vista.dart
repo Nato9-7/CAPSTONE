@@ -187,10 +187,11 @@ class _MapaVistaState extends State<MapaVista> {
 
   bool get _lejos => _zoom < _zoomCalor;
 
-  /// El calor es de robos y accidentes: si se filtra otra categoría, se oculta.
+  /// El calor usa las categorías de las zonas de riesgo (robos, accidentes y
+  /// problemas viales): si se filtra otra, se oculta.
   bool get _filtroAdmiteCalor {
-    final filtro = _codigoFiltro?.toUpperCase();
-    return filtro == null || filtro == 'ROBO' || filtro == 'ACCIDENTE';
+    final filtro = _codigoFiltro;
+    return filtro == null || ZonaRiesgo.tipoDeCategoria(filtro) != null;
   }
 
   bool get _mostrarCalor =>
@@ -646,7 +647,7 @@ class _MapaVistaState extends State<MapaVista> {
             ),
             if (_mostrarCalor && despejado) ...[
               const SizedBox(height: 8),
-              const LeyendaCalor(texto: 'Robos y accidentes · $_diasZonas días'),
+              const LeyendaCalor(texto: 'Robos, accidentes y problemas viales · $_diasZonas días'),
             ],
             if (zonaDondeEstoy != null && despejado) ...[
               const SizedBox(height: 8),

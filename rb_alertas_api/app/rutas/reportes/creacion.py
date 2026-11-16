@@ -4,6 +4,7 @@ import mysql.connector
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 
 from app.comun.archivos import FORMATOS_FOTO, FORMATOS_VIDEO, CarpetaAdjuntos, hay_archivo
+from app.comun.cache import cache_mapa
 from app.comun.geo import PUNTO_SQL, punto_wkt
 from app.comun.sql import error_bd, marcas
 from app.db import consultar, transaccion
@@ -93,6 +94,7 @@ def _guardar_reporte(datos: dict, ids_grupos: list[int], evidencia_url: str | No
                 "INSERT INTO reporte_imagen (id_reporte, url_archivo, orden) VALUES (%s, %s, 1)",
                 (id_reporte, evidencia_url),
             )
+    cache_mapa.vaciar()
     return id_reporte
 
 

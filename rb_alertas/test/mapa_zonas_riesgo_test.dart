@@ -111,8 +111,13 @@ void main() {
       }
       await _asentar(tester);
       expect(find.byType(CapaCalor), findsOneWidget);
+      // La capa gira con el mapa: si no, al rotarlo las manchas se desplazan.
+      expect(
+        find.descendant(of: find.byType(CapaCalor), matching: find.byType(MobileLayerTransformer)),
+        findsOneWidget,
+      );
       expect(find.byType(CircleLayer), findsNothing);
-      expect(find.text('Robos y accidentes · 60 días'), findsOneWidget);
+      expect(find.text('Robos, accidentes y problemas viales · 60 días'), findsOneWidget);
       await _capturar(tester, llave, 'mapa_calor');
 
       // El botón las oculta.

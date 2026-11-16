@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from app.comun.alias import alias_autor, mapa_alias
 from app.comun.archivos import borrar_archivos
+from app.comun.cache import cache_mapa
 from app.db import consultar, transaccion
 from app.seguridad import usuario_admin
 from app.servicios import grafo, moderacion
@@ -111,6 +112,7 @@ def eliminar_reporte(id_reporte: int = PathParam(ge=1), admin: dict = Depends(us
             raise HTTPException(status_code=404, detail="Reporte no encontrado")
         archivos = _archivos_del_reporte(cursor, id_reporte)
         cursor.execute("DELETE FROM reporte WHERE id_reporte = %s", (id_reporte,))
+    cache_mapa.vaciar()
     # Los archivos se borran después de confirmar: si la BD fallara, las fotos siguen ahí.
     borrados = borrar_archivos(archivos)
     log.warning(

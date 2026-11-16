@@ -69,18 +69,24 @@ class ZonaRiesgo {
   );
 }
 
-/// Mancha del mapa de calor (GET /api/reportes/calor): robos y accidentes de
-/// tránsito cercanos juntos en un solo lugar, que crece con cuántos son.
+/// Mancha del mapa de calor (GET /api/reportes/calor): robos, accidentes y
+/// problemas viales cercanos juntos en un solo lugar.
 class PuntoCalor {
   final double latitud;
   final double longitud;
 
-  /// Hechos que se juntaron en esta mancha.
+  /// Hechos que se juntaron en esta mancha (al menos 2).
   final int peso;
 
-  /// De esos hechos, cuántos son robos y cuántos accidentes de tránsito.
+  /// Suma del peso de sus hechos según su gravedad y antigüedad: un robo o un
+  /// accidente de hoy vale 1, un problema vial la mitad, y cada hecho pierde
+  /// la mitad de su peso cada 15 días. Define el color de la mancha.
+  final double intensidad;
+
+  /// De esos hechos, cuántos son robos, accidentes y problemas viales.
   final int robos;
   final int accidentes;
+  final int viales;
 
   /// Radio de la mancha en el terreno; crece con [peso].
   final double radioMetros;
@@ -89,18 +95,23 @@ class PuntoCalor {
     required this.latitud,
     required this.longitud,
     required this.peso,
+    double? intensidad,
     this.robos = 0,
     this.accidentes = 0,
+    this.viales = 0,
     this.radioMetros = 150,
-  });
+  }) : intensidad = intensidad ?? peso * 1.0;
 
   factory PuntoCalor.desdeJson(Map<String, dynamic> json) => PuntoCalor(
     latitud: json.decimal('latitud'),
     longitud: json.decimal('longitud'),
     peso: json.entero('peso'),
+    // Versiones anteriores de la API no traían intensidad: se usa la cantidad.
+    intensidad: json.decimalOpcional('intensidad'),
     // Versiones anteriores de la API llamaban "seguridad" a los robos.
     robos: json.enteroOpcional('robos') ?? json.entero('seguridad'),
     accidentes: json.entero('accidentes'),
+    viales: json.entero('viales'),
     radioMetros: json.decimal('radio_metros', 150),
   );
 }

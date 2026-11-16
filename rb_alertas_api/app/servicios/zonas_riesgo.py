@@ -150,56 +150,83 @@ def calcular(reportes: list[dict]) -> list[dict]:
     return zonas
 
 
-# Categorías del mapa de calor: solo robos y accidentes de tránsito.
-CATEGORIAS_CALOR = ("ROBO", "ACCIDENTE")
-
 # Celda a la que se redondea el centro de cada mancha: ~110 m por lado en
 # Puerto Montt (en la latitud -41°, un grado de longitud mide ~84 km). Se
 # entrega la celda y no el punto exacto para no delatar dónde vive quien reporta.
 CELDA_LATITUD = 0.001
 CELDA_LONGITUD = 0.0013
 
-# Tamaño de la mancha: un hecho solo se ve con RADIO_CALOR_BASE y cada hecho
+# Tamaño de la mancha: dos hechos se ven con RADIO_CALOR_BASE y cada hecho
 # más que se junta la agranda, hasta RADIO_MAXIMO_DIBUJO.
 RADIO_CALOR_BASE = 150.0
 RADIO_CALOR_POR_HECHO = 60.0
 
+# Una mancha de un solo hecho podría insinuar dónde vive quien lo reportó.
+MINIMO_HECHOS_CALOR = int(os.getenv("CALOR_MINIMO_HECHOS", "2"))
 
-def puntos_calor(reportes: list[dict]) -> list[dict]:
-    """Manchas del mapa de calor, de la más grande a la más chica.
+# Peso de cada hecho en la intensidad de su mancha:
+# - Gravedad: nivel_gravedad de su categoría dividido por GRAVEDAD_REFERENCIA
+#   (un robo o un accidente, nivel 4, vale 1; un problema en la vía, nivel 2, vale 0,5).
+# - Antigüedad: pierde la mitad de su peso cada VIDA_MEDIA_DIAS.
+GRAVEDAD_REFERENCIA = 4.0
+VIDA_MEDIA_DIAS = float(os.getenv("CALOR_VIDA_MEDIA_DIAS", "15"))
 
-    Solo cuentan robos y accidentes de tránsito. Los reportes del mismo hecho
-    cuentan una vez y los hechos a menos de RADIO_ZONA_METROS entre sí se
-    juntan en una sola mancha centrada entre ellos, que crece con cuántos son
-    (en vez de dibujar cada hecho por separado).
+
+def peso_hecho(nivel_gravedad, fecha: datetime, ahora: datetime) -> float:
+    """Cuánto aporta un hecho a la intensidad de su mancha."""
+    gravedad = (float(nivel_gravedad) if nivel_gravedad is not None else GRAVEDAD_REFERENCIA) / GRAVEDAD_REFERENCIA
+    edad_dias = max(0.0, (ahora - fecha).total_seconds() / 86_400)
+    return gravedad * 0.5 ** (edad_dias / VIDA_MEDIA_DIAS)
+
+
+def puntos_calor(reportes: list[dict], ahora: datetime | None = None) -> list[dict]:
+    """Manchas del mapa de calor, de la más intensa a la menos.
+
+    Cuentan las mismas categorías que las zonas de riesgo (ver tipo_riesgo). Los
+    reportes del mismo hecho cuentan una vez y los hechos a menos de
+    RADIO_ZONA_METROS entre sí se juntan en una mancha centrada entre ellos.
+    Solo se entregan las manchas con al menos MINIMO_HECHOS_CALOR hechos.
+
+    `intensidad` es la suma de los pesos de sus hechos (ver peso_hecho): la app
+    la pinta con una escala fija, así el mismo color significa lo mismo siempre.
     """
-    elegidos = [r for r in reportes if (r["categoria_codigo"] or "").upper() in CATEGORIAS_CALOR]
+    ahora = ahora or datetime.now()
+    elegidos = [r for r in reportes if tipo_riesgo(r["categoria_codigo"])]
 
     incidentes = []
     for grupo in agrupar(elegidos):
+        primero = grupo[0]
         incidentes.append({
-            "codigo": grupo[0]["categoria_codigo"].upper(),
+            "codigo": primero["categoria_codigo"].upper(),
+            "tipo": tipo_riesgo(primero["categoria_codigo"]),
             "latitud": sum(float(r["latitud"]) for r in grupo) / len(grupo),
             "longitud": sum(float(r["longitud"]) for r in grupo) / len(grupo),
+            # El hecho se fecha por su último reporte: si lo siguen reportando, sigue vigente.
+            "peso": peso_hecho(primero.get("nivel_gravedad"), _fecha(grupo[-1]["fecha_creacion"]), ahora),
         })
 
     puntos = []
     for grupo in _juntar_cercanos(incidentes):
+        if len(grupo) < MINIMO_HECHOS_CALOR:
+            continue
         lat = sum(i["latitud"] for i in grupo) / len(grupo)
         lng = sum(i["longitud"] for i in grupo) / len(grupo)
         lejania = max(distancia_metros(lat, lng, i["latitud"], i["longitud"]) for i in grupo)
-        crecido = RADIO_CALOR_BASE + RADIO_CALOR_POR_HECHO * (len(grupo) - 1)
+        crecido = RADIO_CALOR_BASE + RADIO_CALOR_POR_HECHO * (len(grupo) - MINIMO_HECHOS_CALOR)
         radio = min(RADIO_MAXIMO_DIBUJO, max(crecido, lejania + 80))
-        robos = sum(1 for i in grupo if i["codigo"] == "ROBO")
+        robos = sum(1 for i in grupo if i["tipo"] == "SEGURIDAD")
+        accidentes = sum(1 for i in grupo if i["codigo"] == "ACCIDENTE")
         puntos.append({
             "latitud": round(round(lat / CELDA_LATITUD) * CELDA_LATITUD, 6),
             "longitud": round(round(lng / CELDA_LONGITUD) * CELDA_LONGITUD, 6),
             "peso": len(grupo),
+            "intensidad": round(sum(i["peso"] for i in grupo), 2),
             "robos": robos,
-            "accidentes": len(grupo) - robos,
+            "accidentes": accidentes,
+            "viales": len(grupo) - robos - accidentes,
             # Se mantiene por compatibilidad con clientes anteriores.
             "seguridad": robos,
             "radio_metros": round(radio),
         })
-    puntos.sort(key=lambda p: -p["peso"])
+    puntos.sort(key=lambda p: -p["intensidad"])
     return puntos
