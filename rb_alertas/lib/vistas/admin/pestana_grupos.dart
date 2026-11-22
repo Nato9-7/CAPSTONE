@@ -42,10 +42,7 @@ class _PestanaGruposState extends State<PestanaGrupos> with AutomaticKeepAliveCl
   Future<void> _cargar() async {
     setState(() => _error = null);
     try {
-      final grupos = await _servicio.grupos(
-        buscar: _buscador.text,
-        activo: _soloCerrados ? false : null,
-      );
+      final grupos = await _servicio.grupos(buscar: _buscador.text, activo: _soloCerrados ? false : null);
       if (mounted) setState(() => _grupos = grupos);
     } catch (e) {
       if (mounted) setState(() => _error = mensajeDeError(e));
@@ -112,9 +109,10 @@ class _PestanaGruposState extends State<PestanaGrupos> with AutomaticKeepAliveCl
   }
 
   Widget _tarjeta(GrupoAdmin g) {
+    final palabra = g.totalReportes == 1 ? 'reporte' : 'reportes';
     final reportes = g.reportesPrivados > 0
-        ? '${g.totalReportes} reportes (${g.reportesPrivados} privados)'
-        : '${g.totalReportes} reportes';
+        ? '${g.totalReportes} $palabra (${g.reportesPrivados} ${g.reportesPrivados == 1 ? 'privado' : 'privados'})'
+        : '${g.totalReportes} $palabra';
     final creador = g.creador.isEmpty ? g.creadorEmail : '${g.creador} (${g.creadorEmail})';
     final descripcion = g.descripcion?.trim();
 
@@ -169,8 +167,7 @@ class _PestanaGruposState extends State<PestanaGrupos> with AutomaticKeepAliveCl
                         '${g.totalMiembros} vecinos · $reportes · área de ${textoRadio(g.radioMetros)}',
                         [
                           'desde ${fechaHora(g.fechaCreacion?.toLocal()).split(' ').first}',
-                          if (g.ultimoReporte != null)
-                            'último reporte ${tiempoRelativo(g.ultimoReporte!.toLocal())}',
+                          if (g.ultimoReporte != null) 'último reporte ${tiempoRelativo(g.ultimoReporte!.toLocal())}',
                           if (g.activo && g.codigoVencido) 'código vencido',
                         ].join(' · '),
                       ].join('\n'),
@@ -300,8 +297,7 @@ class _HojaReportesGrupoState extends State<_HojaReportesGrupo> {
                       '#${r.id} ${r.categoria}',
                       style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: RBColores.tinta),
                     ),
-                    chipReporte(r.estado),
-                    if (r.vencido && r.estado != 'EXPIRADO') chipReporte('EXPIRADO'),
+                    chipReporte(r.estadoVisible),
                     if (r.soloGrupo) const ChipSoloGrupo(),
                   ],
                 ),

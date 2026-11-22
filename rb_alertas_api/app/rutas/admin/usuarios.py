@@ -1,15 +1,18 @@
 """Cuentas registradas: búsqueda, suspensión y reactivación."""
 
+import logging
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Path as PathParam, Query
+from fastapi import APIRouter, Depends, HTTPException, Path as PathParam, Query
 from pydantic import BaseModel
 
+from app.comun import enmascarar
 from app.db import consultar, transaccion
-from app.seguridad import es_correo_admin
+from app.seguridad import es_correo_admin, usuario_admin
 from app.servicios import moderacion
 
 router = APIRouter()
+log = logging.getLogger("rb_alertas.admin")
 
 
 class CambioEstadoUsuario(BaseModel):
@@ -49,7 +52,21 @@ def listar_usuarios(
         fila["email_verificado"] = bool(fila["email_verificado"])
         fila["total_reportes"] = int(fila["total_reportes"])
         fila["es_admin"] = es_correo_admin(fila["email"])
+        # Se busca con los datos completos, pero se muestran parcialmente ocultos.
+        fila["email"] = enmascarar.correo(fila["email"])
+        fila["rut"] = enmascarar.rut(fila["rut"])
+        fila["telefono"] = enmascarar.telefono(fila["telefono"])
     return filas
+
+
+@router.get("/usuarios/{id_usuario}/contacto")
+def ver_contacto(id_usuario: int = PathParam(ge=1), admin: dict = Depends(usuario_admin)):
+    """Correo, RUT y teléfono completos de una cuenta. Queda en el registro quién lo pidió."""
+    filas = consultar("SELECT email, rut, telefono FROM usuario WHERE id_usuario = %s", (id_usuario,))
+    if not filas:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    log.info("El admin #%s vio los datos de contacto de la cuenta #%s", admin["id_usuario"], id_usuario)
+    return {"id_usuario": id_usuario, **filas[0]}
 
 
 @router.patch("/usuarios/{id_usuario}/estado")

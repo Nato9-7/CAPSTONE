@@ -30,23 +30,26 @@ def _categoria(fila: dict) -> dict:
     }
 
 
-def zonas_calientes(categoria: str | None, desde: str | None) -> list[dict]:
+def zonas_calientes(categoria: str | None, desde: str | None, nivel: str = "calle") -> list[dict]:
     """Lugares con su total de hechos y el desglose por categoría, del que tiene más al que menos.
 
+    `nivel` = "calle" (la calle del reporte) o "sector" (su localidad o, si no tiene, su comuna).
     Cuenta hechos, no reportes: si cinco vecinos reportaron el mismo robo, el
     grafo los tiene bajo un mismo Incidente y suma uno (igual que las zonas de
     riesgo del mapa). Un reporte sin Incidente es un hecho por sí solo.
     `reportes` guarda el total de reportes para mostrarlo como referencia.
     """
+    # La relación va en el texto (Cypher no la acepta como parámetro): solo dos valores fijos.
+    relacion = "EN_CALLE" if nivel == "calle" else "OCURRIO_EN"
     filas = conexion.consultar_grafo(
-        """
-        MATCH (r:Reporte)-[:OCURRIO_EN]->(lugar), (r)-[:ES_DE]->(cat:Categoria)
+        f"""
+        MATCH (r:Reporte)-[:{relacion}]->(lugar), (r)-[:ES_DE]->(cat:Categoria)
         WHERE r.estado <> 'DESCARTADO'
           AND ($desde IS NULL OR r.fecha_creacion >= $desde)
           AND ($categoria IS NULL OR cat.codigo = $categoria)
         OPTIONAL MATCH (inc:Incidente)-[:AGRUPA]->(r)
         WITH lugar, cat, count(DISTINCT coalesce(inc.id, r.id)) AS total, count(r) AS reportes
-        OPTIONAL MATCH (lugar)-[:PERTENECE_A]->(comuna:Comuna)
+        OPTIONAL MATCH (lugar)-[:PERTENECE_A|EN_COMUNA]->(comuna:Comuna)
         RETURN labels(lugar)[0] AS tipo, properties(lugar) AS lugar, comuna.nombre AS comuna,
                properties(cat) AS categoria, total, reportes
         """,

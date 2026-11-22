@@ -1,9 +1,9 @@
 """Copia periódica de MySQL a Neo4j para el panel de administración.
 
 MySQL sigue siendo la base principal: aquí solo se arma, cada cierto tiempo, un grafo
-con quién reportó qué, quién votó qué, dónde pasó y a qué zonas seguras avisó. Sirve
-para ver patrones que en una tabla no se notan (cuentas que se confirman entre sí,
-quien acumula reportes descartados, lugares con muchos incidentes).
+con quién reportó qué, quién votó qué, en qué calle y sector pasó y a qué zonas seguras
+avisó. Sirve para el análisis del panel: calles y sectores con más hechos, cómo cambian
+en el tiempo y qué categorías se concentran en cada lugar.
 
 En el grafo no se guardan nombres, correos, RUT ni teléfonos: cada usuario aparece con
 un seudónimo fijo ("Vecino 3fa2c1").
@@ -17,9 +17,9 @@ from datetime import datetime
 
 import mysql.connector
 
-from app.db import consultar, transaccion
+from app.db import consultar
 from app.seguridad import es_correo_admin
-from app.servicios import analisis_grafo, incidentes
+from app.servicios import incidentes
 from app.servicios.grafo.conexion import BASE_DE_DATOS, GrafoNoDisponible, grafo_configurado, obtener_driver
 
 log = logging.getLogger("rb_alertas.grafo")
@@ -65,19 +65,58 @@ def _usuarios_y_reportes() -> tuple[list[dict], list[dict], list[dict]]:
         u["email_verificado"] = bool(u["email_verificado"])
         u["fecha_creacion"] = _texto_fecha(u["fecha_creacion"])
 
-    reportes = consultar(
-        """
+    sql_reportes = """
         SELECT r.id_reporte, r.id_usuario, r.id_categoria, r.id_comuna, r.id_localidad, r.estado,
-               LEFT(r.descripcion, 120) AS descripcion, r.direccion_referencia AS direccion, r.fecha_creacion,
-               (r.fecha_expiracion IS NOT NULL AND r.fecha_expiracion <= NOW()) AS vencido,
+               LEFT(r.descripcion, 120) AS descripcion, r.direccion_referencia AS direccion, {calle} AS calle,
+               r.fecha_creacion, (r.fecha_expiracion IS NOT NULL AND r.fecha_expiracion <= NOW()) AS vencido,
                r.total_confirmaciones, r.total_desmentidos, c.codigo AS categoria_codigo, r.visibilidad,
                ST_Latitude(r.ubicacion) AS latitud, ST_Longitude(r.ubicacion) AS longitud
         FROM reporte r
         JOIN categoria_incidente c ON c.id_categoria = r.id_categoria
         """
-    )
+    try:
+        reportes = consultar(sql_reportes.format(calle="r.calle"))
+    except mysql.connector.Error as error:
+        # Base sin la migración sql/calle_reporte.sql: el grafo se arma sin calles.
+        log.warning("Se arma el grafo sin calles: %s", error.msg)
+        reportes = consultar(sql_reportes.format(calle="NULL"))
+    for r in reportes:
+        r["latitud"] = float(r["latitud"]) if r["latitud"] is not None else None
+        r["longitud"] = float(r["longitud"]) if r["longitud"] is not None else None
     votos = consultar("SELECT id_reporte, id_usuario, tipo_voto, fecha_voto FROM reporte_voto")
     return usuarios, reportes, votos
+
+
+def id_calle(nombre: str, id_comuna: int | None) -> int:
+    """Id numérico fijo de una calle dentro de su comuna (la misma calle en otra comuna es otra)."""
+    clave = f"{id_comuna}:{nombre.strip().lower()}"
+    return int(hashlib.sha256(clave.encode()).hexdigest()[:12], 16)
+
+
+def calles_de_reportes(reportes: list[dict]) -> list[dict]:
+    """Una calle por (nombre, comuna) con el punto medio de sus reportes, para ubicarla en el mapa."""
+    calles: dict[int, dict] = {}
+    for r in reportes:
+        if not r.get("calle"):
+            continue
+        id_c = id_calle(r["calle"], r["id_comuna"])
+        r["id_calle"] = id_c
+        calle = calles.setdefault(
+            id_c, {"id": id_c, "nombre": r["calle"].strip(), "id_comuna": r["id_comuna"], "lat": [], "lon": []}
+        )
+        if r["latitud"] is not None and r["longitud"] is not None:
+            calle["lat"].append(r["latitud"])
+            calle["lon"].append(r["longitud"])
+    return [
+        {
+            "id": c["id"],
+            "nombre": c["nombre"],
+            "id_comuna": c["id_comuna"],
+            "latitud": sum(c["lat"]) / len(c["lat"]) if c["lat"] else None,
+            "longitud": sum(c["lon"]) / len(c["lon"]) if c["lon"] else None,
+        }
+        for c in calles.values()
+    ]
 
 
 def _incidentes_para_grafo(reportes: list[dict]) -> list[dict]:
@@ -97,16 +136,9 @@ def _incidentes_para_grafo(reportes: list[dict]) -> list[dict]:
 def _filas_mysql() -> dict[str, list[dict]]:
     usuarios, reportes, votos = _usuarios_y_reportes()
 
-    # Análisis de la red y reportes del mismo hecho: se calculan con las fechas
-    # todavía como datetime.
-    coordinaciones = analisis_grafo.detectar_coordinacion(reportes, votos)
-    sospechosos = {m for g in coordinaciones for m in g["miembros"]}
-    reputacion = analisis_grafo.calcular_reputacion(
-        [u["id_usuario"] for u in usuarios], reportes, votos, sospechosos
-    )
-    for u in usuarios:
-        u.update(reputacion.get(u["id_usuario"], {}))
+    # Reportes del mismo hecho: se agrupan con las fechas todavía como datetime.
     lista_incidentes = _incidentes_para_grafo(reportes)
+    calles = calles_de_reportes(reportes)
 
     for r in reportes:
         r["fecha_creacion"] = _texto_fecha(r["fecha_creacion"])
@@ -115,7 +147,7 @@ def _filas_mysql() -> dict[str, list[dict]]:
     return {
         "usuarios": usuarios,
         "reportes": reportes,
-        "coordinaciones": coordinaciones,
+        "calles": calles,
         "incidentes": lista_incidentes,
         "categorias": consultar("SELECT id_categoria, nombre, codigo, color_hex FROM categoria_incidente"),
         "comunas": consultar("SELECT id_comuna, nombre FROM comuna WHERE id_comuna IN (SELECT DISTINCT id_comuna FROM reporte)"),
@@ -147,21 +179,26 @@ _CYPHER_RECONSTRUIR = [
        CREATE (:Localidad {id: l.id_localidad, nombre: l.nombre})-[:PERTENECE_A]->(c)""",
     """UNWIND $usuarios AS u
        CREATE (:Usuario {id: u.id_usuario, alias: u.alias, estado: u.estado, verificado: u.email_verificado,
-                         es_admin: u.es_admin, fecha_creacion: u.fecha_creacion,
-                         reputacion: u.puntaje, respaldo: u.respaldo, historial: u.historial,
-                         confianza: u.confianza, confirmaciones_recibidas: u.confirmaciones_recibidas,
-                         desmentidos_recibidos: u.desmentidos_recibidos, reportes_buenos: u.reportes_buenos,
-                         reportes_descartados: u.reportes_descartados})""",
+                         es_admin: u.es_admin, fecha_creacion: u.fecha_creacion})""",
+    """UNWIND $calles AS c
+       CREATE (calle:Calle {id: c.id, nombre: c.nombre, latitud: c.latitud, longitud: c.longitud})
+       WITH calle, c
+       MATCH (com:Comuna {id: c.id_comuna})
+       CREATE (calle)-[:EN_COMUNA]->(com)""",
     """UNWIND $reportes AS r
        MATCH (u:Usuario {id: r.id_usuario})
        MATCH (cat:Categoria {id: r.id_categoria})
        CREATE (rep:Reporte {id: r.id_reporte, estado: r.estado, descripcion: r.descripcion, direccion: r.direccion,
-                            fecha_creacion: r.fecha_creacion, vencido: r.vencido,
+                            calle: r.calle, fecha_creacion: r.fecha_creacion, dia: substring(r.fecha_creacion, 0, 10),
+                            vencido: r.vencido, latitud: r.latitud, longitud: r.longitud,
                             confirmaciones: r.total_confirmaciones, desmentidos: r.total_desmentidos,
                             categoria: cat.nombre, categoria_codigo: cat.codigo, color: cat.color,
-                            visibilidad: r.visibilidad})
+                            visibilidad: r.visibilidad, id_comuna: r.id_comuna})
        CREATE (u)-[:CREO]->(rep)
        CREATE (rep)-[:ES_DE]->(cat)
+       WITH rep, r
+       OPTIONAL MATCH (calle:Calle {id: r.id_calle})
+       FOREACH (_ IN CASE WHEN calle IS NOT NULL THEN [1] ELSE [] END | CREATE (rep)-[:EN_CALLE]->(calle))
        WITH rep, r
        OPTIONAL MATCH (loc:Localidad {id: r.id_localidad})
        OPTIONAL MATCH (com:Comuna {id: r.id_comuna})
@@ -185,15 +222,6 @@ _CYPHER_RECONSTRUIR = [
     """UNWIND $reportes_grupo AS x
        MATCH (r:Reporte {id: x.id_reporte}), (g:Grupo {id: x.id_grupo})
        CREATE (r)-[:COMPARTIDO_EN]->(g)""",
-    # Cuentas que se confirman entre ellas (posible coordinación).
-    """UNWIND $coordinaciones AS g
-       CREATE (c:Coordinacion {id: g.id, nivel: g.nivel, reciprocidad: g.reciprocidad,
-                               confirmaciones_internas: g.confirmaciones_internas,
-                               confirmaciones_totales: g.confirmaciones_totales, tamano: size(g.miembros)})
-       WITH c, g
-       UNWIND g.miembros AS id_miembro
-       MATCH (u:Usuario {id: id_miembro})
-       CREATE (u)-[:MIEMBRO_DE]->(c)""",
     # Reportes del mismo hecho.
     """UNWIND $incidentes AS i
        MATCH (primero:Reporte {id: i.id})
@@ -210,26 +238,10 @@ _CYPHER_INDICES = [
     f"CREATE INDEX {nombre}_id IF NOT EXISTS FOR (n:{etiqueta}) ON (n.id)"
     for nombre, etiqueta in (
         ("usuario", "Usuario"), ("reporte", "Reporte"), ("categoria", "Categoria"), ("comuna", "Comuna"),
-        ("localidad", "Localidad"), ("zona", "ZonaSegura"), ("coordinacion", "Coordinacion"),
+        ("localidad", "Localidad"), ("zona", "ZonaSegura"), ("calle", "Calle"),
         ("incidente", "Incidente"), ("grupo", "Grupo"),
     )
-]
-
-
-def _guardar_reputacion(usuarios: list[dict]) -> None:
-    """Deja el puntaje en usuario.puntaje_reputacion para que el resto de la API lo use.
-
-    Si la columna no existe o falla, el grafo se arma igual (solo se registra el error).
-    """
-    try:
-        with transaccion() as cursor:
-            cursor.executemany(
-                "UPDATE usuario SET puntaje_reputacion = %s "
-                "WHERE id_usuario = %s AND NOT (puntaje_reputacion <=> %s)",
-                [(u["puntaje"], u["id_usuario"], u["puntaje"]) for u in usuarios if "puntaje" in u],
-            )
-    except mysql.connector.Error as error:
-        log.warning("No se pudo guardar la reputación en MySQL: %s", error.msg)
+] + ["CREATE INDEX reporte_dia IF NOT EXISTS FOR (r:Reporte) ON (r.dia)"]
 
 
 def _reconstruir_en_neo4j(datos: dict) -> None:
@@ -252,7 +264,6 @@ def sincronizar() -> dict:
     with _bloqueo:
         try:
             datos = _filas_mysql()
-            _guardar_reputacion(datos["usuarios"])
             _reconstruir_en_neo4j(datos)
             totales = {clave: len(filas) for clave, filas in datos.items()}
             ultima_sincronizacion.update(fecha=datetime.now().isoformat(timespec="seconds"), error=None, totales=totales)

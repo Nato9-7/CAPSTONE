@@ -1,10 +1,4 @@
-"""Hallazgos del grafo (Neo4j). Los usuarios aparecen con seudónimo.
-
-Cada sección responde una pregunta del administrador:
-  - Cuentas sospechosas: ¿hay grupos que se confirman entre ellos para inflar reportes?
-  - Reputación: ¿de quién me puedo fiar? (ver app/servicios/analisis_grafo.py)
-  - Incidentes: ¿estos reportes son el mismo hecho? (ver app/servicios/incidentes.py)
-"""
+"""Resumen del grafo (Neo4j) e incidentes: reportes del mismo hecho (ver app/servicios/incidentes.py)."""
 
 from typing import Literal
 
@@ -13,8 +7,9 @@ from pydantic import BaseModel, Field
 
 from app.db import transaccion
 from app.rutas.admin.errores import grafo_disponible
-from app.seguridad import es_correo_admin, usuario_admin
-from app.servicios import grafo, moderacion
+from app.seguridad import usuario_admin
+from app.servicios import grafo
+from app.servicios.grafo import analisis
 from app.servicios.grafo.red import nodo
 from app.servicios.reportes import cambiar_estado, reportes_del_incidente
 
@@ -28,108 +23,24 @@ class CambioEstadoIncidente(BaseModel):
 
 @router.get("/grafo/resumen")
 def resumen_grafo():
-    """Cuántos casos hay en cada sección, para los contadores de la pestaña."""
+    """Cifras de los últimos 30 días para la tarjeta del Resumen y los contadores del análisis."""
     with grafo_disponible():
+        calles = analisis.ranking_calles(30, None, None, limite=3)
+        sectores = analisis.sectores_en_el_tiempo(30, None, None, tramos=2, limite=1)
         fila = grafo.consultar_grafo(
             """
-            CALL () { MATCH (c:Coordinacion) RETURN count(c) AS sospechosos }
-            CALL () { MATCH (u:Usuario) WHERE u.reputacion < 35 RETURN count(u) AS baja_reputacion }
-            CALL () { MATCH (i:Incidente)-[:AGRUPA]->(r:Reporte)
-                      WHERE r.estado IN ['PENDIENTE', 'VALIDADO'] AND NOT r.vencido
-                      RETURN count(DISTINCT i) AS incidentes_abiertos }
-            RETURN sospechosos, baja_reputacion, incidentes_abiertos
+            MATCH (i:Incidente)-[:AGRUPA]->(r:Reporte)
+            WHERE r.estado IN ['PENDIENTE', 'VALIDADO'] AND NOT r.vencido
+            RETURN count(DISTINCT i) AS incidentes_abiertos
             """
         )[0]
-    return {**fila, "sincronizacion": grafo.ultima_sincronizacion}
-
-
-@router.get("/grafo/sospechosos")
-def cuentas_sospechosas():
-    """Grupos de cuentas que se confirman los reportes entre ellas, del más sospechoso al menos."""
-    with grafo_disponible():
-        filas = grafo.consultar_grafo(
-            """
-            MATCH (c:Coordinacion)<-[:MIEMBRO_DE]-(u:Usuario)
-            WITH c, u ORDER BY u.alias
-            WITH c, collect(properties(u)) AS miembros
-            RETURN properties(c) AS grupo, miembros
-            ORDER BY c.reciprocidad DESC, c.confirmaciones_internas DESC
-            """
-        )
-        evidencia = grafo.consultar_grafo(
-            """
-            MATCH (c:Coordinacion)<-[:MIEMBRO_DE]-(a:Usuario)-[v:VOTO {tipo: 'CONFIRMA'}]->(r:Reporte)
-                  <-[:CREO]-(b:Usuario)-[:MIEMBRO_DE]->(c)
-            WHERE a <> b
-            RETURN c.id AS grupo, a.alias AS votante, b.alias AS autor, r.id AS reporte,
-                   r.categoria AS categoria, v.fecha AS fecha
-            ORDER BY v.fecha DESC
-            """
-        )
-        afuera = grafo.consultar_grafo(
-            """
-            MATCH (c:Coordinacion)<-[:MIEMBRO_DE]-(a:Usuario)-[:VOTO {tipo: 'CONFIRMA'}]->(:Reporte)<-[:CREO]-(b:Usuario)
-            WHERE NOT (b)-[:MIEMBRO_DE]->(c) AND a <> b
-            RETURN c.id AS grupo, count(*) AS total
-            """
-        )
-    externas = {f["grupo"]: f["total"] for f in afuera}
-    return [
-        {
-            **nodo("Coordinacion", f["grupo"]),
-            "miembros": [nodo("Usuario", m) for m in f["miembros"]],
-            # Por qué es sospechoso: cada voto dentro del grupo y cuántos dieron afuera.
-            "evidencia": [e for e in evidencia if e["grupo"] == f["grupo"]["id"]],
-            "confirmaciones_afuera": externas.get(f["grupo"]["id"], 0),
-        }
-        for f in filas
-    ]
-
-
-@router.post("/grafo/sospechosos/{id_grupo}/suspender")
-def suspender_sospechosos(id_grupo: int = PathParam(ge=1)):
-    """Suspende todas las cuentas del grupo (salvo las administradoras) y rehace el grafo."""
-    with grafo_disponible():
-        miembros = grafo.consultar_grafo(
-            "MATCH (:Coordinacion {id: $id})<-[:MIEMBRO_DE]-(u:Usuario) RETURN u.id AS id",
-            id=id_grupo,
-        )
-    if not miembros:
-        raise HTTPException(status_code=404, detail="Ese grupo ya no está entre los sospechosos")
-    suspendidas = []
-    with transaccion() as cursor:
-        for m in miembros:
-            cursor.execute("SELECT email, estado FROM usuario WHERE id_usuario = %s FOR UPDATE", (m["id"],))
-            usuario = cursor.fetchone()
-            if usuario is None or usuario["estado"] in ("SUSPENDIDO", "ELIMINADO") or es_correo_admin(usuario["email"]):
-                continue
-            moderacion.suspender(cursor, m["id"])
-            suspendidas.append(m["id"])
-    grafo.sincronizar_sin_fallar()
-    return {"id_grupo": id_grupo, "suspendidas": len(suspendidas), "ids": suspendidas}
-
-
-@router.get("/grafo/reputacion")
-def reputacion(
-    orden: Literal["baja", "alta"] = "baja",
-    limite: int = Query(30, ge=1, le=200),
-):
-    """Vecinos ordenados por reputación (por defecto, los menos confiables primero)."""
-    direccion = "ASC" if orden == "baja" else "DESC"
-    with grafo_disponible():
-        filas = grafo.consultar_grafo(
-            f"""
-            MATCH (u:Usuario) WHERE NOT u.es_admin
-            OPTIONAL MATCH (u)-[:CREO]->(r:Reporte)
-            OPTIONAL MATCH (u)-[:MIEMBRO_DE]->(c:Coordinacion)
-            WITH u, count(DISTINCT r) AS reportes, c IS NOT NULL AS sospechoso
-            WHERE reportes > 0 OR u.confirmaciones_recibidas > 0
-            RETURN properties(u) AS u, reportes, sospechoso
-            ORDER BY u.reputacion {direccion}, reportes DESC LIMIT $limite
-            """,
-            limite=limite,
-        )
-    return [{**nodo("Usuario", f["u"]), "reportes": f["reportes"], "sospechoso": f["sospechoso"]} for f in filas]
+    return {
+        "calles_con_hechos": calles["total_calles"],
+        "calles_top": [{"nombre": c["nombre"], "total": c["total"], "tendencia": c["tendencia"]} for c in calles["calles"]],
+        "sectores_en_alza": sectores["resumen"]["sube"] + sectores["resumen"]["nueva"],
+        "incidentes_abiertos": fila["incidentes_abiertos"],
+        "sincronizacion": grafo.ultima_sincronizacion,
+    }
 
 
 @router.get("/grafo/incidentes")

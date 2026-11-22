@@ -132,19 +132,25 @@ final _casos = <_Caso>[
   }),
   _Caso('17_admin_resumen', () => const AdminVista(), conSesion: true, admin: true),
   _Caso('18_admin_reportes', () => const AdminVista(), conSesion: true, admin: true,
-      preparar: (t) async => _tocar(t, find.text('Reportes'))),
+      preparar: (t) async => _irASeccion(t, 'Reportes')),
   _Caso('19_admin_usuarios', () => const AdminVista(), conSesion: true, admin: true,
-      preparar: (t) async => _tocar(t, find.text('Usuarios'))),
+      preparar: (t) async => _irASeccion(t, 'Usuarios')),
   _Caso('19b_admin_grupos', () => const AdminVista(), conSesion: true, admin: true,
-      preparar: (t) async => _tocar(t, find.text('Grupos'))),
+      preparar: (t) async => _irASeccion(t, 'Grupos')),
   _Caso('19c_admin_reportes_grupo', () => const AdminVista(), conSesion: true, admin: true,
       preparar: (t) async {
-    await _tocar(t, find.text('Grupos'));
+    await _irASeccion(t, 'Grupos');
     await _tocar(t, find.text('Ver reportes'));
   }),
-  _Caso('20_admin_red', () => const AdminVista(), conSesion: true, admin: true,
-      preparar: (t) async => _tocar(t, find.text('Red'))),
+  _Caso('20_admin_analisis', () => const AdminVista(), conSesion: true, admin: true,
+      preparar: (t) async => _irASeccion(t, 'Análisis')),
 ];
+
+/// Abre una sección del panel: en el celular, las que no caben en la barra están en "Más".
+Future<void> _irASeccion(WidgetTester t, String nombre) async {
+  if (find.text(nombre).evaluate().isEmpty) await _tocar(t, find.text('Más'));
+  await _tocar(t, find.text(nombre));
+}
 
 Future<void> _cargarFuentes() async {
   Future<void> cargar(String familia, List<String> archivos) async {

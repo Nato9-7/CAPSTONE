@@ -9,7 +9,7 @@ from app.comun.geo import PUNTO_SQL, punto_wkt
 from app.comun.sql import error_bd, marcas
 from app.db import consultar, transaccion
 from app.seguridad import usuario_actual
-from app.servicios import avisos, push
+from app.servicios import avisos, geocodificacion, push
 from app.servicios.reportes import reportes_del_incidente
 from app.servicios.ubicacion import resolver_comuna, resolver_localidad
 
@@ -178,6 +178,8 @@ def crear_reporte(
     # El push sale después de responder, igual que los correos: no demora el reporte.
     if zonas_notificadas or miembros_notificados:
         tareas.add_task(push.enviar_alertas_de_reporte, id_reporte)
+    # La calle normalizada (para el análisis del panel) también se busca después de responder.
+    tareas.add_task(geocodificacion.completar_calle, id_reporte, latitud, longitud)
 
     return {
         "id_reporte": id_reporte,
