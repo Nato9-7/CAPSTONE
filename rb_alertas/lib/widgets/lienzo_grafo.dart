@@ -47,8 +47,13 @@ const coloresComunidad = [
       return (iconoCategoria(codigo), colorCategoria(codigo, colorHex: n.datos['color']?.toString()));
     case 'Comuna':
     case 'Localidad':
-      final icono = n.tipo == 'Comuna' ? Icons.location_city_rounded : Icons.place_rounded;
-      // Vista "Dónde ocurre más": de ámbar (pocos reportes) a rojo (el lugar con más).
+    case 'Calle':
+      final icono = switch (n.tipo) {
+        'Comuna' => Icons.location_city_rounded,
+        'Calle' => Icons.signpost_rounded,
+        _ => Icons.place_rounded,
+      };
+      // Red de lugares: de ámbar (pocos hechos) a rojo (el lugar con más).
       final intensidad = (n.datos['intensidad'] as num?)?.toDouble();
       if (intensidad != null) {
         return (icono, Color.lerp(colorAmbarRed, RBColores.rojo, intensidad.clamp(0.0, 1.0))!);
@@ -56,8 +61,6 @@ const coloresComunidad = [
       return (icono, n.tipo == 'Comuna' ? RBColores.petroleo : RBColores.texto2);
     case 'ZonaSegura':
       return (Icons.shield_rounded, RBColores.verde);
-    case 'Coordinacion':
-      return (Icons.gpp_maybe_rounded, RBColores.rojo);
     case 'Grupo':
       return (Icons.groups_rounded, RBColores.petroleo);
     default:
@@ -231,8 +234,8 @@ class _LienzoGrafoState extends State<LienzoGrafo> with SingleTickerProviderStat
   double radio(String clave, String tipo) {
     final base = switch (tipo) {
       'Usuario' => 15.0,
-      'Coordinacion' || 'Incidente' || 'Grupo' => 17.0,
-      'Comuna' || 'Localidad' || 'Categoria' => 13.0,
+      'Incidente' || 'Grupo' => 17.0,
+      'Comuna' || 'Localidad' || 'Categoria' || 'Calle' => 13.0,
       _ => 11.0,
     };
     final total = _total[clave];
@@ -520,14 +523,17 @@ class _PintorRed extends CustomPainter {
       // Nombres: siempre en lo seleccionado o resaltado; el resto, al acercarse.
       final mostrarNombre = conNombres &&
           activo &&
-          (seleccionado || resaltados != null || escala >= 0.85 || n.tipo == 'Usuario' && escala >= 0.55);
+          (seleccionado ||
+              resaltados != null ||
+              escala >= 0.85 ||
+              (n.tipo == 'Usuario' || n.tipo == 'Calle' || n.tipo == 'Categoria') && escala >= 0.55);
       if (mostrarNombre) {
         final texto = TextPainter(
           text: TextSpan(
             text: n.etiqueta,
             style: TextStyle(
               fontSize: (seleccionado ? 13.5 : 11.5) / math.min(math.max(escala, 0.55), 1.4),
-              fontWeight: seleccionado || n.tipo == 'Usuario' ? FontWeight.w700 : FontWeight.w500,
+              fontWeight: seleccionado || n.tipo == 'Usuario' || n.tipo == 'Categoria' ? FontWeight.w700 : FontWeight.w500,
               color: RBColores.tinta,
             ),
           ),

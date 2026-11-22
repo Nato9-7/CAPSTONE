@@ -1,5 +1,6 @@
 // Datos que intercambia la app con la API, agrupados por tema.
 export 'admin.dart';
+export 'analisis.dart';
 export 'comentario.dart';
 export 'denuncia.dart';
 export 'grafo.dart';

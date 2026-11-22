@@ -1,4 +1,5 @@
 import 'package:rb_alertas/modelos/admin.dart';
+import 'package:rb_alertas/modelos/analisis.dart';
 import 'package:rb_alertas/modelos/grafo.dart';
 import 'package:rb_alertas/modelos/lectura_json.dart';
 import 'package:rb_alertas/servicios/api/api_cliente.dart';
@@ -16,13 +17,24 @@ class AdminServicio {
     return ResumenAdmin.desdeJson(cuerpo as Map<String, dynamic>);
   }
 
-  Future<List<ReporteAdmin>> reportes({String? estado}) async {
+  /// Una página de reportes con los filtros pedidos. El estado es el efectivo:
+  /// EXPIRADO incluye los pendientes y validados cuya vigencia terminó.
+  Future<PaginaReportes> reportes({FiltroReportes filtro = const FiltroReportes(), int pagina = 1}) async {
+    final desde = filtro.desde;
     final cuerpo = await ApiCliente.get(
       '/api/admin/reportes',
-      consulta: {'estado': ?estado},
+      consulta: {
+        'estado': ?filtro.estado,
+        if (filtro.texto != null && filtro.texto!.trim().isNotEmpty) 'q': filtro.texto!.trim(),
+        'categoria': ?filtro.categoria,
+        if (desde != null)
+          'desde': '${desde.year}-${'${desde.month}'.padLeft(2, '0')}-${'${desde.day}'.padLeft(2, '0')}',
+        'orden': filtro.orden,
+        'pagina': '$pagina',
+      },
       error: _errorCarga,
     );
-    return listaDesdeJson(cuerpo, ReporteAdmin.desdeJson);
+    return PaginaReportes.desdeJson(cuerpo as Map<String, dynamic>);
   }
 
   /// Un reporte con sus datos de moderación, o null si ya no existe.
@@ -32,10 +44,10 @@ class AdminServicio {
       consulta: {'id_reporte': '$idReporte'},
       error: _errorCarga,
     );
-    return listaDesdeJson(cuerpo, ReporteAdmin.desdeJson).firstOrNull;
+    return PaginaReportes.desdeJson(cuerpo as Map<String, dynamic>).reportes.firstOrNull;
   }
 
-  /// [estado]: VALIDADO, RESUELTO o DESCARTADO.
+  /// [estado]: uno de [ReporteAdmin.acciones] (la API rechaza los demás).
   Future<void> cambiarEstadoReporte(int idReporte, String estado, {String? motivo}) async {
     await ApiCliente.patch(
       '/api/admin/reportes/$idReporte/estado',
@@ -111,6 +123,13 @@ class AdminServicio {
     return listaDesdeJson(cuerpo, UsuarioAdmin.desdeJson);
   }
 
+  /// Correo, RUT y teléfono completos (la lista los trae ocultos). La API registra quién los pidió.
+  Future<({String email, String? rut, String? telefono})> contactoUsuario(int idUsuario) async {
+    final cuerpo = await ApiCliente.get('/api/admin/usuarios/$idUsuario/contacto', error: _errorCarga);
+    final json = cuerpo as Map<String, dynamic>;
+    return (email: json.texto('email'), rut: json.textoOpcional('rut'), telefono: json.textoOpcional('telefono'));
+  }
+
   Future<void> cambiarEstadoUsuario(int idUsuario, String estado) async {
     await ApiCliente.patch(
       '/api/admin/usuarios/$idUsuario/estado',
@@ -145,108 +164,64 @@ class AdminServicio {
   }
 
   // ---------------------------------------------------------------------------
-  // Grafo (Neo4j)
+  // Análisis (Neo4j)
 
   Future<ResumenGrafo> resumenGrafo() async {
     final cuerpo = await ApiCliente.get('/api/admin/grafo/resumen', error: _errorCarga);
     return ResumenGrafo.desdeJson(cuerpo as Map<String, dynamic>);
   }
 
-  Future<List<GrupoSospechoso>> cuentasSospechosas() async {
-    final cuerpo = await ApiCliente.get('/api/admin/grafo/sospechosos', error: _errorCarga);
-    return listaDesdeJson(cuerpo, GrupoSospechoso.desdeJson);
+  Map<String, String> _consultaAnalisis(int dias, String? categoria, int? comuna) => {
+    'dias': '$dias',
+    'categoria': ?categoria,
+    if (comuna != null) 'comuna': '$comuna',
+  };
+
+  Future<FiltrosDisponibles> filtrosAnalisis() async {
+    final cuerpo = await ApiCliente.get('/api/admin/analisis/filtros', error: _errorCarga);
+    return FiltrosDisponibles.desdeJson(cuerpo as Map<String, dynamic>);
   }
 
-  /// Suspende todas las cuentas del grupo; devuelve los ids suspendidos
-  /// (para poder deshacerlo reactivándolas).
-  Future<List<int>> suspenderGrupoSospechoso(int idGrupo) async {
-    final cuerpo = await ApiCliente.post(
-      '/api/admin/grafo/sospechosos/$idGrupo/suspender',
-      error: _errorCambio,
+  Future<SerieDiaria> hechosPorDia({required int dias, String? categoria, int? comuna}) async {
+    final cuerpo = await ApiCliente.get(
+      '/api/admin/analisis/por-dia',
+      consulta: _consultaAnalisis(dias, categoria, comuna),
+      error: _errorCarga,
     );
-    return cuerpo is Map<String, dynamic> ? cuerpo.enteros('ids') : const [];
+    return SerieDiaria.desdeJson(cuerpo as Map<String, dynamic>);
   }
 
-  /// La red del explorador. [modo]: "vecinos" (quién apoya a quién),
-  /// "completa" (vecinos y reportes con las [capas] pedidas) o "zonas" (dónde
-  /// ocurre más; [categoria] deja solo una, p. ej. "ROBO"). [dias] limita a la
-  /// actividad reciente; null es toda la historia.
-  Future<RedGrafo> red({
-    String modo = 'vecinos',
-    int? dias,
-    Set<String> capas = const {},
-    String? categoria,
-  }) async {
+  Future<RankingCalles> rankingCalles({required int dias, String? categoria, int? comuna, int limite = 15}) async {
+    final cuerpo = await ApiCliente.get(
+      '/api/admin/analisis/calles',
+      consulta: {..._consultaAnalisis(dias, categoria, comuna), 'limite': '$limite'},
+      error: _errorCarga,
+    );
+    return RankingCalles.desdeJson(cuerpo as Map<String, dynamic>);
+  }
+
+  Future<SectoresEnElTiempo> sectores({required int dias, String? categoria, int? comuna, int tramos = 6}) async {
+    final cuerpo = await ApiCliente.get(
+      '/api/admin/analisis/sectores',
+      consulta: {..._consultaAnalisis(dias, categoria, comuna), 'tramos': '$tramos'},
+      error: _errorCarga,
+    );
+    return SectoresEnElTiempo.desdeJson(cuerpo as Map<String, dynamic>);
+  }
+
+  /// Red de lugares: las calles (o sectores) con más hechos unidas a las
+  /// categorías de lo que pasó ahí. El peso de cada unión es cuántos hechos hubo.
+  Future<RedGrafo> redDeLugares({int? dias, String? categoria, String nivel = 'calle'}) async {
     final cuerpo = await ApiCliente.get(
       '/api/admin/grafo/red',
       consulta: {
-        'modo': modo,
         if (dias != null) 'dias': '$dias',
-        'capas': capas.join(','),
         'categoria': ?categoria,
+        'nivel': nivel,
       },
       error: _errorCarga,
     );
     return RedGrafo.desdeJson(cuerpo as Map<String, dynamic>);
-  }
-
-  /// Lugares con más reportes, del que tiene más al que menos. Cada lugar trae
-  /// en sus datos `total`, `intensidad` (0 a 1), `comuna` y `por_categoria`.
-  Future<List<NodoGrafo>> zonasCalientes({String? categoria, int? dias}) async {
-    final cuerpo = await ApiCliente.get(
-      '/api/admin/grafo/zonas',
-      consulta: {
-        'categoria': ?categoria,
-        if (dias != null) 'dias': '$dias',
-      },
-      error: _errorCarga,
-    );
-    return listaDesdeJson(cuerpo, NodoGrafo.desdeJson);
-  }
-
-  Future<List<NodoGrafo>> buscarEnGrafo(String texto) async {
-    final cuerpo = await ApiCliente.get('/api/admin/grafo/buscar', consulta: {'q': texto}, error: _errorCarga);
-    return listaDesdeJson(cuerpo, NodoGrafo.desdeJson);
-  }
-
-  /// El camino más corto entre dos elementos (lo calcula Neo4j).
-  Future<RedGrafo> camino(NodoGrafo desde, NodoGrafo hasta) async {
-    final cuerpo = await ApiCliente.get(
-      '/api/admin/grafo/camino',
-      consulta: {'desde': desde.clave, 'hasta': hasta.clave},
-      error: _errorCarga,
-    );
-    return RedGrafo.desdeJson(cuerpo as Map<String, dynamic>);
-  }
-
-  /// [orden]: "baja" (menos confiables primero) o "alta".
-  Future<List<VecinoReputacion>> reputacion({String orden = 'baja'}) async {
-    final cuerpo = await ApiCliente.get(
-      '/api/admin/grafo/reputacion',
-      consulta: {'orden': orden},
-      error: _errorCarga,
-    );
-    return listaDesdeJson(cuerpo, VecinoReputacion.desdeJson);
-  }
-
-  Future<List<IncidenteGrafo>> incidentes() async {
-    final cuerpo = await ApiCliente.get('/api/admin/grafo/incidentes', error: _errorCarga);
-    return listaDesdeJson(cuerpo, IncidenteGrafo.desdeJson);
-  }
-
-  /// Aplica [estado] (VALIDADO, RESUELTO o DESCARTADO) a todos los reportes del incidente.
-  Future<void> cambiarEstadoIncidente(int idIncidente, String estado, {String? motivo}) async {
-    await ApiCliente.patch(
-      '/api/admin/incidentes/$idIncidente/estado',
-      cuerpo: {'estado': estado, 'motivo': ?motivo},
-      error: _errorCambio,
-    );
-  }
-
-  /// [nodo] en el centro, con sus conexiones hasta 2 pasos.
-  Future<FocoGrafo> focoGrafo(NodoGrafo nodo) async {
-    final cuerpo = await ApiCliente.get('/api/admin/grafo/nodo/${nodo.tipo}/${nodo.id}', error: _errorCarga);
-    return FocoGrafo.desdeJson(cuerpo as Map<String, dynamic>);
   }
 
   /// Copia los datos de MySQL a Neo4j.

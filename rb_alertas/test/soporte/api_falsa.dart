@@ -54,15 +54,17 @@ Object? _responder(String metodo, String ruta, [Map<String, String> consulta = c
   if (ruta.startsWith('/api/grupos/invitacion/')) return _invitacionGrupo;
   if (ruta == '/api/usuarios/notificaciones/') return _notificaciones;
   if (ruta == '/api/admin/resumen') return _resumenAdmin;
-  if (ruta == '/api/admin/reportes') return _reportesAdmin;
+  if (ruta == '/api/admin/reportes') return _paginaReportesAdmin(consulta['estado']);
   if (ruta == '/api/admin/usuarios') return _usuariosAdmin;
   if (ruta == '/api/admin/grupos') return _gruposAdmin;
   if (RegExp(r'^/api/admin/grupos/\d+/reportes$').hasMatch(ruta)) return _reportesGrupoAdmin;
-  if (ruta == '/api/admin/grafo/inicio') return _inicioGrafo;
   if (ruta == '/api/admin/grafo/resumen') return _resumenGrafo;
-  if (ruta == '/api/admin/grafo/sospechosos') return const [];
   if (ruta == '/api/admin/grafo/zonas') return _zonasCalientes(consulta['categoria']);
-  if (ruta == '/api/admin/grafo/red') return _redGrafo(consulta['modo'], consulta['categoria']);
+  if (ruta == '/api/admin/grafo/red') return _redGrafo(consulta['categoria']);
+  if (ruta == '/api/admin/analisis/filtros') return _filtrosAnalisis;
+  if (ruta == '/api/admin/analisis/por-dia') return _porDia(int.tryParse(consulta['dias'] ?? '') ?? 30);
+  if (ruta == '/api/admin/analisis/calles') return _callesAnalisis(consulta['categoria']);
+  if (ruta == '/api/admin/analisis/sectores') return _sectoresAnalisis;
   return null;
 }
 
@@ -356,19 +358,45 @@ const _resumenAdmin = {
   ],
 };
 
+/// Acciones que la API permite según el estado efectivo del reporte.
+const _accionesPorEstado = {
+  'PENDIENTE': ['VALIDADO', 'RESUELTO', 'DESCARTADO'],
+  'VALIDADO': ['RESUELTO', 'DESCARTADO'],
+  'DESCARTADO': ['PENDIENTE'],
+  'EXPIRADO': ['DESCARTADO'],
+  'RESUELTO': <String>[],
+};
+
 final _reportesAdmin = [
-  for (final r in _misReportes)
-    {...r, 'autor': 'Renato Alejandro Díaz Valenzuela', 'vencido': false, 'imagen': null},
+  for (final (i, r) in _misReportes.indexed)
+    {
+      ...r,
+      'autor': 'Renato Alejandro Díaz Valenzuela',
+      'imagen': null,
+      'zona': 'Mirasol',
+      'acciones': _accionesPorEstado[r['estado']] ?? const <String>[],
+      'denuncias_pendientes': i == 0 ? 2 : 0,
+    },
 ];
+
+Map<String, Object?> _paginaReportesAdmin(String? estado) {
+  final conteos = <String, int>{for (final e in _accionesPorEstado.keys) e: 0};
+  for (final r in _reportesAdmin) {
+    final e = r['estado'] as String;
+    conteos[e] = (conteos[e] ?? 0) + 1;
+  }
+  final filtrados = [for (final r in _reportesAdmin) if (estado == null || r['estado'] == estado) r];
+  return {'reportes': filtrados, 'total': filtrados.length, 'pagina': 1, 'por_pagina': 25, 'conteos': conteos};
+}
 
 final _usuariosAdmin = [
   {
     'id_usuario': 1,
     'nombres': 'Renato Alejandro',
     'apellidos': 'Díaz Valenzuela',
-    'email': 'renato.alejandro.diaz@correo-largo.cl',
-    'rut': '12345678-9',
-    'telefono': '+56912345678',
+    'email': 're••••@correo-largo.cl',
+    'rut': '1234••••-9',
+    'telefono': '••••••••5678',
     'estado': 'ACTIVO',
     'email_verificado': true,
     'fecha_creacion': _hace(const Duration(days: 40)),
@@ -379,9 +407,9 @@ final _usuariosAdmin = [
     'id_usuario': 2,
     'nombres': 'María José',
     'apellidos': 'Soto',
-    'email': 'mjsoto@correo.cl',
-    'rut': '9876543-2',
-    'telefono': '+56987654321',
+    'email': 'mj••••@correo.cl',
+    'rut': '9876•••-2',
+    'telefono': '••••••••4321',
     'estado': 'SUSPENDIDO',
     'email_verificado': true,
     'fecha_creacion': _hace(const Duration(days: 4)),
@@ -398,38 +426,101 @@ Map<String, Object?> _nodo(String tipo, int id, String etiqueta, Map<String, Obj
       'detalle': detalle,
     };
 
-final _inicioGrafo = {
-  'hallazgos': [
-    {
-      'nivel': 'alerta',
-      'texto': 'Un vecino desmintió 6 reportes en las últimas 24 horas',
-      'nodo': _nodo('Usuario', 2, 'Vecino 0a1b2c', {'estado': 'ACTIVO'}),
-    },
-  ],
-  'reportes': [
-    _nodo('Reporte', 1, 'Accidente en Av. Diego Portales',
-        {'categoria_codigo': 'ACCIDENTE', 'categoria': 'Accidente de tránsito', 'estado': 'VALIDADO'},
-        detalle: '8 confirman'),
-  ],
-  'vecinos': [_nodo('Usuario', 1, 'Vecino 9f8e7d', {'estado': 'ACTIVO'}, detalle: '12 acciones')],
-  'lugares': [_nodo('Comuna', 1, 'Puerto Montt', {}, detalle: '33 reportes')],
-  'sincronizacion': {'fecha': _hace(const Duration(minutes: 5))},
-};
-
 final _resumenGrafo = {
-  'sospechosos': 0,
-  'baja_reputacion': 0,
-  'incidentes_abiertos': 0,
+  'calles_con_hechos': 4,
+  'calles_top': [
+    {'nombre': 'Avenida Presidente Ibáñez', 'total': 10, 'tendencia': 'sube'},
+    {'nombre': 'Avenida Diego Portales', 'total': 9, 'tendencia': 'igual'},
+    {'nombre': 'Calle Urmeneta', 'total': 5, 'tendencia': 'baja'},
+  ],
+  'sectores_en_alza': 2,
+  'incidentes_abiertos': 1,
   'sincronizacion': {'fecha': _hace(const Duration(minutes: 5))},
 };
 
-/// Reportes por lugar y categoría para "Dónde ocurre más" (como lo cuenta la API).
+final _filtrosAnalisis = {
+  'categorias': [
+    for (final c in _categorias) {'codigo': c['codigo'], 'nombre': c['nombre'], 'color': c['color_hex']},
+  ],
+  'comunas': [
+    {'id': 1, 'nombre': 'Puerto Montt'},
+    {'id': 2, 'nombre': 'Puerto Varas'},
+  ],
+};
+
+Map<String, Object?> _porDia(int dias) {
+  final hoy = DateTime.now();
+  final serie = <Map<String, Object?>>[];
+  for (var i = dias - 1; i >= 0; i--) {
+    final total = (i * 7 + 3) % 5;
+    serie.add({
+      'dia': hoy.subtract(Duration(days: i)).toIso8601String().substring(0, 10),
+      'total': total,
+      'reportes': total,
+      'por_categoria': {if (total > 0) 'ROBO': total},
+    });
+  }
+  final total = serie.fold<int>(0, (s, d) => s + (d['total'] as int));
+  return {
+    'desde': serie.first['dia'],
+    'hasta': serie.last['dia'],
+    'dias': serie,
+    'total': total,
+    'anterior': total - 6,
+    'tendencia': 'sube',
+    'variacion': 12.5,
+    'promedio_diario': total / dias,
+    'dia_pico': {'dia': serie.last['dia'], 'total': 4},
+    'categorias': (_filtrosAnalisis['categorias']! as List).take(2).toList(),
+    'sincronizacion': {'fecha': _hace(const Duration(minutes: 5))},
+  };
+}
+
+Map<String, Object?> _callesAnalisis(String? categoria) {
+  final calles = [
+    for (final l in _zonasCalientes(categoria))
+      {
+        'id': (l['datos']! as Map)['id'],
+        'nombre': (l['datos']! as Map)['nombre'],
+        'comuna': (l['datos']! as Map)['comuna'],
+        'latitud': -41.47,
+        'longitud': -72.94,
+        'total': l['total'],
+        'reportes': (l['datos']! as Map)['reportes'],
+        'anterior': 2,
+        'tendencia': (l['total']! as int) > 2 ? 'sube' : 'igual',
+        'variacion': (l['total']! as int) > 2 ? ((l['total']! as int) - 2) / 2 * 100 : 0.0,
+        'ultimo': _hace(const Duration(hours: 5)),
+        'por_categoria': (l['datos']! as Map)['por_categoria'],
+      },
+  ];
+  return {'calles': calles, 'total_calles': calles.length, 'reportes_sin_calle': 3};
+}
+
+final _sectoresAnalisis = {
+  'tramos': [
+    for (var i = 0; i < 6; i++)
+      {
+        'desde': DateTime.now().subtract(Duration(days: 30 - i * 5)).toIso8601String().substring(0, 10),
+        'hasta': DateTime.now().subtract(Duration(days: 26 - i * 5)).toIso8601String().substring(0, 10),
+      },
+  ],
+  'sectores': [
+    {'clave': 'Localidad:5', 'nombre': 'Mirasol', 'comuna': 'Puerto Montt', 'serie': [0, 1, 1, 2, 3, 4], 'total': 11, 'anterior': 4, 'tendencia': 'sube', 'variacion': 175.0},
+    {'clave': 'Localidad:3', 'nombre': 'Centro', 'comuna': 'Puerto Montt', 'serie': [2, 2, 1, 2, 1, 1], 'total': 9, 'anterior': 9, 'tendencia': 'igual', 'variacion': 0.0},
+    {'clave': 'Localidad:12', 'nombre': 'Alerce Norte', 'comuna': 'Puerto Montt', 'serie': [3, 1, 1, 0, 0, 0], 'total': 5, 'anterior': 8, 'tendencia': 'baja', 'variacion': -37.5},
+    {'clave': 'Localidad:9', 'nombre': 'Pelluco', 'comuna': 'Puerto Montt', 'serie': [0, 0, 0, 0, 2, 3], 'total': 5, 'anterior': 0, 'tendencia': 'nueva', 'variacion': null},
+  ],
+  'resumen': {'nueva': 1, 'sube': 1, 'baja': 1, 'igual': 1},
+};
+
+/// Hechos por calle y categoría para la red de lugares (como los cuenta la API).
 const _reportesPorLugar = [
-  ('Localidad', 5, 'Mirasol', 'Puerto Montt', {'ROBO': 7, 'ACCIDENTE': 2, 'VIAL': 1}),
-  ('Localidad', 12, 'Alerce Norte', 'Puerto Montt', {'ROBO': 4, 'SOSPECHOSO': 1}),
-  ('Localidad', 3, 'Centro', 'Puerto Montt', {'ACCIDENTE': 5, 'ROBO': 2, 'SOSPECHOSO': 2}),
-  ('Localidad', 9, 'Pelluco', 'Puerto Montt', {'ROBO': 3, 'MASCOTA': 2}),
-  ('Comuna', 2, 'Puerto Varas', null, {'ACCIDENTE': 3}),
+  ('Calle', 5, 'Avenida Presidente Ibáñez', 'Puerto Montt', {'ROBO': 7, 'ACCIDENTE': 2, 'VIAL': 1}),
+  ('Calle', 12, 'Avenida Diego Portales', 'Puerto Montt', {'ROBO': 4, 'SOSPECHOSO': 1, 'ACCIDENTE': 4}),
+  ('Calle', 3, 'Calle Urmeneta', 'Puerto Montt', {'ACCIDENTE': 3, 'ROBO': 2}),
+  ('Calle', 9, 'Avenida Austral', 'Puerto Montt', {'ROBO': 3, 'MASCOTA': 2}),
+  ('Calle', 2, 'San Francisco', 'Puerto Varas', {'ACCIDENTE': 3}),
 ];
 
 List<Map<String, Object?>> _zonasCalientes(String? categoria) {
@@ -448,8 +539,8 @@ List<Map<String, Object?>> _zonasCalientes(String? categoria) {
     ]..sort((a, b) => (b['total'] as int).compareTo(a['total'] as int));
     if (porCategoria.isEmpty) continue;
     final total = porCategoria.fold<int>(0, (suma, c) => suma + (c['total'] as int));
-    // En Mirasol varios vecinos reportaron el mismo robo: más reportes que hechos.
-    final reportes = nombre == 'Mirasol' ? total + 3 : total;
+    // En Ibáñez varios vecinos reportaron el mismo robo: más reportes que hechos.
+    final reportes = id == 5 ? total + 3 : total;
     lugares.add({
       ..._nodo(tipo, id, nombre, {
         'nombre': nombre,
@@ -469,8 +560,7 @@ List<Map<String, Object?>> _zonasCalientes(String? categoria) {
   return lugares;
 }
 
-Map<String, Object?> _redGrafo(String? modo, String? categoria) {
-  if (modo != 'zonas') return {'nodos': const [], 'aristas': const []};
+Map<String, Object?> _redGrafo(String? categoria) {
   final lugares = _zonasCalientes(categoria);
   final categorias = <String, Map<String, Object?>>{};
   final aristas = <Map<String, Object?>>[];

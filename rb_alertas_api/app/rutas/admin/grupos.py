@@ -4,6 +4,7 @@ reportes y la opción de cerrarlos o reabrirlos. Los miembros aparecen solo como
 from fastapi import APIRouter, HTTPException, Path as PathParam, Query
 from pydantic import BaseModel
 
+from app.comun import enmascarar
 from app.comun.alias import alias_autor
 from app.db import consultar, transaccion
 from app.servicios.grupos import MAXIMO_GRUPOS_CREADOS
@@ -58,6 +59,7 @@ def listar_grupos(
         fila["codigo_vencido"] = bool(fila["codigo_vencido"])
         for campo in ("total_miembros", "total_reportes", "reportes_privados"):
             fila[campo] = int(fila[campo])
+        fila["creador_email"] = enmascarar.correo(fila["creador_email"])
     return filas
 
 

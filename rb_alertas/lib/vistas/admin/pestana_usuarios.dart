@@ -41,11 +41,13 @@ class _PestanaUsuariosState extends State<PestanaUsuarios> with AutomaticKeepAli
   Future<void> _cargar() async {
     setState(() => _error = null);
     try {
-      final usuarios = await _servicio.usuarios(
-        buscar: _buscador.text,
-        estado: _soloSuspendidas ? 'SUSPENDIDO' : null,
-      );
-      if (mounted) setState(() => _usuarios = usuarios);
+      final usuarios = await _servicio.usuarios(buscar: _buscador.text, estado: _soloSuspendidas ? 'SUSPENDIDO' : null);
+      if (mounted) {
+        setState(() {
+          _usuarios = usuarios;
+          _revelados.clear(); // la lista recargada vuelve a traer los datos ocultos
+        });
+      }
     } catch (e) {
       if (mounted) setState(() => _error = mensajeDeError(e));
     }
@@ -70,6 +72,32 @@ class _PestanaUsuariosState extends State<PestanaUsuarios> with AutomaticKeepAli
       suspender ? 'Cuenta suspendida' : 'Cuenta reactivada',
     );
     if (aplicado && mounted) _cargar();
+  }
+
+  /// Cuentas cuyos datos completos ya se pidieron en esta sesión del panel.
+  final Set<int> _revelados = {};
+
+  Future<void> _revelar(UsuarioAdmin u) async {
+    final confirmado = await confirmar(
+      context,
+      titulo: 'Ver datos de contacto',
+      mensaje:
+          'Se mostrarán el correo, RUT y teléfono completos de ${u.nombreCompleto}. '
+          'Úsalos solo para moderar; la consulta queda registrada.',
+      accion: 'Ver datos',
+    );
+    if (!confirmado || !mounted) return;
+    try {
+      final contacto = await _servicio.contactoUsuario(u.id);
+      if (!mounted) return;
+      setState(() {
+        _revelados.add(u.id);
+        final i = _usuarios?.indexWhere((x) => x.id == u.id) ?? -1;
+        if (i >= 0) _usuarios![i] = u.conContacto(contacto);
+      });
+    } catch (e) {
+      if (mounted) mostrarAviso(context, mensajeDeError(e));
+    }
   }
 
   @override
@@ -102,10 +130,7 @@ class _PestanaUsuariosState extends State<PestanaUsuarios> with AutomaticKeepAli
   }
 
   Widget _tarjeta(UsuarioAdmin u) {
-    final iniciales = [u.nombres, u.apellidos]
-        .where((x) => x.isNotEmpty)
-        .map((x) => x[0].toUpperCase())
-        .join();
+    final iniciales = [u.nombres, u.apellidos].where((x) => x.isNotEmpty).map((x) => x[0].toUpperCase()).join();
     // La cuenta admin y las eliminadas no se pueden suspender ni reactivar.
     final moderable = !u.esAdmin && u.estado != 'ELIMINADO';
     final suspendida = u.estado == 'SUSPENDIDO';
@@ -147,15 +172,24 @@ class _PestanaUsuariosState extends State<PestanaUsuarios> with AutomaticKeepAli
                 Text(
                   [
                     u.email + (u.emailVerificado ? '' : ' (sin verificar)'),
-                    [
-                      if (u.rut != null) 'RUT ${u.rut}',
-                      if (u.telefono != null) u.telefono!,
-                    ].join(' · '),
-                    '${u.totalReportes} reportes · desde '
+                    [if (u.rut != null) 'RUT ${u.rut}', if (u.telefono != null) u.telefono!].join(' · '),
+                    '${u.totalReportes} ${u.totalReportes == 1 ? 'reporte' : 'reportes'} · desde '
                         '${fechaHora(u.fechaCreacion?.toLocal()).split(' ').first}',
                   ].where((l) => l.isNotEmpty).join('\n'),
                   style: const TextStyle(fontSize: 13, color: RBColores.texto2, height: 1.4),
                 ),
+                // Los datos llegan parcialmente ocultos; verlos completos queda registrado.
+                if (!_revelados.contains(u.id))
+                  TextButton.icon(
+                    style: TextButton.styleFrom(
+                      padding: EdgeInsets.zero,
+                      visualDensity: VisualDensity.compact,
+                      foregroundColor: RBColores.azul,
+                    ),
+                    onPressed: () => _revelar(u),
+                    icon: const Icon(Icons.visibility_outlined, size: 17),
+                    label: const Text('Ver datos de contacto'),
+                  ),
               ],
             ),
           ),

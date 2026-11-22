@@ -14,17 +14,25 @@ import 'package:rb_alertas/widgets/categoria_visual.dart';
 import 'package:rb_alertas/widgets/dialogos.dart';
 import 'package:rb_alertas/widgets/rb_componentes.dart';
 
-/// Estados a los que el admin puede llevar un reporte.
-const estadosModerables = ['VALIDADO', 'RESUELTO', 'DESCARTADO', 'PENDIENTE'];
+/// Texto de la acción que lleva un reporte a [estado]. Las acciones posibles
+/// las decide la API según el estado actual ([ReporteAdmin.acciones]): un
+/// reporte resuelto no se puede volver a validar, uno expirado solo se descarta, etc.
+String textoAccionEstado(String estado) => switch (estado) {
+  'VALIDADO' => 'Validar',
+  'RESUELTO' => 'Marcar resuelto',
+  'DESCARTADO' => 'Descartar',
+  'PENDIENTE' => 'Restaurar a pendiente',
+  _ => estiloEstado(estado).$1,
+};
 
 /// Pide un motivo opcional y cambia el estado del reporte.
 Future<bool> cambiarEstadoReporte(BuildContext context, ReporteAdmin reporte, String estado) async {
   final motivo = TextEditingController();
-  final (texto, color) = estiloEstado(estado);
+  final (_, color) = estiloEstado(estado);
   final confirmado = await showDialog<bool>(
     context: context,
     builder: (dialogo) => AlertDialog(
-      title: Text('Marcar como ${texto.toLowerCase()}'),
+      title: Text('${textoAccionEstado(estado)} el reporte #${reporte.id}'),
       content: TextField(
         controller: motivo,
         maxLength: 200,
@@ -47,20 +55,78 @@ Future<bool> cambiarEstadoReporte(BuildContext context, ReporteAdmin reporte, St
   final textoMotivo = motivo.text.trim();
   return ejecutarAccionAdmin(
     context,
-    () => AdminServicio().cambiarEstadoReporte(
-      reporte.id,
-      estado,
-      motivo: textoMotivo.isEmpty ? null : textoMotivo,
-    ),
-    'Reporte #${reporte.id} marcado como ${texto.toLowerCase()}',
+    () => AdminServicio().cambiarEstadoReporte(reporte.id, estado, motivo: textoMotivo.isEmpty ? null : textoMotivo),
+    'Reporte #${reporte.id}: ${estiloEstado(estado).$1.toLowerCase()}',
   );
 }
+
+/// Menú ⋮ de un reporte: solo las acciones que su estado permite.
+class MenuAccionesReporte extends StatelessWidget {
+  final ReporteAdmin reporte;
+  final Future<void> Function(Future<bool> accion) alModerar;
+
+  const MenuAccionesReporte({super.key, required this.reporte, required this.alModerar});
+
+  @override
+  Widget build(BuildContext context) {
+    PopupMenuItem<String> opcion(String valor, String texto, IconData icono, {Color color = RBColores.tinta}) =>
+        PopupMenuItem(
+          value: valor,
+          child: Row(
+            children: [
+              Icon(icono, size: 19, color: color),
+              const SizedBox(width: 10),
+              Text(
+                texto,
+                style: TextStyle(fontWeight: FontWeight.w600, color: color),
+              ),
+            ],
+          ),
+        );
+    final r = reporte;
+    return PopupMenuButton<String>(
+      tooltip: 'Acciones del reporte #${r.id}',
+      color: Colors.white,
+      surfaceTintColor: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(RBRadios.campo)),
+      icon: const Icon(Icons.more_vert, color: RBColores.texto2),
+      onSelected: (accion) => alModerar(switch (accion) {
+        'SUSPENDER_AUTOR' => suspenderAutorReporte(context, r),
+        'COMENTARIOS' => verComentariosReporte(context, r),
+        'ELIMINAR' => eliminarReporte(context, r),
+        _ => cambiarEstadoReporte(context, r, accion),
+      }),
+      itemBuilder: (_) => [
+        for (final estado in r.acciones)
+          opcion(
+            estado,
+            textoAccionEstado(estado),
+            iconoAccionEstado(estado),
+            color: estado == 'DESCARTADO' ? RBColores.rojo : RBColores.tinta,
+          ),
+        if (r.acciones.isNotEmpty) const PopupMenuDivider(),
+        opcion('COMENTARIOS', 'Ver comentarios (${r.comentarios})', Icons.forum_outlined),
+        opcion('SUSPENDER_AUTOR', 'Suspender a quien reportó', Icons.block_rounded, color: RBColores.rojo),
+        opcion('ELIMINAR', 'Eliminar reporte', Icons.delete_forever_rounded, color: RBColores.rojo),
+      ],
+    );
+  }
+}
+
+IconData iconoAccionEstado(String estado) => switch (estado) {
+  'VALIDADO' => Icons.verified_outlined,
+  'RESUELTO' => Icons.task_alt_rounded,
+  'DESCARTADO' => Icons.do_not_disturb_on_outlined,
+  'PENDIENTE' => Icons.restore_rounded,
+  _ => Icons.edit_outlined,
+};
 
 Future<bool> suspenderAutorReporte(BuildContext context, ReporteAdmin reporte) async {
   final confirmado = await confirmar(
     context,
     titulo: 'Suspender a quien reportó',
-    mensaje: 'La cuenta de «${reporte.autor}» no podrá volver a entrar ni crear '
+    mensaje:
+        'La cuenta de «${reporte.autor}» no podrá volver a entrar ni crear '
         'reportes hasta que la reactives en la pestaña Usuarios. '
         'Se cerrarán todas sus sesiones.',
     accion: 'Suspender',
@@ -116,9 +182,7 @@ Future<bool> eliminarReporte(BuildContext context, ReporteAdmin reporte) async {
           TextButton(onPressed: () => Navigator.pop(dialogo, false), child: const Text('Cancelar')),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: RBColores.rojo),
-            onPressed: confirmacion.text.trim().toUpperCase() == 'ELIMINAR'
-                ? () => Navigator.pop(dialogo, true)
-                : null,
+            onPressed: confirmacion.text.trim().toUpperCase() == 'ELIMINAR' ? () => Navigator.pop(dialogo, true) : null,
             child: const Text('Eliminar'),
           ),
         ],
@@ -240,7 +304,7 @@ class _HojaModerarReporteState extends State<HojaModerarReporte> {
           ],
         ),
         const SizedBox(height: 8),
-        ChipsReporte(estado: r.estado, vencido: r.vencido, soloGrupo: r.soloGrupo),
+        ChipsReporte(estado: r.estado, soloGrupo: r.soloGrupo),
         if (r.imagen != null) ...[
           const SizedBox(height: 12),
           ClipRRect(
@@ -273,22 +337,39 @@ class _HojaModerarReporteState extends State<HojaModerarReporte> {
             '${r.comentariosOcultos > 0 ? ' · ${r.comentariosOcultos} ocultos' : ''}',
           ),
         ),
+        if (r.denunciasPendientes > 0) ...[
+          const SizedBox(height: 10),
+          Text(
+            r.denunciasPendientes == 1
+                ? '1 denuncia pendiente (ver pestaña Denuncias)'
+                : '${r.denunciasPendientes} denuncias pendientes (ver pestaña Denuncias)',
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: RBColores.rojo),
+          ),
+        ],
         const SizedBox(height: 14),
         const Text('Cambiar estado', style: TextStyle(fontWeight: FontWeight.w800)),
         const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            for (final estado in estadosModerables)
-              if (estado != r.estado)
+        if (r.acciones.isEmpty)
+          Text(
+            r.estado == 'RESUELTO'
+                ? 'Un reporte resuelto ya no cambia de estado.'
+                : 'Este reporte no admite cambios de estado.',
+            style: const TextStyle(fontSize: 13, color: RBColores.texto2),
+          )
+        else
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final estado in r.acciones)
                 ChipFiltro(
-                  etiqueta: estiloEstado(estado).$1,
+                  etiqueta: textoAccionEstado(estado),
                   activo: false,
+                  icono: Icon(iconoAccionEstado(estado), size: 18, color: RBColores.azul),
                   onTap: () => _moderar(cambiarEstadoReporte(context, r, estado)),
                 ),
-          ],
-        ),
+            ],
+          ),
         const SizedBox(height: 18),
         OutlinedButton.icon(
           style: OutlinedButton.styleFrom(
@@ -311,24 +392,15 @@ class _HojaModerarReporteState extends State<HojaModerarReporte> {
   }
 }
 
-/// Estado del reporte, "Expirado" si ya venció y "Solo grupo" si es privado.
+/// Estado del reporte (uno solo: el efectivo) y "Solo grupo" si es privado.
 class ChipsReporte extends StatelessWidget {
   final String estado;
-  final bool vencido;
   final bool soloGrupo;
 
-  const ChipsReporte({super.key, required this.estado, required this.vencido, required this.soloGrupo});
+  const ChipsReporte({super.key, required this.estado, required this.soloGrupo});
 
   @override
   Widget build(BuildContext context) {
-    return Wrap(
-      spacing: 6,
-      runSpacing: 4,
-      children: [
-        chipReporte(estado),
-        if (vencido && estado != 'EXPIRADO') chipReporte('EXPIRADO'),
-        if (soloGrupo) const ChipSoloGrupo(),
-      ],
-    );
+    return Wrap(spacing: 6, runSpacing: 4, children: [chipReporte(estado), if (soloGrupo) const ChipSoloGrupo()]);
   }
 }

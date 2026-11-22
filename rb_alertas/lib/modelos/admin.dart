@@ -46,16 +46,21 @@ class ReporteAdmin {
   final String categoria;
   final String categoriaCodigo;
   final String? colorHex;
+
+  /// Estado efectivo: un pendiente o validado cuya vigencia terminó llega como EXPIRADO.
   final String estado;
   final String descripcion;
   final String? direccion;
   final String? zona;
   final DateTime? fechaCreacion;
-  final bool vencido;
   final int confirmaciones;
   final int desmentidos;
   final String? imagen;
   final String autor;
+
+  /// Estados a los que se puede llevar desde el panel (los decide la API).
+  final List<String> acciones;
+  final int denunciasPendientes;
 
   /// Privado de un grupo vecinal: no sale en el mapa público.
   final bool soloGrupo;
@@ -76,11 +81,12 @@ class ReporteAdmin {
     required this.direccion,
     required this.zona,
     required this.fechaCreacion,
-    required this.vencido,
     required this.confirmaciones,
     required this.desmentidos,
     required this.imagen,
     required this.autor,
+    this.acciones = const [],
+    this.denunciasPendientes = 0,
     this.soloGrupo = false,
     this.latitud,
     this.longitud,
@@ -100,17 +106,78 @@ class ReporteAdmin {
     direccion: json.textoOpcional('direccion'),
     zona: json.textoOpcional('zona'),
     fechaCreacion: json.fecha('fecha_creacion'),
-    vencido: json.booleano('vencido'),
     confirmaciones: json.entero('total_confirmaciones'),
     desmentidos: json.entero('total_desmentidos'),
     imagen: json.textoOpcional('imagen'),
     autor: json.texto('autor'),
+    acciones: json.textos('acciones'),
+    denunciasPendientes: json.entero('denuncias_pendientes'),
     soloGrupo: json['visibilidad'] == 'GRUPO',
     latitud: json.decimalOpcional('latitud'),
     longitud: json.decimalOpcional('longitud'),
     comentarios: json.entero('total_comentarios'),
     comentariosOcultos: json.entero('comentarios_ocultos'),
   );
+}
+
+/// Una página del listado de reportes del panel, con cuántos hay en cada estado.
+class PaginaReportes {
+  final List<ReporteAdmin> reportes;
+
+  /// Total con los filtros aplicados (para saber si hay más páginas).
+  final int total;
+  final int pagina;
+  final int porPagina;
+
+  /// Cuántos hay en cada estado con los mismos filtros, para los contadores.
+  final Map<String, int> conteos;
+
+  PaginaReportes({
+    required this.reportes,
+    required this.total,
+    required this.pagina,
+    required this.porPagina,
+    required this.conteos,
+  });
+
+  bool get hayMas => pagina * porPagina < total;
+
+  factory PaginaReportes.desdeJson(Map<String, dynamic> json) => PaginaReportes(
+    reportes: json.lista('reportes', ReporteAdmin.desdeJson),
+    total: json.entero('total'),
+    pagina: json.entero('pagina', 1),
+    porPagina: json.entero('por_pagina', 25),
+    conteos: ResumenAdmin._conteo(json.mapa('conteos')),
+  );
+}
+
+/// Filtros del listado de reportes del panel.
+class FiltroReportes {
+  final String? estado;
+  final String? texto;
+  final String? categoria;
+  final DateTime? desde;
+
+  /// "prioridad" deja primero lo que más necesita revisión.
+  final String orden;
+
+  const FiltroReportes({this.estado, this.texto, this.categoria, this.desde, this.orden = 'recientes'});
+
+  FiltroReportes copiar({
+    String? Function()? estado,
+    String? Function()? texto,
+    String? Function()? categoria,
+    DateTime? Function()? desde,
+    String? orden,
+  }) => FiltroReportes(
+    estado: estado != null ? estado() : this.estado,
+    texto: texto != null ? texto() : this.texto,
+    categoria: categoria != null ? categoria() : this.categoria,
+    desde: desde != null ? desde() : this.desde,
+    orden: orden ?? this.orden,
+  );
+
+  bool get tieneFiltrosExtra => (texto?.isNotEmpty ?? false) || categoria != null || desde != null;
 }
 
 /// Grupo vecinal tal como lo ve el panel: activo o cerrado, con quien lo creó.
@@ -206,6 +273,9 @@ class ReporteDeGrupoAdmin {
     fechaPublicacion: json.fecha('fecha_publicacion'),
     autor: json.texto('autor'),
   );
+
+  /// Un solo estado: un pendiente o validado vencido se muestra como expirado.
+  String get estadoVisible => vencido && (estado == 'PENDIENTE' || estado == 'VALIDADO') ? 'EXPIRADO' : estado;
 }
 
 /// Comentario de un reporte tal como lo ve el panel: en cualquier estado.
@@ -322,6 +392,22 @@ class UsuarioAdmin {
   });
 
   String get nombreCompleto => '$nombres $apellidos'.trim();
+
+  /// Correo, RUT y teléfono llegan parcialmente ocultos (p. ej. "2098••••-8");
+  /// [UsuarioAdmin.conContacto] los reemplaza por los completos al pedirlos.
+  UsuarioAdmin conContacto(({String email, String? rut, String? telefono}) c) => UsuarioAdmin(
+    id: id,
+    nombres: nombres,
+    apellidos: apellidos,
+    email: c.email,
+    rut: c.rut,
+    telefono: c.telefono,
+    estado: estado,
+    emailVerificado: emailVerificado,
+    fechaCreacion: fechaCreacion,
+    totalReportes: totalReportes,
+    esAdmin: esAdmin,
+  );
 
   factory UsuarioAdmin.desdeJson(Map<String, dynamic> json) => UsuarioAdmin(
     id: json.entero('id_usuario'),

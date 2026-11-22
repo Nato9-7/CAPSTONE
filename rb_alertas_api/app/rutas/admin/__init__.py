@@ -6,9 +6,11 @@ dependencia del router se aplica a cada ruta incluida.
 
 from fastapi import APIRouter, Depends
 
-from app.rutas.admin import comentarios, denuncias, grafo_explorador, grafo_hallazgos, grupos, reportes, resumen, usuarios
+from app.rutas.admin import (
+    analisis, comentarios, denuncias, grafo_explorador, grafo_hallazgos, grupos, reportes, resumen, usuarios,
+)
 from app.seguridad import usuario_admin
 
 router = APIRouter(dependencies=[Depends(usuario_admin)])
-for modulo in (resumen, reportes, comentarios, denuncias, usuarios, grupos, grafo_hallazgos, grafo_explorador):
+for modulo in (resumen, reportes, comentarios, denuncias, usuarios, grupos, grafo_hallazgos, grafo_explorador, analisis):
     router.include_router(modulo.router)
