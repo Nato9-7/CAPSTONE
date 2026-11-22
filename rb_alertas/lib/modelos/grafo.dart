@@ -79,7 +79,7 @@ class RedGrafo {
 /// Cifras del análisis para la tarjeta del Resumen (últimos 30 días).
 class ResumenGrafo {
   final int callesConHechos;
-  final List<({String nombre, int total, String tendencia})> callesTop;
+  final List<({String nombre, String? sector, int total, String tendencia})> callesTop;
   final int sectoresEnAlza;
   final int incidentesAbiertos;
 
@@ -98,7 +98,12 @@ class ResumenGrafo {
     callesConHechos: json.entero('calles_con_hechos'),
     callesTop: json.lista(
       'calles_top',
-      (c) => (nombre: c.texto('nombre'), total: c.entero('total'), tendencia: c.texto('tendencia', 'igual')),
+      (c) => (
+        nombre: c.texto('nombre'),
+        sector: c.textoOpcional('sector'),
+        total: c.entero('total'),
+        tendencia: c.texto('tendencia', 'igual'),
+      ),
     ),
     sectoresEnAlza: json.entero('sectores_en_alza'),
     incidentesAbiertos: json.entero('incidentes_abiertos'),

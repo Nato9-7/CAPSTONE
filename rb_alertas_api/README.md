@@ -44,8 +44,10 @@ uploads, reglas de incidentes y de zonas de riesgo). El `.env` y el JSON de Fire
 
 El esquema base de MySQL está en
 `Fase 2/Evidencias proyecto/VPS/db/init/01-rbalerta_db.sql` (lo carga el contenedor
-de MySQL al crearse). Los cambios posteriores están en `sql/` y se ejecutan a mano,
-con un respaldo previo.
+de MySQL al crearse). Los cambios posteriores se aplican a mano, con un respaldo previo.
+
+La columna `reporte.calle` alimenta el análisis por calle del panel. La API la completa
+sola al crear cada reporte (geocodificación inversa con OpenStreetMap, en segundo plano).
 
 ## Ejecución
 
@@ -68,7 +70,7 @@ y, si la versión nueva no responde, vuelve a la anterior.
 | `/api/usuarios` | Regiones y comunas para el registro (`/comunas`), registro con comuna, rol y consentimientos, inicio y cierre de sesión, perfil, verificación de correo, recuperación de contraseña, zonas seguras (`/zonas`), alertas (`/notificaciones`) y dispositivos para push (`/dispositivos`). | Público (comunas, registro, login, enlaces del correo) o con sesión |
 | `/api/reportes` | Categorías, reportes del mapa, cercanos, zonas de riesgo, mapa de calor, reportes propios, creación con evidencia, detalle, votos, resolución, comentarios y denuncias. | Consultas del mapa públicas; el resto con sesión |
 | `/api/grupos` | Grupos vecinales: creación, edición, código de invitación, unirse, miembros, salir y reportes del grupo. | Con sesión |
-| `/api/admin` | Resumen, moderación de reportes, comentarios, denuncias, usuarios y grupos, y el grafo (hallazgos y explorador). | Cuenta admin (`ADMIN_EMAILS`) |
+| `/api/admin` | Resumen; moderación de reportes (listado paginado con estado efectivo y acciones permitidas), comentarios, denuncias, usuarios y grupos; análisis en Neo4j (`/analisis/por-dia`, `/analisis/calles`, `/analisis/sectores`, `/analisis/filtros` y la red de lugares `/grafo/red`). Correo, RUT y teléfono se entregan ocultos; `/usuarios/{id}/contacto` los da completos y lo registra. | Cuenta admin (`ADMIN_EMAILS`) |
 
 Las rutas protegidas reciben el token de sesión en `Authorization: Bearer <token>`.
 El detalle de cada endpoint está en `/docs`.
@@ -91,6 +93,7 @@ app/
 ├── comun/             Utilidades compartidas sin lógica de negocio.
 │   ├── alias.py       Nombres de fantasía («Suricata Valiente 23»): el nombre real nunca sale de la API.
 │   ├── archivos.py    Validación, guardado y borrado de fotos y videos subidos.
+│   ├── enmascarar.py  RUT, correo y teléfono parcialmente ocultos para el panel.
 │   ├── formato.py     Conversión de fechas y números para las respuestas JSON.
 │   ├── geo.py         Puntos geográficos para las consultas espaciales.
 │   └── sql.py         Marcadores IN y traducción de errores de MySQL a respuestas HTTP.
@@ -103,18 +106,18 @@ app/
 │   ├── moderacion.py  Suspensión de cuentas y cierre de denuncias.
 │   ├── incidentes.py  Agrupa reportes del mismo hecho (funciones puras).
 │   ├── zonas_riesgo.py Zonas de riesgo y mapa de calor (funciones puras).
-│   ├── analisis_grafo.py Cuentas coordinadas y reputación (funciones puras).
+│   ├── geocodificacion.py Calle de un punto con OpenStreetMap (Nominatim).
 │   ├── correo.py      Envío y plantillas de correo.
 │   ├── push.py        Notificaciones push con Firebase.
-│   └── grafo/         Copia en Neo4j: conexión, sincronización, red del explorador y zonas.
+│   └── grafo/         Copia en Neo4j: conexión, sincronización, análisis (por día, calles
+│                      por sector, sectores en el tiempo) y red de lugares.
 ├── rutas/             Endpoints, un paquete por recurso.
 │   ├── usuarios/      /api/usuarios: cuenta, territorio (comunas del registro), verificación,
 │   │                  recuperación, zonas, alertas, dispositivos.
 │   ├── reportes/      /api/reportes: consultas, creación, detalle, votos, comentarios, denuncias.
 │   ├── grupos/        /api/grupos: gestión, membresía y chat del grupo.
-│   └── admin/         /api/admin: resumen, moderación y grafo del panel.
+│   └── admin/         /api/admin: resumen, moderación y análisis del panel.
 └── estaticos/         Logo usado en los correos y en las páginas de los enlaces.
-sql/                   Scripts SQL de cambios en la base (ejecutar a mano con respaldo previo).
 tests/                 Pruebas con pytest.
 ```
 

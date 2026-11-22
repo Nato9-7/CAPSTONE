@@ -76,6 +76,7 @@ def test_ranking_calles_ordena_por_hechos_y_calcula_tendencia(grafo_falso):
     assert resultado["calles"][1]["tendencia"] == "nueva"
     assert resultado["total_calles"] == 2  # la calle sin hechos en el período no entra
     assert resultado["reportes_sin_calle"] == 5
+    assert [g["nombre"] for g in resultado["por_sector"]] == [analisis.SIN_SECTOR]
 
 
 def test_sectores_reparte_los_hechos_en_tramos(grafo_falso):
@@ -110,3 +111,32 @@ def test_calles_de_reportes_une_la_misma_calle_y_separa_comunas():
     assert misma["latitud"] == pytest.approx(-41.1)
     assert reportes[0]["id_calle"] == reportes[1]["id_calle"] != reportes[2]["id_calle"]
     assert "id_calle" not in reportes[3]
+
+
+def test_una_calle_que_cruza_dos_sectores_son_dos_tramos():
+    reportes = [
+        {"calle": "Avenida Presidente Ibáñez", "id_comuna": 1, "id_localidad": 5, "latitud": -41.46, "longitud": -72.93},
+        {"calle": "Avenida Presidente Ibáñez", "id_comuna": 1, "id_localidad": 5, "latitud": -41.46, "longitud": -72.93},
+        {"calle": "Avenida Presidente Ibáñez", "id_comuna": 1, "id_localidad": 3, "latitud": -41.47, "longitud": -72.94},
+    ]
+    tramos = calles_de_reportes(reportes, {5: "Mirasol", 3: "Centro"})
+
+    assert sorted(t["sector"] for t in tramos) == ["Centro", "Mirasol"]
+    assert reportes[0]["id_calle"] == reportes[1]["id_calle"] != reportes[2]["id_calle"]
+
+
+def test_agrupar_por_sector_suma_calles_y_marca_el_puesto():
+    calles = [
+        {"nombre": "Ibáñez", "id_sector": 5, "sector": "Mirasol", "comuna": "Puerto Montt", "total": 6, "anterior": 2},
+        {"nombre": "Urmeneta", "id_sector": 3, "sector": "Centro", "comuna": "Puerto Montt", "total": 5, "anterior": 5},
+        {"nombre": "Los Notros", "id_sector": 5, "sector": "Mirasol", "comuna": "Puerto Montt", "total": 3, "anterior": 0},
+        {"nombre": "Sin datos", "id_sector": None, "sector": None, "comuna": "Puerto Montt", "total": 9, "anterior": 0},
+    ]
+    grupos = analisis.agrupar_por_sector(calles)
+
+    # El grupo sin sector va al final aunque sume más.
+    assert [g["nombre"] for g in grupos] == ["Mirasol", "Centro", analisis.SIN_SECTOR]
+    mirasol = grupos[0]
+    assert (mirasol["total"], mirasol["anterior"], mirasol["tendencia"]) == (9, 2, "sube")
+    assert [c["nombre"] for c in mirasol["calles"]] == ["Ibáñez", "Los Notros"]
+    assert (calles[2]["puesto_en_sector"], calles[2]["calles_en_sector"]) == (2, 2)

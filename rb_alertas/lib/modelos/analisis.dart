@@ -72,11 +72,19 @@ class SerieDiaria {
   }
 }
 
-/// Calle con sus hechos en el período.
+/// Tramo de calle (la calle dentro de un sector) con sus hechos en el período.
 class CalleAnalisis {
   final int id;
   final String nombre;
   final String? comuna;
+
+  /// Sector (localidad) del tramo; null si el punto quedó fuera de las localidades conocidas.
+  final String? sector;
+  final int? idSector;
+
+  /// Puesto del tramo entre las calles de su sector (1 = la con más hechos) y cuántas hay.
+  final int? puestoEnSector;
+  final int? callesEnSector;
   final double? latitud;
   final double? longitud;
   final int total;
@@ -91,6 +99,10 @@ class CalleAnalisis {
     required this.id,
     required this.nombre,
     required this.comuna,
+    this.sector,
+    this.idSector,
+    this.puestoEnSector,
+    this.callesEnSector,
     required this.latitud,
     required this.longitud,
     required this.total,
@@ -102,10 +114,17 @@ class CalleAnalisis {
     required this.porCategoria,
   });
 
+  /// "Mirasol · Puerto Montt", o solo la comuna si no hay sector.
+  String? get lugar => [sector, comuna].whereType<String>().toSet().join(' · ').ifEmptyNull;
+
   factory CalleAnalisis.desdeJson(Map<String, dynamic> json) => CalleAnalisis(
     id: json.entero('id'),
     nombre: json.texto('nombre'),
     comuna: json.textoOpcional('comuna'),
+    sector: json.textoOpcional('sector'),
+    idSector: json.enteroOpcional('id_sector'),
+    puestoEnSector: json.enteroOpcional('puesto_en_sector'),
+    callesEnSector: json.enteroOpcional('calles_en_sector'),
     latitud: json.decimalOpcional('latitud'),
     longitud: json.decimalOpcional('longitud'),
     total: json.entero('total'),
@@ -118,16 +137,67 @@ class CalleAnalisis {
   );
 }
 
+extension on String {
+  String? get ifEmptyNull => isEmpty ? null : this;
+}
+
+/// Un sector con sus tramos de calle con más hechos (ranking agrupado).
+class GrupoSector {
+  /// null = "Sector sin identificar".
+  final int? id;
+  final String nombre;
+  final String? comuna;
+
+  /// Suma de los hechos de sus calles (solo los que tienen calle identificada).
+  final int total;
+  final int anterior;
+  final Tendencia tendencia;
+  final double? variacion;
+  final int totalCalles;
+  final List<CalleAnalisis> calles;
+
+  GrupoSector({
+    required this.id,
+    required this.nombre,
+    required this.comuna,
+    required this.total,
+    required this.anterior,
+    required this.tendencia,
+    required this.variacion,
+    required this.totalCalles,
+    required this.calles,
+  });
+
+  factory GrupoSector.desdeJson(Map<String, dynamic> json) => GrupoSector(
+    id: json.enteroOpcional('id'),
+    nombre: json.texto('nombre', 'Sector sin identificar'),
+    comuna: json.textoOpcional('comuna'),
+    total: json.entero('total'),
+    anterior: json.entero('anterior'),
+    tendencia: Tendencia.desdeApi(json.textoOpcional('tendencia')),
+    variacion: json.decimalOpcional('variacion'),
+    totalCalles: json.entero('total_calles'),
+    calles: json.lista('calles', CalleAnalisis.desdeJson),
+  );
+}
+
 class RankingCalles {
   final List<CalleAnalisis> calles;
   final int totalCalles;
+  final List<GrupoSector> porSector;
   final int reportesSinCalle;
 
-  RankingCalles({required this.calles, required this.totalCalles, required this.reportesSinCalle});
+  RankingCalles({
+    required this.calles,
+    required this.totalCalles,
+    this.porSector = const [],
+    required this.reportesSinCalle,
+  });
 
   factory RankingCalles.desdeJson(Map<String, dynamic> json) => RankingCalles(
     calles: json.lista('calles', CalleAnalisis.desdeJson),
     totalCalles: json.entero('total_calles'),
+    porSector: json.lista('por_sector', GrupoSector.desdeJson),
     reportesSinCalle: json.entero('reportes_sin_calle'),
   );
 }
@@ -188,10 +258,17 @@ class FiltrosDisponibles {
   final List<CategoriaAnalisis> categorias;
   final List<({int id, String nombre})> comunas;
 
-  FiltrosDisponibles({required this.categorias, required this.comunas});
+  /// Sectores (localidades) con reportes, con su comuna para filtrarlos por ella.
+  final List<({int id, String nombre, int? idComuna})> sectores;
+
+  FiltrosDisponibles({required this.categorias, required this.comunas, this.sectores = const []});
 
   factory FiltrosDisponibles.desdeJson(Map<String, dynamic> json) => FiltrosDisponibles(
     categorias: json.lista('categorias', _categoria),
     comunas: json.lista('comunas', (c) => (id: c.entero('id'), nombre: c.texto('nombre'))),
+    sectores: json.lista(
+      'sectores',
+      (s) => (id: s.entero('id'), nombre: s.texto('nombre'), idComuna: s.enteroOpcional('id_comuna')),
+    ),
   );
 }

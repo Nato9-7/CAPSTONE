@@ -249,7 +249,13 @@ class _TarjetaAnalisis extends StatelessWidget {
                         style: const TextStyle(fontWeight: FontWeight.w800, color: RBColores.texto2),
                       ),
                     ),
-                    Expanded(child: Text(calle.nombre, maxLines: 1, overflow: TextOverflow.ellipsis)),
+                    Expanded(
+                      child: Text(
+                        calle.sector == null ? calle.nombre : '${calle.nombre} · ${calle.sector}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
                     Text('${calle.total}', style: const TextStyle(fontWeight: FontWeight.w800)),
                     const SizedBox(width: 8),
                     InsigniaTendencia(tendencia: Tendencia.desdeApi(calle.tendencia)),

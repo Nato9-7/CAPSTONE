@@ -87,23 +87,33 @@ def _usuarios_y_reportes() -> tuple[list[dict], list[dict], list[dict]]:
     return usuarios, reportes, votos
 
 
-def id_calle(nombre: str, id_comuna: int | None) -> int:
-    """Id numérico fijo de una calle dentro de su comuna (la misma calle en otra comuna es otra)."""
-    clave = f"{id_comuna}:{nombre.strip().lower()}"
+def id_calle(nombre: str, id_comuna: int | None, id_localidad: int | None = None) -> int:
+    """Id numérico fijo de un TRAMO de calle: la calle dentro de su sector (localidad).
+
+    Una avenida que cruza tres sectores son tres tramos: así el análisis dice qué
+    parte de la calle concentra los hechos y una calle larga no gana solo por ser larga.
+    Sin sector, el tramo es la calle dentro de su comuna.
+    """
+    clave = f"{id_comuna}:{id_localidad or '-'}:{nombre.strip().lower()}"
     return int(hashlib.sha256(clave.encode()).hexdigest()[:12], 16)
 
 
-def calles_de_reportes(reportes: list[dict]) -> list[dict]:
-    """Una calle por (nombre, comuna) con el punto medio de sus reportes, para ubicarla en el mapa."""
+def calles_de_reportes(reportes: list[dict], sectores: dict[int, str] | None = None) -> list[dict]:
+    """Un tramo por (calle, sector, comuna), con el punto medio de sus reportes para ubicarlo en el mapa.
+
+    `sectores` es {id_localidad: nombre}, para guardar en el tramo el nombre de su sector.
+    """
+    sectores = sectores or {}
     calles: dict[int, dict] = {}
     for r in reportes:
         if not r.get("calle"):
             continue
-        id_c = id_calle(r["calle"], r["id_comuna"])
+        id_c = id_calle(r["calle"], r["id_comuna"], r.get("id_localidad"))
         r["id_calle"] = id_c
-        calle = calles.setdefault(
-            id_c, {"id": id_c, "nombre": r["calle"].strip(), "id_comuna": r["id_comuna"], "lat": [], "lon": []}
-        )
+        calle = calles.setdefault(id_c, {
+            "id": id_c, "nombre": r["calle"].strip(), "id_comuna": r["id_comuna"],
+            "id_localidad": r.get("id_localidad"), "lat": [], "lon": [],
+        })
         if r["latitud"] is not None and r["longitud"] is not None:
             calle["lat"].append(r["latitud"])
             calle["lon"].append(r["longitud"])
@@ -112,6 +122,8 @@ def calles_de_reportes(reportes: list[dict]) -> list[dict]:
             "id": c["id"],
             "nombre": c["nombre"],
             "id_comuna": c["id_comuna"],
+            "id_localidad": c["id_localidad"],
+            "sector": sectores.get(c["id_localidad"]) if c["id_localidad"] else None,
             "latitud": sum(c["lat"]) / len(c["lat"]) if c["lat"] else None,
             "longitud": sum(c["lon"]) / len(c["lon"]) if c["lon"] else None,
         }
@@ -136,9 +148,14 @@ def _incidentes_para_grafo(reportes: list[dict]) -> list[dict]:
 def _filas_mysql() -> dict[str, list[dict]]:
     usuarios, reportes, votos = _usuarios_y_reportes()
 
+    localidades = consultar(
+        "SELECT id_localidad, id_comuna, nombre FROM localidad "
+        "WHERE id_localidad IN (SELECT DISTINCT id_localidad FROM reporte WHERE id_localidad IS NOT NULL)"
+    )
+
     # Reportes del mismo hecho: se agrupan con las fechas todavía como datetime.
     lista_incidentes = _incidentes_para_grafo(reportes)
-    calles = calles_de_reportes(reportes)
+    calles = calles_de_reportes(reportes, {l["id_localidad"]: l["nombre"] for l in localidades})
 
     for r in reportes:
         r["fecha_creacion"] = _texto_fecha(r["fecha_creacion"])
@@ -151,10 +168,7 @@ def _filas_mysql() -> dict[str, list[dict]]:
         "incidentes": lista_incidentes,
         "categorias": consultar("SELECT id_categoria, nombre, codigo, color_hex FROM categoria_incidente"),
         "comunas": consultar("SELECT id_comuna, nombre FROM comuna WHERE id_comuna IN (SELECT DISTINCT id_comuna FROM reporte)"),
-        "localidades": consultar(
-            "SELECT id_localidad, id_comuna, nombre FROM localidad "
-            "WHERE id_localidad IN (SELECT DISTINCT id_localidad FROM reporte WHERE id_localidad IS NOT NULL)"
-        ),
+        "localidades": localidades,
         "votos": [{**v, "fecha_voto": _texto_fecha(v["fecha_voto"])} for v in votos],
         "zonas": _opcional("SELECT id_zona_segura, id_usuario, nombre, radio_metros, activa FROM zona_segura"),
         "grupos": _opcional("SELECT id_grupo, nombre, activo, radio_metros FROM grupo"),
@@ -180,11 +194,15 @@ _CYPHER_RECONSTRUIR = [
     """UNWIND $usuarios AS u
        CREATE (:Usuario {id: u.id_usuario, alias: u.alias, estado: u.estado, verificado: u.email_verificado,
                          es_admin: u.es_admin, fecha_creacion: u.fecha_creacion})""",
+    # Un nodo Calle es un TRAMO: la calle dentro de un sector (ver id_calle).
     """UNWIND $calles AS c
-       CREATE (calle:Calle {id: c.id, nombre: c.nombre, latitud: c.latitud, longitud: c.longitud})
+       CREATE (calle:Calle {id: c.id, nombre: c.nombre, sector: c.sector, id_localidad: c.id_localidad,
+                            latitud: c.latitud, longitud: c.longitud})
        WITH calle, c
-       MATCH (com:Comuna {id: c.id_comuna})
-       CREATE (calle)-[:EN_COMUNA]->(com)""",
+       OPTIONAL MATCH (com:Comuna {id: c.id_comuna})
+       OPTIONAL MATCH (sec:Localidad {id: c.id_localidad})
+       FOREACH (_ IN CASE WHEN com IS NOT NULL THEN [1] ELSE [] END | CREATE (calle)-[:EN_COMUNA]->(com))
+       FOREACH (_ IN CASE WHEN sec IS NOT NULL THEN [1] ELSE [] END | CREATE (calle)-[:EN_SECTOR]->(sec))""",
     """UNWIND $reportes AS r
        MATCH (u:Usuario {id: r.id_usuario})
        MATCH (cat:Categoria {id: r.id_categoria})
@@ -193,7 +211,7 @@ _CYPHER_RECONSTRUIR = [
                             vencido: r.vencido, latitud: r.latitud, longitud: r.longitud,
                             confirmaciones: r.total_confirmaciones, desmentidos: r.total_desmentidos,
                             categoria: cat.nombre, categoria_codigo: cat.codigo, color: cat.color,
-                            visibilidad: r.visibilidad, id_comuna: r.id_comuna})
+                            visibilidad: r.visibilidad, id_comuna: r.id_comuna, id_localidad: r.id_localidad})
        CREATE (u)-[:CREO]->(rep)
        CREATE (rep)-[:ES_DE]->(cat)
        WITH rep, r

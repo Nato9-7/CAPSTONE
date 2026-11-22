@@ -446,6 +446,11 @@ final _filtrosAnalisis = {
     {'id': 1, 'nombre': 'Puerto Montt'},
     {'id': 2, 'nombre': 'Puerto Varas'},
   ],
+  'sectores': [
+    {'id': 12, 'nombre': 'Alerce Norte', 'id_comuna': 1},
+    {'id': 3, 'nombre': 'Centro', 'id_comuna': 1},
+    {'id': 5, 'nombre': 'Mirasol', 'id_comuna': 1},
+  ],
 };
 
 Map<String, Object?> _porDia(int dias) {
@@ -483,6 +488,8 @@ Map<String, Object?> _callesAnalisis(String? categoria) {
         'id': (l['datos']! as Map)['id'],
         'nombre': (l['datos']! as Map)['nombre'],
         'comuna': (l['datos']! as Map)['comuna'],
+        'sector': (l['datos']! as Map)['sector'],
+        'id_sector': (l['datos']! as Map)['id_localidad'],
         'latitud': -41.47,
         'longitud': -72.94,
         'total': l['total'],
@@ -494,7 +501,33 @@ Map<String, Object?> _callesAnalisis(String? categoria) {
         'por_categoria': (l['datos']! as Map)['por_categoria'],
       },
   ];
-  return {'calles': calles, 'total_calles': calles.length, 'reportes_sin_calle': 3};
+  final grupos = <Object?, Map<String, Object?>>{};
+  for (final c in calles) {
+    final g = grupos.putIfAbsent(c['id_sector'], () => {
+      'id': c['id_sector'],
+      'nombre': c['sector'] ?? 'Sector sin identificar',
+      'comuna': c['comuna'],
+      'total': 0,
+      'anterior': 0,
+      'tendencia': 'sube',
+      'variacion': 20.0,
+      'calles': <Map<String, Object?>>[],
+    });
+    g['total'] = (g['total']! as int) + (c['total']! as int);
+    g['anterior'] = (g['anterior']! as int) + 2;
+    (g['calles']! as List).add(c);
+  }
+  for (final g in grupos.values) {
+    final lista = g['calles']! as List;
+    g['total_calles'] = lista.length;
+    for (final (i, c) in lista.indexed) {
+      (c as Map)['puesto_en_sector'] = i + 1;
+      c['calles_en_sector'] = lista.length;
+    }
+  }
+  final porSector = grupos.values.toList()
+    ..sort((a, b) => a['id'] == null ? 1 : (b['id'] == null ? -1 : (b['total']! as int).compareTo(a['total']! as int)));
+  return {'calles': calles, 'total_calles': calles.length, 'por_sector': porSector, 'reportes_sin_calle': 3};
 }
 
 final _sectoresAnalisis = {
@@ -521,7 +554,18 @@ const _reportesPorLugar = [
   ('Calle', 3, 'Calle Urmeneta', 'Puerto Montt', {'ACCIDENTE': 3, 'ROBO': 2}),
   ('Calle', 9, 'Avenida Austral', 'Puerto Montt', {'ROBO': 3, 'MASCOTA': 2}),
   ('Calle', 2, 'San Francisco', 'Puerto Varas', {'ACCIDENTE': 3}),
+  ('Calle', 6, 'Avenida Presidente Ibáñez', 'Puerto Montt', {'ROBO': 1}),
 ];
+
+/// Sector de cada tramo: (id de localidad, nombre); null = sin sector identificado.
+const _sectorDeTramo = {
+  5: (5, 'Mirasol'),
+  12: (3, 'Centro'),
+  3: (3, 'Centro'),
+  9: (5, 'Mirasol'),
+  6: (12, 'Alerce Norte'),
+  2: null,
+};
 
 List<Map<String, Object?>> _zonasCalientes(String? categoria) {
   final lugares = <Map<String, Object?>>[];
@@ -541,10 +585,13 @@ List<Map<String, Object?>> _zonasCalientes(String? categoria) {
     final total = porCategoria.fold<int>(0, (suma, c) => suma + (c['total'] as int));
     // En Ibáñez varios vecinos reportaron el mismo robo: más reportes que hechos.
     final reportes = id == 5 ? total + 3 : total;
+    final sector = _sectorDeTramo[id];
     lugares.add({
       ..._nodo(tipo, id, nombre, {
         'nombre': nombre,
         'comuna': comuna,
+        'sector': sector?.$2,
+        'id_localidad': sector?.$1,
         'total': total,
         'reportes': reportes,
         'por_categoria': porCategoria,
@@ -581,8 +628,25 @@ Map<String, Object?> _redGrafo(String? categoria) {
       aristas.add({'origen': l['clave'], 'destino': clave, 'tipo': 'OCURREN', 'datos': {'peso': c['total']}});
     }
   }
+  final sectores = <String, Map<String, Object?>>{};
+  for (final l in lugares) {
+    final datos = l['datos']! as Map;
+    if (datos['id_localidad'] == null) continue;
+    final clave = 'Localidad:${datos['id_localidad']}';
+    final s = sectores.putIfAbsent(
+      clave,
+      () => _nodo('Localidad', datos['id_localidad'] as int, datos['sector'] as String, {
+        'nombre': datos['sector'],
+        'comuna': datos['comuna'],
+        'total': 0,
+      }),
+    );
+    final ds = s['datos']! as Map;
+    ds['total'] = (ds['total'] as int) + (l['total']! as int);
+    aristas.add({'origen': clave, 'destino': l['clave'], 'tipo': 'CONTIENE', 'datos': {'peso': l['total']}});
+  }
   return {
-    'nodos': [...lugares, ...categorias.values],
+    'nodos': [...lugares, ...categorias.values, ...sectores.values],
     'aristas': aristas,
     'sincronizacion': {'fecha': _hace(const Duration(minutes: 5))},
   };

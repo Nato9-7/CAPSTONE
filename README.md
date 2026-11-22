@@ -64,17 +64,19 @@ Desarrollar una aplicación móvil multiplataforma para la gestión de alertas d
 
 ### Para la administración
 
-El panel se abre automáticamente al iniciar sesión con una cuenta administradora y tiene siete secciones:
+El panel se abre automáticamente al iniciar sesión con una cuenta administradora y tiene siete secciones. En el computador se navega con un menú lateral; en el celular, con una barra inferior (Resumen, Reportes, Denuncias, Análisis y «Más» para el resto).
 
 | Sección | Contenido |
 | --- | --- |
-| Resumen | Indicadores generales y red en miniatura. |
-| Mapa | Mapa con los reportes de los vecinos y moderación desde la tarjeta de cada uno. |
-| Reportes | Listado con filtros por estado, comentarios, cambio de estado, eliminación y suspensión del autor. |
+| Resumen | Indicadores generales, aviso de reportes pendientes, adelanto del análisis (calles con más hechos) y reportes por categoría en porcentaje. |
+| Reportes | Cola «Por revisar» (pendientes con más denuncias y desmentidos primero), contadores por estado, búsqueda por número o texto, filtros por categoría y fecha, y carga por páginas. Cada reporte muestra un solo estado (un pendiente o validado vencido aparece como Expirado) y solo las acciones que ese estado permite. |
 | Denuncias | Denuncias pendientes de reportes y comentarios, para atenderlas o desestimarlas. |
-| Usuarios | Cuentas registradas y su suspensión o reactivación. |
+| Análisis (Neo4j) | Hechos por día, calles con más hechos agrupadas por sector, sectores en el tiempo (nuevos, en alza o a la baja) y una red Sector → Calle → Categoría. Todo se compara con el período anterior y se filtra por período, categoría, comuna y sector. |
+| Mapa | Mapa con los reportes de los vecinos y moderación desde la tarjeta de cada uno. |
+| Usuarios | Cuentas registradas y su suspensión o reactivación. Correo, RUT y teléfono aparecen parcialmente ocultos; verlos completos queda registrado. |
 | Grupos | Grupos de vecinos, sus reportes y su estado. |
-| Red (Neo4j) | Cuentas sospechosas con su evidencia, reputación de los vecinos (0 a 100) con su desglose, incidentes agrupados, ranking de zonas por cantidad de hechos y un explorador de la red con buscador, capas, línea de tiempo, comunidades y camino más corto entre dos elementos. |
+
+Una calle que cruza varios sectores se analiza por tramos (la calle dentro de cada sector), para ver qué parte concentra los hechos. Un hecho reportado por varios vecinos cuenta una sola vez.
 
 ---
 
@@ -117,7 +119,7 @@ CAPSTONE/
 │   │   │   ├── alertas/       Alertas cercanas, de mis zonas y mis reportes.
 │   │   │   ├── grupos/        Grupos de vecinos: lista, detalle (chat) y formulario.
 │   │   │   ├── zonas/         Zonas seguras: lista y formulario.
-│   │   │   └── admin/         Panel de administración, una pestaña por archivo; red/ es la sección Neo4j.
+│   │   │   └── admin/         Panel de administración, una pestaña por archivo; analisis/ es la sección Neo4j.
 │   │   ├── widgets/           Componentes compartidos entre pantallas (avisos y confirmaciones, editor
 │   │   │                      de área, comentarios, votos, capas del mapa, grafo...).
 │   │   └── tema/              Colores, tipografías y estilos de la app.
@@ -130,7 +132,6 @@ CAPSTONE/
 │   │   ├── rutas/             Endpoints por recurso: usuarios, reportes, grupos y admin.
 │   │   ├── servicios/         Reglas de negocio, correo, push y grafo Neo4j.
 │   │   └── comun/             Utilidades compartidas (alias, archivos, formato, geo, SQL).
-│   ├── sql/                   Scripts de cambios en la base de datos.
 │   └── tests/                 Pruebas con pytest.
 ├── Fase 1/                    Evidencias académicas de la Fase 1 (grupales e individuales).
 ├── Fase 2/                    Evidencias de la Fase 2: informe final, modelo de datos, APK,
@@ -227,8 +228,8 @@ El `.ipa` se genera **sin firmar**; para instalarlo en un iPhone debe firmarse c
 
 | Ámbito | Herramienta | Cobertura |
 | --- | --- | --- |
-| Aplicación | `flutter test` | Pantallas en distintos tamaños (incluidos los errores del registro y la política de privacidad), mapa con zonas de riesgo, agrupación de pines y reportes superpuestos, red del panel y teclado en los comentarios. |
-| API | `pytest tests` | Agrupación de incidentes, zonas de riesgo y mapa de calor, cuentas sospechosas y reputación, alias, archivos subidos y traducción de errores de MySQL. |
+| Aplicación | `flutter test` | Pantallas en distintos tamaños (incluidos los errores del registro y la política de privacidad), mapa con zonas de riesgo, agrupación de pines y reportes superpuestos, análisis del panel (incluidos los gestos sobre la red) y teclado en los comentarios. |
+| API | `pytest tests` | Agrupación de incidentes, zonas de riesgo y mapa de calor, análisis del panel (series por día, calles por sector, tendencias), estados y transiciones de los reportes, datos ocultos, alias, archivos subidos y traducción de errores de MySQL. |
 | Capacidad | k6 sobre el servidor | Requisitos no funcionales de rendimiento y escalabilidad (resultados abajo). |
 
 Resultados de las pruebas de capacidad (Informe de Pruebas de Capacidad v1.2, 08-11-2026):

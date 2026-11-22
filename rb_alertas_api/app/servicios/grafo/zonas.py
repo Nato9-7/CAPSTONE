@@ -30,7 +30,9 @@ def _categoria(fila: dict) -> dict:
     }
 
 
-def zonas_calientes(categoria: str | None, desde: str | None, nivel: str = "calle") -> list[dict]:
+def zonas_calientes(
+    categoria: str | None, desde: str | None, nivel: str = "calle", sector: int | None = None
+) -> list[dict]:
     """Lugares con su total de hechos y el desglose por categoría, del que tiene más al que menos.
 
     `nivel` = "calle" (la calle del reporte) o "sector" (su localidad o, si no tiene, su comuna).
@@ -47,6 +49,7 @@ def zonas_calientes(categoria: str | None, desde: str | None, nivel: str = "call
         WHERE r.estado <> 'DESCARTADO'
           AND ($desde IS NULL OR r.fecha_creacion >= $desde)
           AND ($categoria IS NULL OR cat.codigo = $categoria)
+          AND ($sector IS NULL OR r.id_localidad = $sector)
         OPTIONAL MATCH (inc:Incidente)-[:AGRUPA]->(r)
         WITH lugar, cat, count(DISTINCT coalesce(inc.id, r.id)) AS total, count(r) AS reportes
         OPTIONAL MATCH (lugar)-[:PERTENECE_A|EN_COMUNA]->(comuna:Comuna)
@@ -55,6 +58,7 @@ def zonas_calientes(categoria: str | None, desde: str | None, nivel: str = "call
         """,
         categoria=categoria,
         desde=desde,
+        sector=sector,
     )
     lugares: dict[str, dict] = {}
     for f in filas:

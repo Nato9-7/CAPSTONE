@@ -22,37 +22,43 @@ class TarjetaAnalisis extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final encabezado = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Semantics(
+          header: true,
+          child: Text(
+            titulo,
+            style: const TextStyle(
+              fontFamily: RBFuentes.titulos,
+              fontSize: 17,
+              fontWeight: FontWeight.w800,
+              color: RBColores.azul,
+            ),
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(subtitulo, style: const TextStyle(fontSize: 13, height: 1.35, color: RBColores.texto2)),
+      ],
+    );
     return TarjetaRB(
       padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Semantics(
-                      header: true,
-                      child: Text(
-                        titulo,
-                        style: const TextStyle(
-                          fontFamily: RBFuentes.titulos,
-                          fontSize: 17,
-                          fontWeight: FontWeight.w800,
-                          color: RBColores.azul,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(subtitulo, style: const TextStyle(fontSize: 13, height: 1.35, color: RBColores.texto2)),
-                  ],
-                ),
-              ),
-              ?accion,
-            ],
+          // Angosto (celular): el selector baja bajo el título en vez de apretarlo.
+          LayoutBuilder(
+            builder: (context, c) => accion == null
+                ? encabezado
+                : c.maxWidth < 480
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [encabezado, const SizedBox(height: 10), accion!],
+                  )
+                : Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [Expanded(child: encabezado), const SizedBox(width: 12), accion!],
+                  ),
           ),
           const SizedBox(height: 14),
           child,
@@ -82,19 +88,38 @@ class SinDatosAnalisis extends StatelessWidget {
 // -----------------------------------------------------------------------------
 // Calles con más hechos
 
-class TarjetaCalles extends StatelessWidget {
+class TarjetaCalles extends StatefulWidget {
   final RankingCalles? ranking;
   final ValueChanged<CalleAnalisis>? alTocar;
 
   const TarjetaCalles({super.key, required this.ranking, this.alTocar});
 
   @override
+  State<TarjetaCalles> createState() => _TarjetaCallesState();
+}
+
+class _TarjetaCallesState extends State<TarjetaCalles> {
+  /// Por sector (cada sector con sus calles) o todas las calles en un solo ranking.
+  bool _porSector = true;
+
+  @override
   Widget build(BuildContext context) {
-    final r = ranking;
-    final maximo = r == null || r.calles.isEmpty ? 1 : r.calles.first.total;
+    final r = widget.ranking;
     return TarjetaAnalisis(
       titulo: 'Calles con más hechos',
-      subtitulo: 'Ordenadas por hechos del período. La etiqueta compara con el período anterior.',
+      subtitulo: _porSector
+          ? 'Cada sector con sus calles. Una calle que cruza varios sectores aparece en cada uno.'
+          : 'Tramos de calle ordenados por hechos. La etiqueta compara con el período anterior.',
+      accion: SegmentedButton<bool>(
+        showSelectedIcon: false,
+        style: const ButtonStyle(visualDensity: VisualDensity.compact),
+        segments: const [
+          ButtonSegment(value: true, label: Text('Por sector')),
+          ButtonSegment(value: false, label: Text('Todas')),
+        ],
+        selected: {_porSector},
+        onSelectionChanged: (s) => setState(() => _porSector = s.first),
+      ),
       child: r == null
           ? const SizedBox(
               height: 120,
@@ -105,10 +130,20 @@ class TarjetaCalles extends StatelessWidget {
           : Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                for (final (i, calle) in r.calles.indexed) ...[
-                  if (i > 0) const Divider(height: 1, color: RBColores.linea),
-                  _FilaCalle(posicion: i + 1, calle: calle, maximo: maximo, alTocar: alTocar),
-                ],
+                if (_porSector)
+                  for (final (i, grupo) in r.porSector.indexed)
+                    _GrupoSector(grupo: grupo, abierto: i == 0, alTocar: widget.alTocar)
+                else
+                  for (final (i, calle) in r.calles.indexed) ...[
+                    if (i > 0) const Divider(height: 1, color: RBColores.linea),
+                    _FilaCalle(
+                      posicion: i + 1,
+                      calle: calle,
+                      maximo: r.calles.first.total,
+                      alTocar: widget.alTocar,
+                      conSector: true,
+                    ),
+                  ],
                 if (r.reportesSinCalle > 0) ...[
                   const SizedBox(height: 10),
                   Text(
@@ -123,13 +158,98 @@ class TarjetaCalles extends StatelessWidget {
   }
 }
 
+/// Un sector desplegable: su total y, adentro, sus calles con más hechos.
+class _GrupoSector extends StatelessWidget {
+  final GrupoSector grupo;
+  final bool abierto;
+  final ValueChanged<CalleAnalisis>? alTocar;
+
+  const _GrupoSector({required this.grupo, required this.abierto, this.alTocar});
+
+  @override
+  Widget build(BuildContext context) {
+    final g = grupo;
+    final maximo = g.calles.isEmpty ? 1 : g.calles.first.total;
+    final restantes = g.totalCalles - g.calles.length;
+    return Theme(
+      // Sin las líneas que ExpansionTile dibuja arriba y abajo al abrirse.
+      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+      child: ExpansionTile(
+        initiallyExpanded: abierto,
+        tilePadding: const EdgeInsets.symmetric(horizontal: 4),
+        childrenPadding: const EdgeInsets.only(left: 8, bottom: 6),
+        leading: Icon(
+          g.id == null ? Icons.help_outline_rounded : Icons.place_rounded,
+          color: g.id == null ? RBColores.texto2 : RBColores.azul,
+        ),
+        title: Row(
+          children: [
+            Expanded(
+              child: Text(
+                g.nombre,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: RBColores.tinta),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              '${g.total}',
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: RBColores.tinta),
+            ),
+          ],
+        ),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              InsigniaTendencia(tendencia: g.tendencia, variacion: g.variacion),
+              Text(
+                '${g.totalCalles} ${g.totalCalles == 1 ? 'calle' : 'calles'}'
+                '${g.comuna != null && g.comuna != g.nombre ? ' · ${g.comuna}' : ''}',
+                style: const TextStyle(fontSize: 12.5, color: RBColores.texto2),
+              ),
+            ],
+          ),
+        ),
+        children: [
+          for (final (i, calle) in g.calles.indexed) ...[
+            if (i > 0) const Divider(height: 1, color: RBColores.linea),
+            _FilaCalle(posicion: i + 1, calle: calle, maximo: maximo, alTocar: alTocar),
+          ],
+          if (restantes > 0)
+            Padding(
+              padding: const EdgeInsets.only(top: 6, left: 26),
+              child: Text(
+                restantes == 1 ? '1 calle más con menos hechos' : '$restantes calles más con menos hechos',
+                style: const TextStyle(fontSize: 12, color: RBColores.texto2),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class _FilaCalle extends StatelessWidget {
   final int posicion;
   final CalleAnalisis calle;
   final int maximo;
   final ValueChanged<CalleAnalisis>? alTocar;
 
-  const _FilaCalle({required this.posicion, required this.calle, required this.maximo, this.alTocar});
+  /// En el ranking general se muestra el sector de cada tramo; dentro de un sector, no hace falta.
+  final bool conSector;
+
+  const _FilaCalle({
+    required this.posicion,
+    required this.calle,
+    required this.maximo,
+    this.alTocar,
+    this.conSector = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -187,8 +307,8 @@ class _FilaCalle extends StatelessWidget {
                           codigo: c.categoria.codigo,
                           color: c.categoria.color,
                         ),
-                      if (calle.comuna != null)
-                        Text(calle.comuna!, style: const TextStyle(fontSize: 12, color: RBColores.texto2)),
+                      if (conSector && calle.lugar != null)
+                        Text(calle.lugar!, style: const TextStyle(fontSize: 12, color: RBColores.texto2)),
                     ],
                   ),
                 ],
@@ -259,7 +379,16 @@ Future<void> mostrarDetalleCalle(BuildContext context, CalleAnalisis calle, int 
                 color: RBColores.azul,
               ),
             ),
-            if (calle.comuna != null) Text(calle.comuna!, style: const TextStyle(color: RBColores.texto2)),
+            if (calle.lugar != null) Text(calle.lugar!, style: const TextStyle(color: RBColores.texto2)),
+            if (calle.sector != null && calle.puestoEnSector != null && (calle.callesEnSector ?? 0) > 1) ...[
+              const SizedBox(height: 6),
+              Text(
+                calle.puestoEnSector == 1
+                    ? 'La calle con más hechos de ${calle.sector} (de ${calle.callesEnSector}).'
+                    : 'Puesto ${calle.puestoEnSector} de ${calle.callesEnSector} calles en ${calle.sector}.',
+                style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: RBColores.azul),
+              ),
+            ],
             const SizedBox(height: 14),
             Text(
               '${calle.total} ${calle.total == 1 ? 'hecho' : 'hechos'} en los últimos $dias días '
@@ -428,12 +557,48 @@ class _FilaSector extends StatelessWidget {
 // -----------------------------------------------------------------------------
 // Red de calles y categorías
 
+/// Categorías (o lugares) conectados a [nodo], con cuántos hechos, de más a menos.
+List<(NodoGrafo, int)> conexionesDe(RedGrafo red, NodoGrafo nodo) {
+  final porClave = {for (final n in red.nodos) n.clave: n};
+  final lista = <(NodoGrafo, int)>[];
+  for (final a in red.aristas) {
+    final otro = a.origen == nodo.clave ? a.destino : (a.destino == nodo.clave ? a.origen : null);
+    final n = otro == null ? null : porClave[otro];
+    if (n != null) lista.add((n, (a.datos['peso'] as num?)?.toInt() ?? 0));
+  }
+  return lista..sort((a, b) => b.$2.compareTo(a.$2));
+}
+
+/// El nodo elegido y lo conectado a él: el resto de la red se atenúa. Un sector
+/// resalta además lo que pasó en sus calles (dos pasos: sector → calle → categoría).
+Set<String>? resaltadosDe(RedGrafo red, NodoGrafo? nodo) {
+  if (nodo == null) return null;
+  final directos = [for (final (n, _) in conexionesDe(red, nodo)) n];
+  return {
+    nodo.clave,
+    for (final n in directos) n.clave,
+    if (nodo.tipo == 'Localidad')
+      for (final calle in directos)
+        for (final (n, _) in conexionesDe(red, calle)) n.clave,
+  };
+}
+
 class TarjetaRedLugares extends StatefulWidget {
   final RedGrafo? red;
   final String nivel;
   final ValueChanged<String> alCambiarNivel;
 
-  const TarjetaRedLugares({super.key, required this.red, required this.nivel, required this.alCambiarNivel});
+  /// true mientras haya un dedo sobre la red: la página que la contiene debe
+  /// dejar de desplazarse, o se queda con el gesto y no se puede acercar ni mover la red.
+  final ValueChanged<bool>? alTocarRed;
+
+  const TarjetaRedLugares({
+    super.key,
+    required this.red,
+    required this.nivel,
+    required this.alCambiarNivel,
+    this.alTocarRed,
+  });
 
   @override
   State<TarjetaRedLugares> createState() => _TarjetaRedLugaresState();
@@ -441,6 +606,7 @@ class TarjetaRedLugares extends StatefulWidget {
 
 class _TarjetaRedLugaresState extends State<TarjetaRedLugares> {
   final _controlador = ControladorLienzo();
+  final Set<int> _dedos = {};
   NodoGrafo? _seleccion;
 
   @override
@@ -449,16 +615,23 @@ class _TarjetaRedLugaresState extends State<TarjetaRedLugares> {
     if (viejo.red != widget.red) _seleccion = null;
   }
 
-  /// Categorías (o lugares) conectados al nodo elegido, con cuántos hechos.
-  List<(NodoGrafo, int)> _conexiones(RedGrafo red, NodoGrafo nodo) {
-    final porClave = {for (final n in red.nodos) n.clave: n};
-    final lista = <(NodoGrafo, int)>[];
-    for (final a in red.aristas) {
-      final otro = a.origen == nodo.clave ? a.destino : (a.destino == nodo.clave ? a.origen : null);
-      final n = otro == null ? null : porClave[otro];
-      if (n != null) lista.add((n, (a.datos['peso'] as num?)?.toInt() ?? 0));
-    }
-    return lista..sort((a, b) => b.$2.compareTo(a.$2));
+  void _dedoAbajo(PointerDownEvent e) {
+    _dedos.add(e.pointer);
+    if (_dedos.length == 1) widget.alTocarRed?.call(true);
+  }
+
+  void _dedoArriba(PointerEvent e) {
+    if (_dedos.remove(e.pointer) && _dedos.isEmpty) widget.alTocarRed?.call(false);
+  }
+
+  Future<void> _pantallaCompleta(RedGrafo red) async {
+    final elegido = await Navigator.of(context).push<NodoGrafo?>(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => _PantallaRedCompleta(red: red, seleccion: _seleccion),
+      ),
+    );
+    if (mounted) setState(() => _seleccion = elegido);
   }
 
   @override
@@ -490,41 +663,128 @@ class _TarjetaRedLugaresState extends State<TarjetaRedLugares> {
           : Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(14),
-                  child: Container(
-                    height: alto,
-                    color: RBColores.fondo,
-                    child: Stack(
-                      children: [
-                        LienzoGrafo(
-                          nodos: red.nodos,
-                          aristas: red.aristas,
-                          seleccion: _seleccion?.clave,
-                          controlador: _controlador,
-                          alSeleccionar: (n) => setState(() => _seleccion = n),
-                          alTocarFondo: () => setState(() => _seleccion = null),
-                        ),
-                        Positioned(
-                          right: 10,
-                          bottom: 10,
-                          child: BotonCircular(
-                            icono: Icons.center_focus_strong_rounded,
-                            tooltip: 'Encuadrar la red',
-                            onTap: _controlador.encuadrar,
+                Listener(
+                  onPointerDown: _dedoAbajo,
+                  onPointerUp: _dedoArriba,
+                  onPointerCancel: _dedoArriba,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(14),
+                    child: Container(
+                      height: alto,
+                      color: RBColores.fondo,
+                      child: Stack(
+                        children: [
+                          LienzoGrafo(
+                            nodos: red.nodos,
+                            aristas: red.aristas,
+                            seleccion: _seleccion?.clave,
+                            resaltados: resaltadosDe(red, _seleccion),
+                            controlador: _controlador,
+                            alSeleccionar: (n) => setState(() => _seleccion = n),
+                            alTocarFondo: () => setState(() => _seleccion = null),
                           ),
-                        ),
-                      ],
+                          Positioned(
+                            right: 10,
+                            bottom: 10,
+                            child: Column(
+                              spacing: 10,
+                              children: [
+                                BotonCircular(
+                                  icono: Icons.open_in_full_rounded,
+                                  tooltip: 'Ver en pantalla completa',
+                                  tamano: 44,
+                                  onTap: () => _pantallaCompleta(red),
+                                ),
+                                BotonCircular(
+                                  icono: Icons.center_focus_strong_rounded,
+                                  tooltip: 'Encuadrar la red',
+                                  tamano: 44,
+                                  onTap: _controlador.encuadrar,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
                 const SizedBox(height: 10),
                 _DetalleNodo(
                   nodo: _seleccion,
-                  conexiones: _seleccion == null ? const [] : _conexiones(red, _seleccion!),
+                  conexiones: _seleccion == null ? const [] : conexionesDe(red, _seleccion!),
                 ),
               ],
             ),
+    );
+  }
+}
+
+/// La red ocupando toda la pantalla: sin una página que se desplace alrededor,
+/// los gestos de acercar y mover son todos de la red. Devuelve el nodo elegido.
+class _PantallaRedCompleta extends StatefulWidget {
+  final RedGrafo red;
+  final NodoGrafo? seleccion;
+
+  const _PantallaRedCompleta({required this.red, required this.seleccion});
+
+  @override
+  State<_PantallaRedCompleta> createState() => _PantallaRedCompletaState();
+}
+
+class _PantallaRedCompletaState extends State<_PantallaRedCompleta> {
+  final _controlador = ControladorLienzo();
+  late NodoGrafo? _seleccion = widget.seleccion;
+
+  @override
+  Widget build(BuildContext context) {
+    final red = widget.red;
+    return PopScope<NodoGrafo?>(
+      canPop: false,
+      onPopInvokedWithResult: (salio, _) {
+        if (!salio) Navigator.of(context).pop(_seleccion);
+      },
+      child: Scaffold(
+        backgroundColor: RBColores.fondo,
+        appBar: AppBar(
+          backgroundColor: Colors.white,
+          surfaceTintColor: Colors.transparent,
+          title: const Text('Red de lugares y categorías'),
+          actions: [
+            IconButton(
+              tooltip: 'Encuadrar la red',
+              icon: const Icon(Icons.center_focus_strong_rounded),
+              onPressed: _controlador.encuadrar,
+            ),
+          ],
+        ),
+        body: SafeArea(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: LienzoGrafo(
+                  nodos: red.nodos,
+                  aristas: red.aristas,
+                  seleccion: _seleccion?.clave,
+                  resaltados: resaltadosDe(red, _seleccion),
+                  controlador: _controlador,
+                  alSeleccionar: (n) => setState(() => _seleccion = n),
+                  alTocarFondo: () => setState(() => _seleccion = null),
+                ),
+              ),
+              Container(
+                color: Colors.white,
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                child: _DetalleNodo(
+                  nodo: _seleccion,
+                  conexiones: _seleccion == null ? const [] : conexionesDe(red, _seleccion!),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

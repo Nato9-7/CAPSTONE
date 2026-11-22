@@ -20,7 +20,13 @@ _FILTRO = """
     r.estado <> 'DESCARTADO' AND r.dia >= $desde
     AND ($categoria IS NULL OR r.categoria_codigo = $categoria)
     AND ($comuna IS NULL OR r.id_comuna = $comuna)
+    AND ($sector IS NULL OR r.id_localidad = $sector)
 """
+
+# Nombre para los tramos sin sector (el punto quedó fuera de las localidades conocidas).
+SIN_SECTOR = "Sector sin identificar"
+# Cuántos tramos de calle se muestran dentro de cada sector en el ranking agrupado.
+CALLES_POR_SECTOR = 5
 
 
 def _periodo(dias: int, hoy: date | None = None) -> tuple[date, date, date]:
@@ -55,7 +61,9 @@ def categorias(codigos: set[str]) -> list[dict]:
     return [f for f in filas if not codigos or f["codigo"] in codigos]
 
 
-def por_dia(dias: int, categoria: str | None, comuna: int | None, hoy: date | None = None) -> dict:
+def por_dia(
+    dias: int, categoria: str | None, comuna: int | None, hoy: date | None = None, *, sector: int | None = None
+) -> dict:
     """Hechos por día del período, con el desglose por categoría y el total del período anterior."""
     desde_anterior, desde, hoy = _periodo(dias, hoy)
     filas = conexion.consultar_grafo(
@@ -65,7 +73,7 @@ def por_dia(dias: int, categoria: str | None, comuna: int | None, hoy: date | No
         RETURN r.dia AS dia, r.categoria_codigo AS categoria,
                count(DISTINCT coalesce(inc.id, r.id)) AS hechos, count(r) AS reportes
         """,
-        desde=desde_anterior.isoformat(), categoria=categoria, comuna=comuna,
+        desde=desde_anterior.isoformat(), categoria=categoria, comuna=comuna, sector=sector,
     )
     serie = {
         (desde + timedelta(days=i)).isoformat(): {"total": 0, "reportes": 0, "por_categoria": {}}
@@ -101,8 +109,20 @@ def por_dia(dias: int, categoria: str | None, comuna: int | None, hoy: date | No
     }
 
 
-def ranking_calles(dias: int, categoria: str | None, comuna: int | None, limite: int, hoy: date | None = None) -> dict:
-    """Calles con más hechos en el período, con su tendencia y el desglose por categoría."""
+def ranking_calles(
+    dias: int,
+    categoria: str | None,
+    comuna: int | None,
+    limite: int,
+    hoy: date | None = None,
+    *,
+    sector: int | None = None,
+) -> dict:
+    """Tramos de calle (calle dentro de un sector) con más hechos, con su tendencia y categorías.
+
+    Además de la lista, `por_sector` agrupa los tramos por su sector: el total del
+    sector (suma de sus calles) y sus calles con más hechos, para el ranking agrupado.
+    """
     desde_anterior, desde, _ = _periodo(dias, hoy)
     filas = conexion.consultar_grafo(
         f"""
@@ -115,11 +135,13 @@ def ranking_calles(dias: int, categoria: str | None, comuna: int | None, limite:
                count(DISTINCT hecho) AS hechos, count(r) AS reportes, max(r.fecha_creacion) AS ultimo
         """,
         desde=desde_anterior.isoformat(), actual=desde.isoformat(), categoria=categoria, comuna=comuna,
+        sector=sector,
     )
     calles: dict[int, dict] = {}
     for f in filas:
         c = calles.setdefault(f["calle"]["id"], {
             "id": f["calle"]["id"], "nombre": f["calle"]["nombre"], "comuna": f["comuna"],
+            "sector": f["calle"].get("sector"), "id_sector": f["calle"].get("id_localidad"),
             "latitud": f["calle"].get("latitud"), "longitud": f["calle"].get("longitud"),
             "total": 0, "reportes": 0, "anterior": 0, "ultimo": None, "por_categoria": {},
         })
@@ -143,6 +165,7 @@ def ranking_calles(dias: int, categoria: str | None, comuna: int | None, limite:
         c["variacion"] = variacion(c["total"], c["anterior"])
         lista.append(c)
     lista.sort(key=lambda c: (-c["total"], -c["reportes"], c["nombre"]))
+    por_sector = agrupar_por_sector(lista)
 
     sin_calle = conexion.consultar_grafo(
         f"""
@@ -150,12 +173,55 @@ def ranking_calles(dias: int, categoria: str | None, comuna: int | None, limite:
         RETURN count(r) AS total
         """,
         desde=desde_anterior.isoformat(), actual=desde.isoformat(), categoria=categoria, comuna=comuna,
+        sector=sector,
     )
-    return {"calles": lista[:limite], "total_calles": len(lista), "reportes_sin_calle": sin_calle[0]["total"]}
+    return {
+        "calles": lista[:limite],
+        "total_calles": len(lista),
+        "por_sector": por_sector,
+        "reportes_sin_calle": sin_calle[0]["total"],
+    }
+
+
+def agrupar_por_sector(calles: list[dict]) -> list[dict]:
+    """Agrupa tramos ya ordenados por su sector y marca el puesto de cada uno dentro del suyo.
+
+    El total del sector es la suma de sus calles (solo hechos con calle identificada).
+    Los sectores se ordenan por total; dentro de cada uno, las calles quedan en el orden recibido.
+    """
+    sectores: dict[int | None, dict] = {}
+    for c in calles:
+        s = sectores.setdefault(c.get("id_sector"), {
+            "id": c.get("id_sector"), "nombre": c.get("sector") or SIN_SECTOR, "comuna": c.get("comuna"),
+            "total": 0, "anterior": 0, "calles": [],
+        })
+        s["total"] += c["total"]
+        s["anterior"] += c["anterior"]
+        s["calles"].append(c)
+    lista = []
+    for s in sectores.values():
+        for puesto, c in enumerate(s["calles"], start=1):
+            c["puesto_en_sector"] = puesto
+            c["calles_en_sector"] = len(s["calles"])
+        s["total_calles"] = len(s["calles"])
+        s["calles"] = s["calles"][:CALLES_POR_SECTOR]
+        s["tendencia"] = tendencia(s["total"], s["anterior"])
+        s["variacion"] = variacion(s["total"], s["anterior"])
+        lista.append(s)
+    # El grupo "sin sector" va al final: no es un lugar comparable con los demás.
+    lista.sort(key=lambda s: (s["id"] is None, -s["total"], s["nombre"]))
+    return lista
 
 
 def sectores_en_el_tiempo(
-    dias: int, categoria: str | None, comuna: int | None, tramos: int, limite: int, hoy: date | None = None
+    dias: int,
+    categoria: str | None,
+    comuna: int | None,
+    tramos: int,
+    limite: int,
+    hoy: date | None = None,
+    *,
+    sector: int | None = None,
 ) -> dict:
     """Sectores (localidad o, si no hay, comuna) con sus hechos en `tramos` partes iguales del período.
 
@@ -172,7 +238,7 @@ def sectores_en_el_tiempo(
         RETURN labels(lugar)[0] AS tipo, lugar.id AS id, lugar.nombre AS nombre, com.nombre AS comuna,
                r.dia AS dia, count(DISTINCT coalesce(inc.id, r.id)) AS hechos
         """,
-        desde=desde_anterior.isoformat(), categoria=categoria, comuna=comuna,
+        desde=desde_anterior.isoformat(), categoria=categoria, comuna=comuna, sector=sector,
     )
     largo_tramo = dias / tramos
     limites = [desde + timedelta(days=round(i * largo_tramo)) for i in range(tramos)]
@@ -209,6 +275,17 @@ def sectores_en_el_tiempo(
         "sectores": lista[:limite],
         "resumen": {t: sum(1 for s in lista if s["tendencia"] == t) for t in ("nueva", "sube", "baja", "igual")},
     }
+
+
+def sectores_con_reportes() -> list[dict]:
+    """Sectores (localidades) que tienen reportes, con su comuna, para el filtro del panel."""
+    return conexion.consultar_grafo(
+        """
+        MATCH (:Reporte)-[:OCURRIO_EN]->(l:Localidad)-[:PERTENECE_A]->(c:Comuna)
+        RETURN DISTINCT l.id AS id, l.nombre AS nombre, c.id AS id_comuna
+        ORDER BY nombre
+        """
+    )
 
 
 def comunas_con_reportes() -> list[dict]:

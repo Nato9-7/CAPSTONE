@@ -36,7 +36,10 @@ def resumen_grafo():
         )[0]
     return {
         "calles_con_hechos": calles["total_calles"],
-        "calles_top": [{"nombre": c["nombre"], "total": c["total"], "tendencia": c["tendencia"]} for c in calles["calles"]],
+        "calles_top": [
+            {"nombre": c["nombre"], "sector": c.get("sector"), "total": c["total"], "tendencia": c["tendencia"]}
+            for c in calles["calles"]
+        ],
         "sectores_en_alza": sectores["resumen"]["sube"] + sectores["resumen"]["nueva"],
         "incidentes_abiertos": fila["incidentes_abiertos"],
         "sincronizacion": grafo.ultima_sincronizacion,

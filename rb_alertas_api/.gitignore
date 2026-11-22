@@ -6,3 +6,4 @@ uploads/
 # Cuenta de servicio de Firebase (clave privada): nunca al repositorio.
 firebase-credenciales*.json
 *-firebase-adminsdk-*.json
+CAPSTONE\rb_alertas_api\sql

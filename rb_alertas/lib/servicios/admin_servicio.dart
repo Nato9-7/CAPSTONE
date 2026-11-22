@@ -171,10 +171,11 @@ class AdminServicio {
     return ResumenGrafo.desdeJson(cuerpo as Map<String, dynamic>);
   }
 
-  Map<String, String> _consultaAnalisis(int dias, String? categoria, int? comuna) => {
+  Map<String, String> _consultaAnalisis(int dias, String? categoria, int? comuna, int? sector) => {
     'dias': '$dias',
     'categoria': ?categoria,
     if (comuna != null) 'comuna': '$comuna',
+    if (sector != null) 'sector': '$sector',
   };
 
   Future<FiltrosDisponibles> filtrosAnalisis() async {
@@ -182,28 +183,40 @@ class AdminServicio {
     return FiltrosDisponibles.desdeJson(cuerpo as Map<String, dynamic>);
   }
 
-  Future<SerieDiaria> hechosPorDia({required int dias, String? categoria, int? comuna}) async {
+  Future<SerieDiaria> hechosPorDia({required int dias, String? categoria, int? comuna, int? sector}) async {
     final cuerpo = await ApiCliente.get(
       '/api/admin/analisis/por-dia',
-      consulta: _consultaAnalisis(dias, categoria, comuna),
+      consulta: _consultaAnalisis(dias, categoria, comuna, sector),
       error: _errorCarga,
     );
     return SerieDiaria.desdeJson(cuerpo as Map<String, dynamic>);
   }
 
-  Future<RankingCalles> rankingCalles({required int dias, String? categoria, int? comuna, int limite = 15}) async {
+  Future<RankingCalles> rankingCalles({
+    required int dias,
+    String? categoria,
+    int? comuna,
+    int? sector,
+    int limite = 15,
+  }) async {
     final cuerpo = await ApiCliente.get(
       '/api/admin/analisis/calles',
-      consulta: {..._consultaAnalisis(dias, categoria, comuna), 'limite': '$limite'},
+      consulta: {..._consultaAnalisis(dias, categoria, comuna, sector), 'limite': '$limite'},
       error: _errorCarga,
     );
     return RankingCalles.desdeJson(cuerpo as Map<String, dynamic>);
   }
 
-  Future<SectoresEnElTiempo> sectores({required int dias, String? categoria, int? comuna, int tramos = 6}) async {
+  Future<SectoresEnElTiempo> sectores({
+    required int dias,
+    String? categoria,
+    int? comuna,
+    int? sector,
+    int tramos = 6,
+  }) async {
     final cuerpo = await ApiCliente.get(
       '/api/admin/analisis/sectores',
-      consulta: {..._consultaAnalisis(dias, categoria, comuna), 'tramos': '$tramos'},
+      consulta: {..._consultaAnalisis(dias, categoria, comuna, sector), 'tramos': '$tramos'},
       error: _errorCarga,
     );
     return SectoresEnElTiempo.desdeJson(cuerpo as Map<String, dynamic>);
@@ -211,12 +224,13 @@ class AdminServicio {
 
   /// Red de lugares: las calles (o sectores) con más hechos unidas a las
   /// categorías de lo que pasó ahí. El peso de cada unión es cuántos hechos hubo.
-  Future<RedGrafo> redDeLugares({int? dias, String? categoria, String nivel = 'calle'}) async {
+  Future<RedGrafo> redDeLugares({int? dias, String? categoria, int? sector, String nivel = 'calle'}) async {
     final cuerpo = await ApiCliente.get(
       '/api/admin/grafo/red',
       consulta: {
         if (dias != null) 'dias': '$dias',
         'categoria': ?categoria,
+        if (sector != null) 'sector': '$sector',
         'nivel': nivel,
       },
       error: _errorCarga,

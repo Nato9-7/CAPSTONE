@@ -30,6 +30,7 @@ class _SeccionAnalisisState extends State<SeccionAnalisis> with AutomaticKeepAli
   int _dias = 30;
   String? _categoria;
   int? _comuna;
+  int? _sector;
   String _nivelRed = 'calle';
 
   FiltrosDisponibles? _filtros;
@@ -39,6 +40,9 @@ class _SeccionAnalisisState extends State<SeccionAnalisis> with AutomaticKeepAli
   RedGrafo? _red;
   String? _error;
   bool _sincronizando = false;
+
+  /// true mientras haya un dedo sobre la red (ver [TarjetaRedLugares.alTocarRed]).
+  bool _gestoEnRed = false;
 
   /// Cada carga lleva un número: si el usuario cambia los filtros a medio
   /// camino, las respuestas de la carga anterior se descartan.
@@ -76,13 +80,13 @@ class _SeccionAnalisisState extends State<SeccionAnalisis> with AutomaticKeepAli
       // Las cuatro consultas van en paralelo; cada tarjeta aparece cuando llega lo suyo.
       await Future.wait([
         _servicio
-            .hechosPorDia(dias: _dias, categoria: _categoria, comuna: _comuna)
+            .hechosPorDia(dias: _dias, categoria: _categoria, comuna: _comuna, sector: _sector)
             .then((s) => aplicar(() => _serie = s)),
         _servicio
-            .rankingCalles(dias: _dias, categoria: _categoria, comuna: _comuna)
+            .rankingCalles(dias: _dias, categoria: _categoria, comuna: _comuna, sector: _sector)
             .then((c) => aplicar(() => _calles = c)),
         _servicio
-            .sectores(dias: _dias, categoria: _categoria, comuna: _comuna)
+            .sectores(dias: _dias, categoria: _categoria, comuna: _comuna, sector: _sector)
             .then((s) => aplicar(() => _sectores = s)),
         _cargarRed(carga),
       ]);
@@ -92,7 +96,7 @@ class _SeccionAnalisisState extends State<SeccionAnalisis> with AutomaticKeepAli
   }
 
   Future<void> _cargarRed(int carga) async {
-    final red = await _servicio.redDeLugares(dias: _dias, categoria: _categoria, nivel: _nivelRed);
+    final red = await _servicio.redDeLugares(dias: _dias, categoria: _categoria, sector: _sector, nivel: _nivelRed);
     if (mounted && carga == _carga) setState(() => _red = red);
   }
 
@@ -106,11 +110,17 @@ class _SeccionAnalisisState extends State<SeccionAnalisis> with AutomaticKeepAli
     });
   }
 
-  void _filtrar({int? dias, String? Function()? categoria, int? Function()? comuna}) {
+  void _filtrar({int? dias, String? Function()? categoria, int? Function()? comuna, int? Function()? sector}) {
     setState(() {
       if (dias != null) _dias = dias;
       if (categoria != null) _categoria = categoria();
-      if (comuna != null) _comuna = comuna();
+      if (comuna != null) {
+        _comuna = comuna();
+        // Un sector de otra comuna dejaría el análisis vacío: se limpia.
+        final sectorActual = _filtros?.sectores.where((x) => x.id == _sector).firstOrNull;
+        if (_comuna != null && sectorActual != null && sectorActual.idComuna != _comuna) _sector = null;
+      }
+      if (sector != null) _sector = sector();
     });
     _cargar();
   }
@@ -133,6 +143,9 @@ class _SeccionAnalisisState extends State<SeccionAnalisis> with AutomaticKeepAli
         return RefreshIndicator(
           onRefresh: _cargar,
           child: ListView(
+            // Con un dedo sobre la red, la página no se desplaza: así el gesto
+            // (mover o acercar con dos dedos) es de la red y no de la página.
+            physics: _gestoEnRed ? const NeverScrollableScrollPhysics() : const AlwaysScrollableScrollPhysics(),
             padding: EdgeInsets.fromLTRB(margen, 8, margen, 32),
             children: [
               _barraFiltros(),
@@ -170,7 +183,14 @@ class _SeccionAnalisisState extends State<SeccionAnalisis> with AutomaticKeepAli
                   TarjetaSectores(datos: _sectores),
                 ],
                 const SizedBox(height: 16),
-                TarjetaRedLugares(red: _red, nivel: _nivelRed, alCambiarNivel: _cambiarNivel),
+                TarjetaRedLugares(
+                  red: _red,
+                  nivel: _nivelRed,
+                  alCambiarNivel: _cambiarNivel,
+                  alTocarRed: (tocando) {
+                    if (tocando != _gestoEnRed) setState(() => _gestoEnRed = tocando);
+                  },
+                ),
               ],
             ],
           ),
@@ -186,6 +206,12 @@ class _SeccionAnalisisState extends State<SeccionAnalisis> with AutomaticKeepAli
     final filtros = _filtros;
     final categoria = filtros?.categorias.where((c) => c.codigo == _categoria).firstOrNull;
     final comuna = filtros?.comunas.where((c) => c.id == _comuna).firstOrNull;
+    final sector = filtros?.sectores.where((x) => x.id == _sector).firstOrNull;
+    // Solo los sectores de la comuna elegida (o todos, si no hay comuna).
+    final sectores = [
+      for (final x in filtros?.sectores ?? const <({int id, String nombre, int? idComuna})>[])
+        if (_comuna == null || x.idComuna == _comuna) x,
+    ];
     final sincronizado = _serie?.sincronizadoEn;
 
     return Column(
@@ -221,6 +247,14 @@ class _SeccionAnalisisState extends State<SeccionAnalisis> with AutomaticKeepAli
                   activo: comuna != null,
                   opciones: [(null, 'Todas las comunas'), for (final c in filtros!.comunas) (c.id, c.nombre)],
                   alElegir: (id) => _filtrar(comuna: () => id),
+                ),
+              if (sectores.length > 1 || sector != null)
+                _MenuFiltro<int?>(
+                  icono: Icons.place_rounded,
+                  etiqueta: sector?.nombre ?? 'Todos los sectores',
+                  activo: sector != null,
+                  opciones: [(null, 'Todos los sectores'), for (final x in sectores) (x.id, x.nombre)],
+                  alElegir: (id) => _filtrar(sector: () => id),
                 ),
               TextButton.icon(
                 onPressed: _sincronizando ? null : _sincronizar,
